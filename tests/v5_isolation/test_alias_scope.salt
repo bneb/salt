@@ -1,0 +1,55 @@
+// V7.3 Integration Test: Per-Argument Alias Scope Verification
+// This test verifies that matvec-like functions with multiple pointer arguments
+// generate separate LLVM alias scopes for each argument, enabling vectorization.
+
+package test::v73::alias_scope;
+
+// A simple matvec-like function with three pointer arguments
+// W (weights), X (input), Result (output)
+// Each should get a unique alias scope in the generated MLIR
+fn matvec_simple(w: &f32, x: &f32, result: &mut f32, rows: i32, cols: i32) {
+    for i in 0..rows {
+        let mut sum: f32 = 0.0;
+        let w_row = w + (i * cols);
+        
+        for j in 0..cols {
+            // Load from W (arg 0) and X (arg 1)
+            // These loads should have noalias_scopes referencing each other
+            let w_val = *(w_row + j);
+            let x_val = *(x + j);
+            sum = sum + (w_val * x_val);
+        }
+        
+        // Store to Result (arg 2)
+        // This store should have noalias_scopes for W and X
+        *(result + i) = sum;
+    }
+}
+
+// Test with two pointer args
+fn dot_product(a: &f32, b: &f32, n: i32) -> f32 {
+    let mut sum: f32 = 0.0;
+    for i in 0..n {
+        let a_val = *(a + i);
+        let b_val = *(b + i);
+        sum = sum + (a_val * b_val);
+    }
+    return sum;
+}
+
+// Test single pointer arg (no noalias with others)
+fn sum_array(x: &f32, n: i32) -> f32 {
+    let mut total: f32 = 0.0;
+    for i in 0..n {
+        let elem = *(x + i);
+        total = total + elem;
+    }
+    return total;
+}
+
+// Main function for testing
+fn main() -> i32 {
+    // We can't easily verify MLIR output from here,
+    // but this ensures the functions compile correctly
+    return 0;
+}

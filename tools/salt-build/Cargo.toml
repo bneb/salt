@@ -1,0 +1,14 @@
+[package]
+name = "salt-build"
+version = "0.1.0"
+edition = "2021"
+description = "Salt build system — reads salt.toml, resolves dependencies, and compiles multi-module projects"
+
+[[bin]]
+name = "salt"
+path = "src/main.rs"
+
+[dependencies]
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+clap = { version = "4", features = ["derive"] }

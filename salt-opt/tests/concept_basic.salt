@@ -1,0 +1,16 @@
+concept Positive<T> {
+    requires(v: T) {
+        v > 0
+    }
+}
+
+impl Positive<i32>;
+
+fn test_pos(x: i32) -> i32 
+requires { (Positive(x)) } {
+    return x
+}
+
+fn main() -> i32 {
+    return 0
+}

@@ -1,0 +1,21 @@
+[package]
+name = "salt-lsp"
+version = "0.2.0"
+edition = "2021"
+description = "Language Server Protocol implementation for the Salt programming language"
+
+[[bin]]
+name = "salt-lsp"
+path = "src/main.rs"
+
+[dependencies]
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# In-memory compilation: link salt-front as a library crate
+# This gives us <5ms diagnostic latency instead of ~150ms subprocess overhead
+saltc = { path = "../../salt-front" }
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+proc-macro2 = { version = "1.0", features = ["span-locations"] }

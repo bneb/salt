@@ -1,0 +1,37 @@
+// tests/test_debug.salt — TDD test for Debug trait (auto-derive)
+// Salt auto-derives struct formatting — this test verifies it works
+// using f-string interpolation.
+package main
+
+struct Point {
+    x: i64,
+    y: i64
+}
+
+struct Color {
+    r: i32,
+    g: i32,
+    b: i32
+}
+
+fn main() -> i32 {
+    println("=== Debug Trait Tests ===");
+
+    // Test 1: f-string struct formatting (auto-derived Debug)
+    println("Test 1: Point debug via f-string");
+    let p = Point { x: 10, y: 20 };
+    println(f"  Point = {p}");
+
+    // Test 2: Another struct
+    println("Test 2: Color debug via f-string");
+    let c = Color { r: 255, g: 128, b: 0 };
+    println(f"  Color = {c}");
+
+    // Test 3: Primitives in f-strings
+    println("Test 3: Primitives");
+    let v: i64 = 42;
+    println(f"  Value = {v}");
+
+    println("=== All debug tests passed ===");
+    return 0;
+}

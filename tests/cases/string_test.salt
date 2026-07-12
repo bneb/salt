@@ -1,0 +1,165 @@
+// Test: String - Comprehensive TDD
+// Verifies construction, push, len, byte_at, clear, equality, and hashing
+
+import std.string.String
+import std.hash.Hash
+import std.eq.Eq
+
+fn assert_eq(actual: i64, expected: i64) -> bool {
+    return actual == expected;
+}
+
+fn main() -> i32 {
+    let mut passed: i64 = 0;
+    let mut failed: i64 = 0;
+
+    println("=== String Tests ===");
+
+    // =========================================================================
+    // Section 1: Construction
+    // =========================================================================
+    println("--- Section 1: Construction ---");
+
+    let s1 = String::new();
+    print("new() len == 0");
+    if assert_eq(s1.len(), 0) { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+    print("new() is_empty");
+    if s1.is_empty() { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+
+    let s2 = String::with_capacity(64);
+    print("with_capacity(64) len == 0");
+    if assert_eq(s2.len(), 0) { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+    print("with_capacity(64) is_empty");
+    if s2.is_empty() { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+
+    // =========================================================================
+    // Section 2: push_byte + len
+    // =========================================================================
+    println("--- Section 2: push_byte + len ---");
+
+    let mut s3 = String::with_capacity(16);
+    s3.push_byte(72);   // 'H'
+    s3.push_byte(105);  // 'i'
+    print("push_byte 'H','i' => len == 2");
+    if assert_eq(s3.len(), 2) { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+    print("byte_at(0) == 72 ('H')");
+    if assert_eq(s3.byte_at(0) as i64, 72) { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+    print("byte_at(1) == 105 ('i')");
+    if assert_eq(s3.byte_at(1) as i64, 105) { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+
+    // =========================================================================
+    // Section 3: push_cstr
+    // =========================================================================
+    println("--- Section 3: push_cstr ---");
+
+    let mut s4 = String::with_capacity(32);
+    s4.push_cstr("Hello\0");
+    print("push_cstr('Hello') => len == 5");
+    if assert_eq(s4.len(), 5) { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+    print("byte_at(0) == 72 ('H')");
+    if assert_eq(s4.byte_at(0) as i64, 72) { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+    print("byte_at(4) == 111 ('o')");
+    if assert_eq(s4.byte_at(4) as i64, 111) { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+
+    // Append more
+    s4.push_cstr(" World\0");
+    print("push_cstr(' World') => len == 11");
+    if assert_eq(s4.len(), 11) { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+    print("byte_at(5) == 32 (' ')");
+    if assert_eq(s4.byte_at(5) as i64, 32) { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+
+    // =========================================================================
+    // Section 4: clear
+    // =========================================================================
+    println("--- Section 4: clear ---");
+
+    let mut s5 = String::with_capacity(16);
+    s5.push_cstr("test\0");
+    print("before clear: len == 4");
+    if assert_eq(s5.len(), 4) { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+
+    s5.clear();
+    print("after clear: len == 0");
+    if assert_eq(s5.len(), 0) { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+    print("after clear: is_empty");
+    if s5.is_empty() { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+
+    // Push after clear
+    s5.push_cstr("new\0");
+    print("push after clear: len == 3");
+    if assert_eq(s5.len(), 3) { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+
+    // =========================================================================
+    // Section 5: Equality (Eq trait)
+    // =========================================================================
+    println("--- Section 5: Equality ---");
+
+    let mut a = String::with_capacity(16);
+    a.push_cstr("hello\0");
+    let mut b = String::with_capacity(16);
+    b.push_cstr("hello\0");
+
+    print("hello == hello");
+    if a.eq(&b) { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+
+    let mut c = String::with_capacity(16);
+    c.push_cstr("world\0");
+
+    print("hello != world");
+    if !a.eq(&c) { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+
+    // Different lengths
+    let mut d = String::with_capacity(16);
+    d.push_cstr("hell\0");
+    print("hello != hell (diff length)");
+    if !a.eq(&d) { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+
+    // Empty strings are equal
+    let e1 = String::new();
+    let e2 = String::new();
+    print("empty == empty");
+    if e1.eq(&e2) { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+
+    // =========================================================================
+    // Section 6: Hash consistency
+    // =========================================================================
+    println("--- Section 6: Hash consistency ---");
+
+    let mut h1 = String::with_capacity(16);
+    h1.push_cstr("test\0");
+    let mut h2 = String::with_capacity(16);
+    h2.push_cstr("test\0");
+
+    let hash1 = h1.hash() as i64;
+    let hash2 = h2.hash() as i64;
+    print("hash(test) == hash(test) (consistency)");
+    if assert_eq(hash1, hash2) { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+
+    // Different strings should (very likely) have different hashes
+    let mut h3 = String::with_capacity(16);
+    h3.push_cstr("tset\0");
+    let hash3 = h3.hash() as i64;
+    print("hash(test) != hash(tset) (distribution)");
+    if hash1 != hash3 { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+
+    // Hash of empty string should be consistent
+    let e3 = String::new();
+    let e4 = String::new();
+    let he3 = e3.hash() as i64;
+    let he4 = e4.hash() as i64;
+    print("hash(empty) == hash(empty)");
+    if assert_eq(he3, he4) { println("  ... PASS"); passed += 1; } else { println("  ... FAIL"); failed += 1; }
+
+    // =========================================================================
+    // Summary
+    // =========================================================================
+    println("=== Summary ===");
+
+    if failed == 0 {
+        println("ALL TESTS PASSED");
+    } else {
+        println("SOME TESTS FAILED");
+    }
+
+    return failed as i32;
+}

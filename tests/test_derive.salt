@@ -1,0 +1,76 @@
+// tests/test_derive.salt — TDD for @derive attribute
+// Verifies that @derive(Clone, Hash, Eq, Ord) auto-generates trait impls.
+
+package main
+
+import std.core.clone.Clone
+import std.eq.Eq
+import std.hash.Hash
+import std.ord.Ord
+
+extern fn exit(code: i32);
+
+fn assert_true(cond: bool, test_id: i32) {
+    if !cond {
+        println("FAIL");
+        exit(test_id);
+    }
+}
+
+@derive(Clone, Hash, Eq, Ord)
+pub struct Point {
+    pub x: i64,
+    pub y: i64
+}
+
+@derive(Clone, Eq)
+pub struct Color {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8
+}
+
+fn main() -> i32 {
+    println("=== @derive Tests ===");
+
+    // Test 1: Clone
+    let p = Point { x: 10, y: 20 };
+    let p2 = p.clone();
+    assert_true(p2.x == 10, 1);
+    assert_true(p2.y == 20, 1);
+    println("  [PASS] Point.clone()");
+
+    // Test 2: Eq
+    let a = Point { x: 1, y: 2 };
+    let b = Point { x: 1, y: 2 };
+    let c = Point { x: 1, y: 3 };
+    assert_true(a.eq(&b), 2);
+    assert_true(!a.eq(&c), 2);
+    println("  [PASS] Point.eq()");
+
+    // Test 3: Hash — same values produce same hash, different values (usually) differ
+    let h1 = a.hash();
+    let h2 = b.hash();
+    let h3 = c.hash();
+    assert_true(h1 == h2, 3);
+    assert_true(h1 != h3, 3);
+    println("  [PASS] Point.hash()");
+
+    // Test 4: Ord — lexicographic comparison
+    let lo = Point { x: 1, y: 2 };
+    let hi = Point { x: 1, y: 5 };
+    assert_true(lo.cmp(&hi) < 0, 4);
+    assert_true(hi.cmp(&lo) > 0, 4);
+    assert_true(lo.cmp(&lo) == 0, 4);
+    println("  [PASS] Point.cmp()");
+
+    // Test 5: Partial derive — Color only has Clone and Eq
+    let red = Color { r: 255, g: 0, b: 0 };
+    let red2 = red.clone();
+    assert_true(red2.r == 255, 5);
+    assert_true(red.eq(&red2), 5);
+    println("  [PASS] Color.clone() + eq()");
+
+    println("\n=== All @derive tests passed ===");
+    return 0;
+}

@@ -1,0 +1,195 @@
+// =============================================================================
+// TDD: User-Mode Page Table Infrastructure
+// =============================================================================
+// Tests the pure math functions for x86_64 4-level page tables:
+//   - 9-bit index extraction from virtual addresses
+//   - Page flag constants and composition
+//   - Address round-down to page boundary
+//   - Kernel half detection (PML4 indices 256-511)
+//
+// The x86_64 virtual address layout (48-bit canonical):
+//   [47:39] PML4 index (9 bits, 512 entries)
+//   [38:30] PDP index  (9 bits, 512 entries)
+//   [29:21] PD index   (9 bits, 512 entries)
+//   [20:12] PT index   (9 bits, 512 entries)
+//   [11:0]  Page offset (12 bits, 4KB page)
+//
+// Test matrix:
+//   1-4.  Index extraction for USER_BASE = 0x400000
+//   5-8.  Index extraction for 0x401000 (second page)
+//   9-12. Index extraction for KERNEL_BASE = 0xFFFFFFFF80000000
+//   13.   Page flag constants (PRESENT, WRITE, USER)
+//   14.   User page flags = PRESENT | WRITE | USER = 0x7
+//   15.   Page-align address (round down)
+//   16.   Kernel half starts at PML4 index 256
+//   17.   User base is NOT in kernel half
+//   18.   Kernel base IS in kernel half
+// =============================================================================
+
+package main
+
+extern fn exit(code: i32);
+
+// =============================================================================
+// Page Table Constants
+// =============================================================================
+const PAGE_SIZE: u64 = 4096;
+const PAGE_MASK: u64 = 0xFFFFFFFFFFFFF000;  // mask out 12-bit offset
+const INDEX_MASK: u64 = 0x1FF;               // 9-bit mask
+
+// Page flags
+const PTE_PRESENT: u64 = 0x1;
+const PTE_WRITE: u64   = 0x2;
+const PTE_USER: u64    = 0x4;
+
+// Canonical addresses
+const USER_BASE: u64    = 0x400000;
+const KERNEL_BASE: u64  = 0xFFFFFFFF80000000;
+
+// Kernel half boundary
+const KERNEL_PML4_START: u64 = 256;
+
+// =============================================================================
+// Index extraction functions — pure math, no memory access
+// =============================================================================
+fn pml4_index(vaddr: u64) -> u64 {
+    return (vaddr >> 39) & INDEX_MASK;
+}
+
+fn pdp_index(vaddr: u64) -> u64 {
+    return (vaddr >> 30) & INDEX_MASK;
+}
+
+fn pd_index(vaddr: u64) -> u64 {
+    return (vaddr >> 21) & INDEX_MASK;
+}
+
+fn pt_index(vaddr: u64) -> u64 {
+    return (vaddr >> 12) & INDEX_MASK;
+}
+
+fn page_align(addr: u64) -> u64 {
+    return addr & PAGE_MASK;
+}
+
+fn is_kernel_half(vaddr: u64) -> bool {
+    return pml4_index(vaddr) >= KERNEL_PML4_START;
+}
+
+fn user_page_flags() -> u64 {
+    return PTE_PRESENT | PTE_WRITE | PTE_USER;
+}
+
+// =============================================================================
+// Test Harness
+// =============================================================================
+fn assert_eq(got: u64, expected: u64, test_name: &str, test_id: i32) {
+    if got == expected {
+        println(f"  [PASS] {test_name}");
+    } else {
+        println(f"  [FAIL] {test_name}: got {got}, expected {expected}");
+        exit(test_id);
+    }
+}
+
+fn assert_true(cond: bool, test_name: &str, test_id: i32) {
+    if cond {
+        println(f"  [PASS] {test_name}");
+    } else {
+        println(f"  [FAIL] {test_name}");
+        exit(test_id);
+    }
+}
+
+fn assert_false(cond: bool, test_name: &str, test_id: i32) {
+    if !cond {
+        println(f"  [PASS] {test_name}");
+    } else {
+        println(f"  [FAIL] {test_name}: expected false");
+        exit(test_id);
+    }
+}
+
+fn main() -> i32 {
+    // =========================================================================
+    // Tests 1-4: Index extraction for USER_BASE = 0x400000
+    // 0x400000 = 4MB → PML4=0, PDP=0, PD=2, PT=0
+    // =========================================================================
+    assert_eq(pml4_index(USER_BASE), 0, "0x400000 PML4=0", 1);
+    assert_eq(pdp_index(USER_BASE), 0, "0x400000 PDP=0", 2);
+    assert_eq(pd_index(USER_BASE), 2, "0x400000 PD=2", 3);
+    assert_eq(pt_index(USER_BASE), 0, "0x400000 PT=0", 4);
+
+    // =========================================================================
+    // Tests 5-8: Index extraction for 0x401000 (next page after base)
+    // 0x401000 = 0x400000 + 0x1000 → PML4=0, PDP=0, PD=2, PT=1
+    // =========================================================================
+    let next_page: u64 = 0x401000;
+    assert_eq(pml4_index(next_page), 0, "0x401000 PML4=0", 5);
+    assert_eq(pdp_index(next_page), 0, "0x401000 PDP=0", 6);
+    assert_eq(pd_index(next_page), 2, "0x401000 PD=2", 7);
+    assert_eq(pt_index(next_page), 1, "0x401000 PT=1", 8);
+
+    // =========================================================================
+    // Tests 9-12: Index extraction for KERNEL_BASE = 0xFFFFFFFF80000000
+    // Kernel higher-half: PML4=511, PDP=510, PD=0, PT=0
+    // =========================================================================
+    assert_eq(pml4_index(KERNEL_BASE), 511, "KERNEL PML4=511", 9);
+    assert_eq(pdp_index(KERNEL_BASE), 510, "KERNEL PDP=510", 10);
+    assert_eq(pd_index(KERNEL_BASE), 0, "KERNEL PD=0", 11);
+    assert_eq(pt_index(KERNEL_BASE), 0, "KERNEL PT=0", 12);
+
+    // =========================================================================
+    // Test 13: Page flag constants are correct powers of 2
+    // =========================================================================
+    assert_eq(PTE_PRESENT, 1, "PRESENT=0x1", 13);
+    assert_eq(PTE_WRITE, 2, "WRITE=0x2", 13);
+    assert_eq(PTE_USER, 4, "USER=0x4", 13);
+
+    // =========================================================================
+    // Test 14: User page flags = PRESENT | WRITE | USER = 0x7
+    // This is the minimum required for Ring 3 access.
+    // =========================================================================
+    assert_eq(user_page_flags(), 7, "user flags=0x7 (P|W|U)", 14);
+
+    // =========================================================================
+    // Test 15: Page alignment rounds down
+    // =========================================================================
+    assert_eq(page_align(0x401234), 0x401000, "align(0x401234)=0x401000", 15);
+    assert_eq(page_align(0x400000), 0x400000, "align(0x400000)=0x400000", 15);
+    assert_eq(page_align(0x400FFF), 0x400000, "align(0x400FFF)=0x400000", 15);
+
+    // =========================================================================
+    // Test 16: Kernel half starts at PML4 index 256
+    // =========================================================================
+    assert_eq(KERNEL_PML4_START, 256, "kernel half starts at 256", 16);
+
+    // =========================================================================
+    // Test 17: USER_BASE is NOT in kernel half
+    // =========================================================================
+    assert_false(is_kernel_half(USER_BASE), "0x400000 not kernel", 17);
+
+    // =========================================================================
+    // Test 18: KERNEL_BASE IS in kernel half
+    // =========================================================================
+    assert_true(is_kernel_half(KERNEL_BASE), "0xFFFF..80000000 is kernel", 18);
+
+    // =========================================================================
+    // Test 19: Stack top address index extraction
+    // USER_STACK_TOP = 0x7FFFFFFFE000 → PML4=255, PDP=511, PD=511, PT=510
+    // This is the canonical user limit — last page before kernel half
+    // =========================================================================
+    let stack_top: u64 = 0x7FFFFFFFE000;
+    assert_eq(pml4_index(stack_top), 255, "stack PML4=255", 19);
+    assert_eq(pdp_index(stack_top), 511, "stack PDP=511", 19);
+    assert_eq(pd_index(stack_top), 511, "stack PD=511", 19);
+    assert_eq(pt_index(stack_top), 510, "stack PT=510", 19);
+
+    // =========================================================================
+    // Test 20: Stack top is NOT in kernel half (PML4=255 < 256)
+    // =========================================================================
+    assert_false(is_kernel_half(stack_top), "stack top not kernel", 20);
+
+    println("=== all page table tests passed ===");
+    return 0;
+}

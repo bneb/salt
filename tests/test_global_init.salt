@@ -1,0 +1,42 @@
+// =============================================================================
+// TDD: Global variable initialization
+// =============================================================================
+// Verifies that non-zero global initializers are correctly emitted
+// into the .data section, not zero-initialized.
+
+package main
+
+global OUR_IP: i64 = 42;
+global UDP_PORT: i64 = 8080;
+global ZERO_VAL: i64 = 0;
+global BYTE_FLAG: i32 = 255;
+
+fn assert_eq(got: i64, expected: i64, test_id: i32) {
+    if got != expected {
+        println(f"FAIL test {test_id}: got {got}, expected {expected}");
+        exit(test_id);
+    }
+}
+
+extern fn exit(code: i32);
+
+fn main() -> i32 {
+    // Explicit zero must stay zero
+    assert_eq(ZERO_VAL, 0, 1);
+    println("  [PASS] ZERO_VAL == 0");
+
+    // Non-zero globals must retain their initializer values
+    assert_eq(OUR_IP, 42, 2);
+    println("  [PASS] OUR_IP == 42");
+
+    assert_eq(UDP_PORT, 8080, 3);
+    println("  [PASS] UDP_PORT == 8080");
+
+    // i32 global widened to i64 for comparison
+    let flag = BYTE_FLAG as i64;
+    assert_eq(flag, 255, 4);
+    println("  [PASS] BYTE_FLAG == 255");
+
+    println("=== all global init tests passed ===");
+    return 0;
+}

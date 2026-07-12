@@ -1,0 +1,29 @@
+// Call precondition inside a while loop, discharged by invariant + guard.
+// touch() requires idx >= 0 && idx < limit; the loop invariant (i >= 0)
+// and guard (i < len) together satisfy both clauses.
+package test_loop_call_precond_proved
+
+fn touch(idx: i64, limit: i64)
+    requires idx >= 0;
+    requires idx < limit;
+{
+    // No-op: contract verification is the point.
+    let _ = idx;
+    let _ = limit;
+}
+
+fn clear_buf(len: i64)
+    requires len >= 0;
+{
+    let mut i: i64 = 0;
+    while i < len {
+        invariant i >= 0;
+        touch(i, len);
+        i = i + 1;
+    }
+}
+
+pub fn main() -> i32 {
+    clear_buf(10);
+    return 0;
+}

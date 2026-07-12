@@ -1,0 +1,136 @@
+// KeuOS Context: C10M Coordination
+//
+// The KeuOSContext is the top-level coordination structure
+// shared across all worker cores. It owns the shutdown flag,
+// active task count, io_uring ring, and DMA arena.
+//
+// The Graceful Exit sequence:
+//   1. STOP_INGEST  → set shutdown_flag (Release)
+//   2. DRAIN_TASKS  → loop until active_tasks = 0
+//   3. DRAIN_MAIL   → drain all mailboxes
+//   4. NIC_RESET    → pulse_io_teardown(ring)
+//   5. UNMAP_ARENA  → dma_arena.deinit() (munlock + munmap)
+
+package std.net.context
+
+import std.mem.arena.IsolatedArena
+import std.mem.arena.DmaArena
+import std.mem.arena.DelayedFreeMailbox
+import std.task.executor
+
+// ============================================================================
+// Configuration
+// ============================================================================
+
+const MAX_WORKERS: i64 = 8;  // M4 Pro performance cores
+
+// ============================================================================
+// KeuOS Context
+// ============================================================================
+
+struct KeuOSContext {
+    // Shutdown coordination (atomic)
+    shutdown_flag: i64,   // 0 = running, 1 = shutting down
+    active_tasks: i64,    // Atomic counter of in-flight tasks
+
+    // I/O ring (io_uring / kqueue)
+    ring: Ptr<u8>,
+
+    // Memory
+    dma_arena: DmaArena,
+    mailboxes: [DelayedFreeMailbox; 8],  // One per worker
+    arenas: [IsolatedArena; 8],         // One per worker
+
+    // Diagnostics
+    total_requests_served: i64,
+}
+
+impl KeuOSContext {
+    fn new(ring: Ptr<u8>, arena_size: i64, dma_pages: i64) -> KeuOSContext {
+        return KeuOSContext {
+            shutdown_flag: 0,
+            active_tasks: 0,
+            ring: ring,
+            dma_arena: DmaArena::new(dma_pages),
+            mailboxes: [DelayedFreeMailbox::new(); 8],
+            arenas: [IsolatedArena::new(arena_size); 8],
+            total_requests_served: 0,
+        };
+    }
+
+    // Signal all workers to stop accepting new work
+    fn signal_shutdown(self: &mut KeuOSContext) {
+        intrinsics::atomic_store_i64(
+            &self.shutdown_flag as Ptr<u8>,
+            1
+        );
+    }
+
+    // Check if shutdown has been requested
+    fn is_shutting_down(self: &KeuOSContext) -> bool {
+        let flag = intrinsics::atomic_load_i64(&self.shutdown_flag as Ptr<u8>);
+        return flag != 0;
+    }
+
+    // Increment active task count (called when a task is spawned)
+    fn task_started(self: &mut KeuOSContext) {
+        intrinsics::atomic_add_i64(&self.active_tasks, 1);
+    }
+
+    // Decrement active task count (called when a task completes)
+    fn task_completed(self: &mut KeuOSContext) {
+        intrinsics::atomic_add_i64(&self.active_tasks, -1);
+        self.total_requests_served = self.total_requests_served + 1;
+    }
+
+    // Check if all tasks are drained
+    fn all_tasks_drained(self: &KeuOSContext) -> bool {
+        let n = intrinsics::atomic_load_i64(&self.active_tasks as Ptr<u8>);
+        return n == 0;
+    }
+}
+
+// ============================================================================
+// Graceful Shutdown — The "Flush, Drain, Unmap" Sequence
+// ============================================================================
+//
+// Safety invariant (Z3 proven):
+//   shutdown_flag = true ∧ active_tasks = 0 ⟹ mailbox.head = null
+//
+// This ensures no TaskFrame is ever orphaned during shutdown.
+
+@pulse
+fn graceful_shutdown(ctx: &mut KeuOSContext) {
+    // Phase 1: STOP_INGEST
+    // Signal all workers to stop accepting new CQEs
+    ctx.signal_shutdown();
+
+    // Phase 2: DRAIN_TASKS
+    // Loop until all in-flight tasks complete naturally
+    while !ctx.all_tasks_drained() {
+        // Keep draining mailboxes while tasks wind down
+        for w in 0..MAX_WORKERS {
+            ctx.mailboxes[w].drain(&mut ctx.arenas[w]);
+        }
+        intrinsics::m4_wfe();  // Low-power wait
+    }
+
+    // Phase 3: DRAIN_MAILBOX (final sweep)
+    // All tasks are done, but frames may still be in-flight via Treiber stacks
+    for w in 0..MAX_WORKERS {
+        ctx.mailboxes[w].drain_treiber(&mut ctx.arenas[w]);
+    }
+
+    // Phase 4: NIC_RESET
+    // Tear down the io_uring / kqueue ring
+    intrinsics::pulse_io_teardown(ctx.ring);
+
+    // Phase 5: UNMAP_ARENA
+    // Return pinned DMA memory to the kernel
+    ctx.dma_arena.deinit();
+
+    // Phase 6: Reset per-worker arenas
+    for w in 0..MAX_WORKERS {
+        ctx.arenas[w].reset();
+    }
+}

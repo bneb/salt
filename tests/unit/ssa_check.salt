@@ -1,0 +1,13 @@
+fn main() -> i32 {
+    let x = 10; // Immutable, should be SSA
+    let y = 20; // Immutable, should be SSA
+    
+    let mut z = 0; // Mutable, should be Ptr (alloca)
+    z = x + y;
+    
+    if (z > 25) {
+        z = z + 1;
+    }
+    
+    return z;
+}

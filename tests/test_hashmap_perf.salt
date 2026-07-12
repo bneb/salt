@@ -1,0 +1,16 @@
+import std.collections.hash_map.HashMap
+fn main() -> i32 {
+    let mut total: i64 = 0;
+    let mut round: i64 = 0;
+    while round < 1000 {
+        let mut map = HashMap<i64, i64>::with_capacity(100);
+        let mut i: i64 = 0;
+        while i < 100 { map.insert(i, i * 10); i += 1; }
+        i = 0;
+        while i < 100 { total += map.get_unchecked(i); i += 1; }
+        map.drop();
+        round += 1;
+    }
+    println(f"Total: {total}");
+    return 0;
+}

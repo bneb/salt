@@ -1,0 +1,8 @@
+fn matmul_test() {
+    let a = Tensor<f32, 2, 2>::zeros();
+    let b = Tensor<f32, 2, 2>::zeros();
+    let c = a * b; // matmul
+    let d = a + b; // addition
+}
+
+pub fn main() {}

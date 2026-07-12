@@ -1,0 +1,15 @@
+concept Positive<T> {
+    requires(v: T) {
+        v > 0
+    }
+}
+
+impl Positive<i32>;
+
+fn safe_div<T: Positive>(n: i32, d: T) -> i32 {
+    return n
+}
+
+fn main() -> i32 {
+    return 0
+}

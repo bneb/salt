@@ -1,0 +1,179 @@
+// =============================================================================
+// tests/test_arp_table.salt
+// ARP Table Insert/Lookup/Eviction — Unit Test
+// =============================================================================
+//
+// Verifies the ARP table's pure in-memory logic:
+//   - Insert + Lookup: find an entry by IP
+//   - Lookup miss: return false for unknown IP
+//   - Update existing: overwrite MAC for an existing IP
+//   - Table overflow: 17th entry evicts slot 0
+//
+// No hardware or VirtIO dependencies. Tests the same logic as
+// kernel/net/arp.salt's arp_table_update / arp_lookup functions.
+// =============================================================================
+
+package main
+
+import std.core.ptr.Ptr
+
+extern fn puts(s: Ptr<u8>) -> i32;
+extern fn exit(code: i32);
+
+// --- Pure functions under test (mirror of kernel/net/arp.salt) ---------------
+
+struct ArpEntry {
+    ip: u32,
+    mac: [u8; 6],
+    valid: bool,
+}
+
+const ARP_TABLE_SIZE: i32 = 16;
+global ARP_TABLE: [ArpEntry; 16] = [ArpEntry { ip: 0, mac: [0 as u8; 6], valid: false }; 16];
+
+fn arp_lookup(ip: u32, out_mac: &mut [u8; 6]) -> bool {
+    let mut i: i32 = 0;
+    while i < ARP_TABLE_SIZE {
+        if ARP_TABLE[i].valid {
+            if ARP_TABLE[i].ip == ip {
+                let mut j: u32 = 0;
+                while j < 6 {
+                    (*out_mac)[j] = ARP_TABLE[i].mac[j];
+                    j = j + 1;
+                }
+                return true;
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn arp_table_update(ip: u32, mac: [u8; 6]) {
+    // Update existing entry
+    let mut i: i32 = 0;
+    while i < ARP_TABLE_SIZE {
+        if ARP_TABLE[i].valid {
+            if ARP_TABLE[i].ip == ip {
+                ARP_TABLE[i].mac = mac;
+                return;
+            }
+        }
+        i = i + 1;
+    }
+
+    // Insert into first empty slot
+    let mut j: i32 = 0;
+    while j < ARP_TABLE_SIZE {
+        if !ARP_TABLE[j].valid {
+            ARP_TABLE[j].ip = ip;
+            ARP_TABLE[j].mac = mac;
+            ARP_TABLE[j].valid = true;
+            return;
+        }
+        j = j + 1;
+    }
+
+    // Table full — overwrite slot 0
+    ARP_TABLE[0].ip = ip;
+    ARP_TABLE[0].mac = mac;
+}
+
+// --- Test helpers -----------------------------------------------------------
+
+fn fail(msg: Ptr<u8>) {
+    puts(msg);
+    exit(1);
+}
+
+fn mac_eq(a: [u8; 6], b: [u8; 6]) -> bool {
+    let mut i: u32 = 0;
+    while i < 6 {
+        if a[i] != b[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// --- Tests ------------------------------------------------------------------
+
+fn main() -> i32 {
+    // ---- Test 1: Insert + Lookup -------------------------------------------
+    let mac1: [u8; 6] = [0xAA as u8, 0xBB as u8, 0xCC as u8, 0xDD as u8, 0xEE as u8, 0xFF as u8];
+    let ip1: u32 = 0x0A000202;  // 10.0.2.2
+
+    arp_table_update(ip1, mac1);
+
+    let mut out: [u8; 6] = [0 as u8; 6];
+    let found = arp_lookup(ip1, &mut out);
+    if !found {
+        fail("FAIL: lookup should find inserted entry" as Ptr<u8>);
+    }
+    if !mac_eq(out, mac1) {
+        fail("FAIL: looked-up MAC does not match inserted MAC" as Ptr<u8>);
+    }
+
+    // ---- Test 2: Lookup miss -----------------------------------------------
+    let mut out2: [u8; 6] = [0 as u8; 6];
+    let found2 = arp_lookup(0x0A000263, &mut out2);  // 10.0.2.99 (never inserted)
+    if found2 {
+        fail("FAIL: lookup should return false for unknown IP" as Ptr<u8>);
+    }
+
+    // ---- Test 3: Update existing -------------------------------------------
+    let mac2: [u8; 6] = [0x11 as u8, 0x22 as u8, 0x33 as u8, 0x44 as u8, 0x55 as u8, 0x66 as u8];
+    arp_table_update(ip1, mac2);  // Same IP, different MAC
+
+    let mut out3: [u8; 6] = [0 as u8; 6];
+    let found3 = arp_lookup(ip1, &mut out3);
+    if !found3 {
+        fail("FAIL: lookup should still find entry after update" as Ptr<u8>);
+    }
+    if !mac_eq(out3, mac2) {
+        fail("FAIL: looked-up MAC should be the updated one" as Ptr<u8>);
+    }
+
+    // ---- Test 4: Fill table + overflow eviction ----------------------------
+    // Table currently has 1 entry (ip1). Fill remaining 15 slots (2..16).
+    let mut k: i32 = 2;
+    while k <= 16 {
+        let fill_ip: u32 = 0xC0A80000 | (k as u32);  // 192.168.0.k
+        let fill_mac: [u8; 6] = [k as u8, k as u8, k as u8, k as u8, k as u8, k as u8];
+        arp_table_update(fill_ip, fill_mac);
+        k = k + 1;
+    }
+
+    // Now table is full (16 entries). Insert 17th → should overwrite slot 0.
+    let overflow_ip: u32 = 0xC0A800FF;  // 192.168.0.255
+    let overflow_mac: [u8; 6] = [0xFF as u8, 0xFF as u8, 0xFF as u8, 0xFF as u8, 0xFF as u8, 0xFF as u8];
+    arp_table_update(overflow_ip, overflow_mac);
+
+    // Verify slot 0 was overwritten: original ip1 should be gone
+    let mut out4: [u8; 6] = [0 as u8; 6];
+    let found4 = arp_lookup(ip1, &mut out4);
+    if found4 {
+        fail("FAIL: original ip1 should have been evicted from slot 0" as Ptr<u8>);
+    }
+
+    // Verify overflow entry is findable
+    let mut out5: [u8; 6] = [0 as u8; 6];
+    let found5 = arp_lookup(overflow_ip, &mut out5);
+    if !found5 {
+        fail("FAIL: overflow entry should be findable" as Ptr<u8>);
+    }
+    if !mac_eq(out5, overflow_mac) {
+        fail("FAIL: overflow entry MAC mismatch" as Ptr<u8>);
+    }
+
+    // Verify an entry from the middle of the table survived
+    let mut out6: [u8; 6] = [0 as u8; 6];
+    let found6 = arp_lookup(0xC0A8000A, &mut out6);  // 192.168.0.10
+    if !found6 {
+        fail("FAIL: middle entry should not have been evicted" as Ptr<u8>);
+    }
+
+    puts("PASS: all arp table tests" as Ptr<u8>);
+    return 0;
+}

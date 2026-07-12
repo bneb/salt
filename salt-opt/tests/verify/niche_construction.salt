@@ -1,0 +1,3 @@
+fn make_opt(b: Box<i32>) -> Option<Box<i32>> {
+    return Some(b)
+}

@@ -1,0 +1,50 @@
+// test_loop_invariant.salt — End-to-end test for loop invariant parsing + codegen
+// Tests that `invariant` statements and `for .. in ..` loops with bounds compile correctly.
+
+package main
+
+import std.io.println
+
+fn sum_range(n: i64) -> i64 {
+    let mut total: i64 = 0;
+    for i in 0..n {
+        invariant i >= 0;
+        total = total + i;
+    }
+    return total;
+}
+
+fn nested_loop_sum(rows: i64, cols: i64) -> i64 {
+    let mut total: i64 = 0;
+    for i in 0..rows {
+        for j in 0..cols {
+            total = total + 1;
+        }
+    }
+    return total;
+}
+
+fn bounded_access() -> i64 {
+    let mut sum: i64 = 0;
+    for i in 0..10 {
+        invariant i < 10;
+        sum = sum + i;
+    }
+    return sum;
+}
+
+fn main() -> i32 {
+    // Test 1: Basic loop with invariant
+    let s: i64 = sum_range(10);
+    println(f"sum_range(10) = {s}");  // 45
+
+    // Test 2: Nested loops
+    let n: i64 = nested_loop_sum(4, 8);
+    println(f"nested_loop_sum(4, 8) = {n}");  // 32
+
+    // Test 3: Bounded access with invariant
+    let b: i64 = bounded_access();
+    println(f"bounded_access() = {b}");  // 45
+
+    return 0;
+}

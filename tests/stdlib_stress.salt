@@ -1,0 +1,46 @@
+package tests.stdlib_stress
+import std.collections.vec.Vec
+import std.mem.allocator.HeapAllocator
+import std.string.String
+fn test_vec_basic() -> i32 {
+    let alloc = HeapAllocator {};
+    let mut v = Vec<i32, HeapAllocator>::new(alloc, 4);
+    for i in 0..100 { v.push(i); }
+    if v.len() != 100 { return 1; }
+    for i in 0..100 { if v.get_unchecked(i) != i { return 2; } }
+    let popped = v.pop_unchecked();
+    if v.len() != 99 { v.free(); return 3; }
+    v.free(); return 0;
+}
+fn test_vec_growth() -> i32 {
+    let alloc = HeapAllocator {};
+    let mut v = Vec<i64, HeapAllocator>::new(alloc, 4);
+    if v.capacity() != 4 { return 1; }
+    for i in 0..16 { v.push(i as i64 * 10); }
+    if v.capacity() < 16 { return 2; }
+    for i in 0..16 { if v.get_unchecked(i) != (i * 10) as i64 { v.free(); return 3; } }
+    v.free(); return 0;
+}
+fn test_nested_vec_2() -> i32 {
+    let alloc = HeapAllocator {};
+    let mut outer = Vec<Vec<i32, HeapAllocator>, HeapAllocator>::new(alloc, 4);
+    for i in 0..5 { let mut inner = Vec::<i32, HeapAllocator>::new(alloc, 4); for j in 0..10 { inner.push(i * 10 + j); } outer.push(inner); }
+    if outer.len() != 5 { for i in 0..outer.len() { outer.get_unchecked(i).free(); } outer.free(); return 1; }
+    for i in 0..outer.len() { outer.get_unchecked(i).free(); }
+    outer.free(); return 0;
+}
+fn test_string() -> i32 {
+    let mut s = String::new();
+    s.push_ascii(72); s.push_ascii(105); s.push_ascii(33);
+    if s.len() != 3 { s.free(); return 1; }
+    if s.byte_at(0) != 72 { s.free(); return 2; }
+    s.free(); return 0;
+}
+fn main() -> i32 {
+    let mut failures = 0;
+    let r1 = test_vec_basic(); if r1 != 0 { failures += 1; }
+    let r2 = test_vec_growth(); if r2 != 0 { failures += 1; }
+    let r3 = test_nested_vec_2(); if r3 != 0 { failures += 1; }
+    let r4 = test_string(); if r4 != 0 { failures += 1; }
+    return failures;
+}

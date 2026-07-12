@@ -1,0 +1,13 @@
+concept NonZero<T> {
+    requires(v: T) {
+        v != 0
+    }
+}
+
+fn safe_div<T: NonZero>(a: i32, b: T) -> i32 {
+    a / b
+}
+
+fn main() -> i32 {
+    safe_div(10, 0)
+}

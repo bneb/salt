@@ -1,0 +1,66 @@
+// tests/test_http_stringview.salt — TDD for HTTP StringView API
+package main
+
+import std.core.ptr.Ptr
+import std.core.str.StringView
+import std.http.response.write_response
+
+extern fn malloc(size: i64) -> Ptr<u8>;
+extern fn free(ptr: Ptr<u8>);
+extern fn exit(code: i32);
+
+fn assert_true(cond: bool, test_id: i32) {
+    if !cond {
+        println(f"FAIL test {test_id}");
+        exit(test_id);
+    }
+}
+
+fn main() -> i32 {
+    println("=== HTTP StringView Tests ===");
+
+    let buf = malloc(4096);
+
+    // Test 1: Write a 200 response with StringView content-type and body
+    let ct = StringView::from_raw("text/plain" as Ptr<u8>, 10);
+    let body = StringView::from_raw("Hello, Salt!" as Ptr<u8>, 12);
+    let n = write_response(buf, 200, ct, body);
+    assert_true(n > 0, 1);
+    println("  [PASS] write_response returns positive byte count");
+
+    // Test 2: Verify the response contains status line
+    let resp = StringView::from_raw(buf, n);
+    // First 15 bytes should be "HTTP/1.1 200 OK"
+    let byte0 = buf.read();              // 'H' = 72
+    let byte4 = buf.offset(4).read();    // '/' = 47
+    assert_true(byte0 == 72, 2);
+    assert_true(byte4 == 47, 2);
+    println("  [PASS] response starts with HTTP/1.1");
+
+    // Test 3: Verify body is at the end
+    // Body "Hello, Salt!" should appear at the end of the response
+    let last_h_pos = n - 12;  // body starts at n - body_len
+    let hb = buf.offset(last_h_pos).read();  // 'H' = 72
+    assert_true(hb == 72, 3);
+    let lb = buf.offset(n - 1).read();       // '!' = 33
+    assert_true(lb == 33, 3);
+    println("  [PASS] body appears at end of response");
+
+    // Test 4: Write a 404 response
+    let body404 = StringView::from_raw("Not Found" as Ptr<u8>, 9);
+    let n2 = write_response(buf, 404, ct, body404);
+    assert_true(n2 > 0, 4);
+    // "HTTP/1.1 404 Not Found" starts with H
+    assert_true(buf.read() == 72, 4);
+    println("  [PASS] 404 response");
+
+    // Test 5: Write a 500 response
+    let body500 = StringView::from_raw("Error" as Ptr<u8>, 5);
+    let n3 = write_response(buf, 500, ct, body500);
+    assert_true(n3 > 0, 5);
+    println("  [PASS] 500 response");
+
+    free(buf);
+    println("\n=== All HTTP StringView tests passed ===");
+    return 0;
+}

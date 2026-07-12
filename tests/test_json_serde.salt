@@ -1,0 +1,134 @@
+// tests/test_json_serde.salt — TDD for JSON serialization
+package main
+
+import std.json.json.{JsonWriter, JsonParser, JsonValue, ToJson}
+import std.json.json.{JSON_NUMBER, JSON_BOOL, JSON_STRING, JSON_NULL}
+import std.core.ptr.Ptr
+import std.core.str.StringView
+
+extern fn malloc(size: i64) -> Ptr<u8>;
+extern fn free(ptr: Ptr<u8>);
+extern fn exit(code: i32);
+
+fn assert_true(cond: bool, test_id: i32) {
+    if !cond {
+        println(f"FAIL test {test_id}");
+        exit(test_id);
+    }
+}
+
+fn main() -> i32 {
+    println("=== JSON Serde Tests ===");
+
+    // Allocate a scratch buffer for JSON writing
+    let buf = malloc(1024);
+
+    // Test 1: Write and parse i64
+    let mut w1 = JsonWriter::new(buf, 1024);
+    w1.write_i64(42);
+    let written = w1.bytes_written();
+    assert_true(written == 2, 1);  // "42" = 2 chars
+    let mut p1 = JsonParser::new(buf, written);
+    let v1 = p1.parse_value();
+    assert_true(v1.is_ok(), 1);
+    let jv1 = v1.unwrap();
+    assert_true(jv1.type_tag == JSON_NUMBER, 1);
+    assert_true(jv1.num_val > 41.9, 1);
+    assert_true(jv1.num_val < 42.1, 1);
+    println("  [PASS] i64 round-trip: 42");
+
+    // Test 2: Write and parse bool (true)
+    let mut w2 = JsonWriter::new(buf, 1024);
+    w2.write_bool(true);
+    let written2 = w2.bytes_written();
+    assert_true(written2 == 4, 2);  // "true" = 4 chars
+    let mut p2 = JsonParser::new(buf, written2);
+    let v2 = p2.parse_value();
+    assert_true(v2.is_ok(), 2);
+    let jv2 = v2.unwrap();
+    assert_true(jv2.type_tag == JSON_BOOL, 2);
+    assert_true(jv2.bool_val, 2);
+    println("  [PASS] bool round-trip: true");
+
+    // Test 3: Write and parse bool (false)
+    let mut w3 = JsonWriter::new(buf, 1024);
+    w3.write_bool(false);
+    let written3 = w3.bytes_written();
+    assert_true(written3 == 5, 3);  // "false" = 5 chars
+    let mut p3 = JsonParser::new(buf, written3);
+    let v3 = p3.parse_value();
+    assert_true(v3.is_ok(), 3);
+    let jv3 = v3.unwrap();
+    assert_true(jv3.type_tag == JSON_BOOL, 3);
+    assert_true(!jv3.bool_val, 3);
+    println("  [PASS] bool round-trip: false");
+
+    // Test 4: Write and parse null
+    let mut w4 = JsonWriter::new(buf, 1024);
+    w4.write_null();
+    let written4 = w4.bytes_written();
+    assert_true(written4 == 4, 4);  // "null" = 4 chars
+    let mut p4 = JsonParser::new(buf, written4);
+    let v4 = p4.parse_value();
+    assert_true(v4.is_ok(), 4);
+    let jv4 = v4.unwrap();
+    assert_true(jv4.type_tag == JSON_NULL, 4);
+    println("  [PASS] null round-trip");
+
+    // Test 5: Write and parse string
+    let mut w5 = JsonWriter::new(buf, 1024);
+    let hello = "hello";
+    let hello_sv = StringView { data: hello as Ptr<u8>, len: 5 };
+    w5.write_sv(hello as Ptr<u8>, 5);
+    let written5 = w5.bytes_written();
+    assert_true(written5 == 7, 5);  // "\"hello\"" = 7 chars
+    let mut p5 = JsonParser::new(buf, written5);
+    let v5 = p5.parse_value();
+    assert_true(v5.is_ok(), 5);
+    let jv5 = v5.unwrap();
+    assert_true(jv5.type_tag == JSON_STRING, 5);
+    assert_true(jv5.str_len == 5, 5);
+    println("  [PASS] string round-trip: \"hello\"");
+
+    // Test 6: ToJson trait on i64
+    let val: i64 = 99;
+    let mut w6 = JsonWriter::new(buf, 1024);
+    val.to_json(&mut w6);
+    let written6 = w6.bytes_written();
+    assert_true(written6 == 2, 6);  // "99" = 2 chars
+    let mut p6 = JsonParser::new(buf, written6);
+    let v6 = p6.parse_value();
+    assert_true(v6.is_ok(), 6);
+    let jv6 = v6.unwrap();
+    assert_true(jv6.num_val > 98.9, 6);
+    println("  [PASS] ToJson trait: i64(99)");
+
+    // Test 7: ToJson trait on bool
+    let flag: bool = true;
+    let mut w7 = JsonWriter::new(buf, 1024);
+    flag.to_json(&mut w7);
+    let written7 = w7.bytes_written();
+    assert_true(written7 == 4, 7);
+    let mut p7 = JsonParser::new(buf, written7);
+    let v7 = p7.parse_value();
+    assert_true(v7.is_ok(), 7);
+    let jv7 = v7.unwrap();
+    assert_true(jv7.bool_val, 7);
+    println("  [PASS] ToJson trait: bool(true)");
+
+    // Test 8: Negative number round-trip
+    let mut w8 = JsonWriter::new(buf, 1024);
+    w8.write_i64(-42);
+    let written8 = w8.bytes_written();
+    let mut p8 = JsonParser::new(buf, written8);
+    let v8 = p8.parse_value();
+    assert_true(v8.is_ok(), 8);
+    let jv8 = v8.unwrap();
+    assert_true(jv8.num_val < -41.9, 8);
+    assert_true(jv8.num_val > -42.1, 8);
+    println("  [PASS] negative i64 round-trip: -42");
+
+    free(buf);
+    println("\n=== All JSON serde tests passed ===");
+    return 0;
+}

@@ -1,0 +1,41 @@
+// Minimal test: can we mutate struct fields via &mut self in a while loop?
+
+package main
+
+import std.core.ptr.Ptr
+
+struct Counter {
+    pub pos: i64,
+    pub limit: i64
+}
+
+impl Counter {
+    pub fn tick(&mut self) -> i64 {
+        let old = self.pos;
+        self.pos = self.pos + 1;
+        return old;
+    }
+}
+
+fn main() -> i32 {
+    let mut c = Counter { pos: 0, limit: 5 };
+    
+    // Test 1: Basic mutation
+    let v0 = c.tick();
+    println(f"tick 0: pos={c.pos}, returned={v0}");
+    
+    // Test 2: While loop with mutation
+    while c.pos < c.limit {
+        let v = c.tick();
+        println(f"loop tick: pos={c.pos}, returned={v}");
+    }
+    
+    println(f"final pos: {c.pos}");
+    if c.pos != 5 {
+        println("FAIL: expected pos=5");
+        return 1;
+    }
+    
+    println("=== mut self test passed ===");
+    return 0;
+}

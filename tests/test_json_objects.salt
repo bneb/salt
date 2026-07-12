@@ -1,0 +1,111 @@
+// tests/test_json_objects.salt — TDD for JSON array/object parsing and writing
+package main
+
+import std.core.ptr.Ptr
+import std.json.json.{JsonWriter, JsonParser, JsonValue, JsonArray, JsonObject}
+import std.json.json.{JSON_NUMBER, JSON_BOOL, JSON_STRING, JSON_NULL}
+
+extern fn malloc(size: i64) -> Ptr<u8>;
+extern fn free(ptr: Ptr<u8>);
+extern fn exit(code: i32);
+
+fn assert_true(cond: bool, test_id: i32) {
+    if !cond {
+        println("FAIL");
+        exit(test_id);
+    }
+}
+
+fn main() -> i32 {
+    println("=== JSON Array/Object Tests ===");
+
+    let buf = malloc(4096);
+
+    // Test 1: Parse simple array [1,2,3]
+    let arr_input = "[1,2,3]";
+    let mut p1 = JsonParser::new(arr_input as Ptr<u8>, 7);
+    let mut arr = JsonArray::new();
+    let r1 = p1.parse_array(&mut arr);
+    assert_true(r1.is_ok(), 1);
+    assert_true(arr.len == 3, 1);
+    assert_true(arr.num_vals[0] > 0.9, 1);
+    assert_true(arr.num_vals[1] > 1.9, 1);
+    assert_true(arr.num_vals[2] > 2.9, 1);
+    println("  [PASS] parse [1,2,3]");
+
+    // Test 2: Parse empty array []
+    let empty_arr = "[]";
+    let mut p2 = JsonParser::new(empty_arr as Ptr<u8>, 2);
+    let mut arr2 = JsonArray::new();
+    let r2 = p2.parse_array(&mut arr2);
+    assert_true(r2.is_ok(), 2);
+    assert_true(arr2.len == 0, 2);
+    println("  [PASS] parse []");
+
+    // Test 3: Parse mixed-type array [1, true, "hello", null]
+    let mixed = "[1, true, \"hello\", null]";
+    let mut p3 = JsonParser::new(mixed as Ptr<u8>, 24);
+    let mut arr3 = JsonArray::new();
+    let r3 = p3.parse_array(&mut arr3);
+    assert_true(r3.is_ok(), 3);
+    assert_true(arr3.len == 4, 3);
+    assert_true(arr3.type_tags[0] == JSON_NUMBER, 3);
+    assert_true(arr3.type_tags[1] == JSON_BOOL, 3);
+    assert_true(arr3.type_tags[2] == JSON_STRING, 3);
+    assert_true(arr3.type_tags[3] == JSON_NULL, 3);
+    println("  [PASS] parse mixed-type array");
+
+    // Test 4: Parse simple object
+    let obj_input = "{\"name\":\"salt\",\"version\":1}";
+    let mut p4 = JsonParser::new(obj_input as Ptr<u8>, 27);
+    let mut obj = JsonObject::new();
+    let r4 = p4.parse_object(&mut obj);
+    assert_true(r4.is_ok(), 4);
+    assert_true(obj.len == 2, 4);
+    assert_true(obj.key_lens[0] == 4, 4);
+    assert_true(obj.val_type_tags[0] == JSON_STRING, 4);
+    assert_true(obj.key_lens[1] == 7, 4);
+    assert_true(obj.val_type_tags[1] == JSON_NUMBER, 4);
+    assert_true(obj.val_num_vals[1] > 0.9, 4);
+    println("  [PASS] parse object with name and version");
+
+    // Test 5: Parse empty object
+    let empty_obj = "{}";
+    let mut p5 = JsonParser::new(empty_obj as Ptr<u8>, 2);
+    let mut obj2 = JsonObject::new();
+    let r5 = p5.parse_object(&mut obj2);
+    assert_true(r5.is_ok(), 5);
+    assert_true(obj2.len == 0, 5);
+    println("  [PASS] parse empty object");
+
+    // Test 6: Write array [10,20,30]
+    let mut w6 = JsonWriter::new(buf, 4096);
+    w6.write_array_start();
+    w6.write_i64(10);
+    w6.write_comma();
+    w6.write_i64(20);
+    w6.write_comma();
+    w6.write_i64(30);
+    w6.write_array_end();
+    let written6 = w6.bytes_written();
+    assert_true(written6 == 10, 6);
+    assert_true(buf.read() == 91, 6);
+    assert_true(buf.offset(written6 - 1).read() == 93, 6);
+    println("  [PASS] write [10,20,30]");
+
+    // Test 7: Write object
+    let mut w7 = JsonWriter::new(buf, 4096);
+    w7.write_object_start();
+    w7.write_key("x" as Ptr<u8>, 1);
+    w7.write_i64(1);
+    w7.write_object_end();
+    let written7 = w7.bytes_written();
+    assert_true(written7 == 7, 7);
+    assert_true(buf.read() == 123, 7);
+    assert_true(buf.offset(written7 - 1).read() == 125, 7);
+    println("  [PASS] write object");
+
+    free(buf);
+    println("\n=== All JSON Array/Object tests passed ===");
+    return 0;
+}

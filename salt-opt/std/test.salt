@@ -1,0 +1,19 @@
+// The MVP Assertion Library
+
+pub fn assert(condition: bool) {
+    if !condition {
+        __salt_panic("Assertion Failed")
+    }
+}
+
+pub fn assert_eq(a: i32, b: i32) {
+    if a != b {
+        __salt_panic("Not Equal")
+    }
+}
+
+pub fn test(name: str, body: fn() -> void) {
+    // In the future, this prints to stdout. 
+    // For now, it just executes the block.
+    body()
+}

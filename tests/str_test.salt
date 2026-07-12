@@ -1,0 +1,43 @@
+// StringView Integration Test — no \r in string literals (MLIR escape issue)
+
+package main
+
+import std.core.str.StringView
+import std.core.ptr.Ptr
+
+fn main() -> i32 {
+    // Use a simple ASCII string without \r
+    let data = "GET /index.html HTTP/1.1 Host";
+    let s = StringView::from_raw(data as Ptr<u8>, 28);
+    println(f"len: {s.length()}");
+
+    let first = s.byte_at(0) as i64;
+    println(f"first byte: {first}");
+
+    let method = s.slice(0, 3);
+    println(f"method len: {method.length()}");
+
+    let space_idx = s.find_byte(32);
+    println(f"first space at: {space_idx}");
+
+    let empty = StringView::empty();
+    if empty.is_empty() {
+        println(f"empty: {1}");
+    }
+
+    if s.starts_with_byte(71) {
+        println(f"starts with G: {1}");
+    }
+
+    if method.eq3(71, 69, 84) {
+        println(f"method is GET: {1}");
+    }
+
+    let padded_data = "  hello  ";
+    let padded = StringView::from_raw(padded_data as Ptr<u8>, 9);
+    let trimmed = padded.trim();
+    println(f"trimmed len: {trimmed.length()}");
+
+    println("=== StringView tests passed ===");
+    return 0;
+}

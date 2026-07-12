@@ -1,0 +1,46 @@
+// =============================================================================
+// std.process — TDD Test Suite
+// =============================================================================
+// Tests subprocess execution via posix_spawn bridge.
+
+package main
+
+import std.core.ptr.Ptr
+
+extern fn exit(code: i32);
+extern fn salt_process_exec(program: Ptr<u8>, arg1: Ptr<u8>, arg2: Ptr<u8>, arg3: Ptr<u8>) -> i32;
+
+fn assert_eq(got: i64, expected: i64, test_id: i32) {
+    if got != expected {
+        println(f"FAIL test {test_id}: got {got}, expected {expected}");
+        exit(test_id);
+    }
+}
+
+fn main() -> i32 {
+    let null = 0 as Ptr<u8>;
+
+    // =========================================================================
+    // Test 1: Run /usr/bin/true -> exit code 0
+    // =========================================================================
+    let r1 = salt_process_exec("/usr/bin/true" as Ptr<u8>, null, null, null);
+    assert_eq(r1 as i64, 0, 1);
+    println("  [PASS] /usr/bin/true exits with 0");
+
+    // =========================================================================
+    // Test 2: Run /usr/bin/false -> exit code 1
+    // =========================================================================
+    let r2 = salt_process_exec("/usr/bin/false" as Ptr<u8>, null, null, null);
+    assert_eq(r2 as i64, 1, 2);
+    println("  [PASS] /usr/bin/false exits with 1");
+
+    // =========================================================================
+    // Test 3: Run echo with args
+    // =========================================================================
+    let r3 = salt_process_exec("/bin/echo" as Ptr<u8>, "hello" as Ptr<u8>, null, null);
+    assert_eq(r3 as i64, 0, 3);
+    println("  [PASS] /bin/echo hello exits with 0");
+
+    println("=== all process tests passed ===");
+    return 0;
+}

@@ -1,0 +1,91 @@
+// TDD: Server routing test — NO network calls, just verify routing logic
+
+package main
+
+import std.core.str.StringView
+import std.core.ptr.Ptr
+import std.http.response.write_response
+
+fn route(recv_buf: Ptr<u8>, n: i64, send_buf: Ptr<u8>) -> i64 {
+    let input = StringView::from_raw(recv_buf, n);
+
+    let sp1 = input.find_byte(32);
+    if sp1 < 0 {
+        return -1;
+    }
+
+    let after_method = input.slice(sp1 + 1, n);
+    let sp2 = after_method.find_byte(32);
+    if sp2 < 0 {
+        return -1;
+    }
+    let uri = after_method.slice(0, sp2);
+
+    // /health
+    if uri.length() == 7 && uri.starts_with_byte(47) {
+        let health = StringView::from_raw("/health" as Ptr<u8>, 7);
+        if uri.eq_bytes(&health) {
+            let resp_len = write_response(
+                send_buf, 200,
+                StringView::from_raw("application/json" as Ptr<u8>, 16),
+                StringView::from_raw("{\"status\":\"ok\"}" as Ptr<u8>, 15)
+            );
+            return resp_len;
+        }
+    }
+
+    // /echo?msg=<value>
+    if uri.length() >= 5 {
+        let prefix = uri.slice(0, 5);
+        let echo_pat = StringView::from_raw("/echo" as Ptr<u8>, 5);
+        if prefix.eq_bytes(&echo_pat) {
+            let q = uri.find_byte(63);
+            if q >= 0 {
+                let query = uri.slice(q + 1, uri.length());
+                let eq = query.find_byte(61);
+                if eq >= 0 {
+                    let value = query.slice(eq + 1, query.length());
+                    let resp_len = write_response(
+                        send_buf, 200,
+                        StringView::from_raw("application/json" as Ptr<u8>, 16),
+                        value
+                    );
+                    return resp_len;
+                }
+            }
+            let resp_len = write_response(
+                send_buf, 200,
+                StringView::from_raw("application/json" as Ptr<u8>, 16),
+                StringView::from_raw("{\"echo\":\"\"}" as Ptr<u8>, 11)
+            );
+            return resp_len;
+        }
+    }
+
+    // 404
+    let resp_len = write_response(
+        send_buf, 404,
+        StringView::from_raw("application/json" as Ptr<u8>, 16),
+        StringView::from_raw("{\"error\":\"not found\"}" as Ptr<u8>, 20)
+    );
+    return resp_len;
+}
+
+fn main() -> i32 {
+    let mut send_buf: [u8; 512] = [0; 512];
+
+    let data1 = "GET /echo?msg=hello HTTP/1.1\nHost: x\n\n";
+    let r1 = route(data1 as Ptr<u8>, 37, &send_buf[0] as Ptr<u8>);
+    println(f"echo resp len: {r1}");
+
+    let data2 = "GET /health HTTP/1.1\nHost: x\n\n";
+    let r2 = route(data2 as Ptr<u8>, 29, &send_buf[0] as Ptr<u8>);
+    println(f"health resp len: {r2}");
+
+    let data3 = "GET /unknown HTTP/1.1\nHost: x\n\n";
+    let r3 = route(data3 as Ptr<u8>, 30, &send_buf[0] as Ptr<u8>);
+    println(f"404 resp len: {r3}");
+
+    println("=== routing test passed ===");
+    return 0;
+}

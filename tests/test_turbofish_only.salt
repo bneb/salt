@@ -1,0 +1,10 @@
+// test_turbofish_only.salt - TDD test for ONLY turbofish syntax
+
+import std.collections.hash_map.HashMap
+
+fn main() -> i32 {
+    println("Testing HashMap<i64, i64>::with_capacity...");
+    let map = HashMap<i64, i64>::with_capacity(16);
+    println("PASS!");
+    return 0;
+}

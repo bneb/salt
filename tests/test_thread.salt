@@ -1,0 +1,58 @@
+// =============================================================================
+// std.thread — TDD Test Suite
+// =============================================================================
+// Tests thread spawning and joining via pthread bridge.
+// Validates auto Fn→i64 coercion (no manual `as i64` cast required).
+
+package main
+
+import std.thread.Thread
+
+extern fn exit(code: i32);
+
+// Worker function — uses println to prove execution
+fn worker() {
+    println("    (worker thread executed)");
+}
+
+fn assert_eq(got: i64, expected: i64, test_id: i32) {
+    if got != expected {
+        println(f"FAIL test {test_id}: got {got}, expected {expected}");
+        exit(test_id);
+    }
+}
+
+fn main() -> i32 {
+    // =========================================================================
+    // Test 1: Thread::spawn(worker) — NO `as i64` cast (auto Fn→i64 coercion)
+    // =========================================================================
+    let t1 = Thread::spawn(worker);
+    let r1 = t1.join();
+    assert_eq(r1 as i64, 0, 1);
+    println("  [PASS] Thread::spawn(worker) — auto coercion");
+
+    // =========================================================================
+    // Test 2: Multiple threads via high-level API
+    // =========================================================================
+    let t2 = Thread::spawn(worker);
+    let t3 = Thread::spawn(worker);
+    let t4 = Thread::spawn(worker);
+    let j2 = t2.join();
+    let j3 = t3.join();
+    let j4 = t4.join();
+    assert_eq(j2 as i64, 0, 2);
+    assert_eq(j3 as i64, 0, 3);
+    assert_eq(j4 as i64, 0, 4);
+    println("  [PASS] 3x Thread::spawn(worker) — multi-thread");
+
+    // =========================================================================
+    // Test 3: Thread::spawn with explicit cast still works (backward compat)
+    // =========================================================================
+    let t5 = Thread::spawn(worker as i64);
+    let j5 = t5.join();
+    assert_eq(j5 as i64, 0, 5);
+    println("  [PASS] Thread::spawn(worker as i64) — backward compat");
+
+    println("=== all thread tests passed ===");
+    return 0;
+}

@@ -1,0 +1,28 @@
+// =============================================================================
+// Result<T> Unified Verification Test
+// =============================================================================
+// Tests generic monomorphization for Result<i32> and Result<f64>.
+
+package main
+
+import std.core.result.Result
+import std.status.Status
+
+fn main() -> i32 {
+    // Test 1: Result<i32> with Status
+    let s1: Result<i32> = Result::Ok(42);
+    if !s1.is_ok() { return 1; }
+    if s1.unwrap() != 42 { return 2; }
+
+    let s2: Result<i32> = Result::Err(Status::not_found("test"));
+    if !s2.is_err() { return 3; }
+    if s2.unwrap_or(100) != 100 { return 4; }
+
+    // Test 2: Result<f64>
+    let f1: Result<f64> = Result::Ok(3.14);
+    let val = f1.unwrap();
+    if val < 3.13 || val > 3.15 { return 5; }
+
+    println(f"Result tests passed");
+    return 0;
+}

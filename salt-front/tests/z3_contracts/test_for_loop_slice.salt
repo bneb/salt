@@ -1,0 +1,23 @@
+// For-loop induction variable bounds discharge callee preconditions.
+// s.at(i) requires i >= 0 && i < s.len; the for-loop bounds (i >= 0,
+// i < n) plus the caller requires (n <= s.len) satisfy both clauses.
+package test_for_loop_slice
+
+import std.core.slice
+import std.core.ptr.Ptr
+
+fn sum(s: Slice<i64>, n: i64) -> i64
+    requires n <= s.len();
+{
+    let mut total: i64 = 0;
+    for i in 0..n {
+        total = total + s.at(i);
+    }
+    return total;
+}
+
+pub fn main() -> i32 {
+    let buf = Slice::new(0 as Ptr<i64>, 100);
+    let result = sum(buf, 50);
+    return result as i32;
+}

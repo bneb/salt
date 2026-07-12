@@ -1,0 +1,3 @@
+
+// 7. Unknown Reference
+const C_BAD: i32 = C_UNKNOWN_VAR;

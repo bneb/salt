@@ -1,0 +1,16 @@
+extern fn assert_eq(a: i64, b: i64);
+
+fn main() {
+    let a: u64 = 1;
+    let b: u64 = 5;
+    let c = (a << b) | 1;
+    assert_eq(c as i64, 33);
+
+    let d: u32 = 0xFFFFFFFF;
+    let e = d >> 1; // logical shift right
+    assert_eq(e as i64, 0x7FFFFFFF);
+
+    let f: i32 = -1; // 0xFFFFFFFF
+    let g = f >> 1; // arithmetic shift right
+    assert_eq(g as i64, -1);
+}

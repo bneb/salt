@@ -1,0 +1,55 @@
+// =============================================================================
+// Test: Structural Formatting via f-string interpolation
+// =============================================================================
+// Verifies that user-defined structs can be printed in f-strings
+// using the compiler's auto-derived write_to support.
+// Tests multiple instances of the same struct type (SSA uniqueness).
+// =============================================================================
+
+package main
+
+extern fn exit(code: i32);
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+impl Point {
+    pub fn new(x: i64, y: i64) -> Point {
+        return Point { x: x, y: y };
+    }
+}
+
+struct Color {
+    r: i32,
+    g: i32,
+    b: i32,
+}
+
+fn main() -> i32 {
+    println("=== Struct Fmt Tests ===");
+
+    // --- Test 1: println with struct in f-string ---
+    let p = Point::new(10, 20);
+    println(f"Player location: {p}");
+
+    // --- Test 2: f-string with multiple structs of SAME type ---
+    // This is the critical regression test: two Point values in separate f-strings
+    // must not produce SSA redefinitions in the auto-derived write_to.
+    let a = Point::new(1, 2);
+    let b = Point::new(3, 4);
+    println(f"From {a}");
+    println(f"To {b}");
+
+    // --- Test 3: Different struct type ---
+    let c = Color { r: 255, g: 128, b: 0 };
+    println(f"Color: {c}");
+
+    // --- Test 4: f-string with struct and primitive mixed ---
+    let score: i64 = 100;
+    println(f"Score: {score} at {p}");
+
+    println("struct_fmt: PASS");
+    return 0;
+}

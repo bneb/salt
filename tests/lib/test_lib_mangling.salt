@@ -1,0 +1,17 @@
+// Test: Library mode symbol mangling
+// Validates that `pub fn init()` in a package gets mangled to
+// `package__path__init` when compiled with --lib.
+// @no_mangle functions should retain bare names.
+
+package test.lib_mangling
+
+pub fn init() {
+    // This should export as test__lib_mangling__init
+}
+
+@no_mangle
+pub fn bare_init() {
+    // This should export as bare_init (no mangling)
+}
+
+pub fn main() {}

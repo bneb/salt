@@ -1,0 +1,22 @@
+// Z3 Contract Test: OOB slice access MUST be rejected.
+// off <= buf.len() allows off == len, which is out of bounds for set().
+// Expected: Z3 rejects (SAT counterexample), compile error.
+package test_slice_cursor_rejected
+
+import std.core.slice
+import std.core.ptr.Ptr
+
+fn bad(buf: Slice<u8>, v: u8) {
+    let mut off: i64 = 0;
+    while off <= buf.len() {
+        invariant off >= 0;
+        buf.set(off, v);
+        off = off + 1;
+    }
+}
+
+pub fn main() -> i32 {
+    let buf = Slice::new(0 as Ptr<u8>, 4);
+    bad(buf, 0 as u8);
+    return 0;
+}

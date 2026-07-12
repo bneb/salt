@@ -1,0 +1,182 @@
+// =============================================================================
+// std.json — TDD Test Suite
+// =============================================================================
+// Tests JSON parsing and emission for all primitive types.
+
+package main
+
+import std.core.ptr.Ptr
+import std.core.str.StringView
+import std.json.json.JsonParser
+import std.json.json.JsonWriter
+import std.json.json.JsonValue
+import std.json.json.JSON_STRING
+import std.json.json.JSON_NUMBER
+import std.json.json.JSON_BOOL
+import std.json.json.JSON_NULL
+
+extern fn exit(code: i32);
+
+fn assert_eq_i32(actual: i32, expected: i32, test_id: i32) {
+    if actual != expected {
+        println(f"FAIL test {test_id}: expected {expected}, got {actual}");
+        exit(test_id);
+    }
+}
+
+fn assert_true(cond: bool, test_id: i32) {
+    if !cond {
+        println(f"FAIL test {test_id}");
+        exit(test_id);
+    }
+}
+
+fn main() -> i32 {
+    // =========================================================================
+    // Test 1: Parse integer
+    // =========================================================================
+    let num_str = "42";
+    let mut parser = JsonParser::new(num_str as Ptr<u8>, 2);
+    let r1 = parser.parse_value();
+    assert_true(r1.is_ok(), 1);
+    let v1 = r1.unwrap();
+    assert_eq_i32(v1.type_tag, JSON_NUMBER, 2);
+    // 42.0 check
+    if v1.num_val < 41.9 || v1.num_val > 42.1 {
+        println(f"FAIL test 3: num_val wrong");
+        exit(3);
+    }
+    println("  [PASS] parse integer 42");
+
+    // =========================================================================
+    // Test 2: Parse negative number
+    // =========================================================================
+    let neg_str = "-7";
+    let mut p2 = JsonParser::new(neg_str as Ptr<u8>, 2);
+    let r2 = p2.parse_value();
+    assert_true(r2.is_ok(), 4);
+    let v2 = r2.unwrap();
+    assert_eq_i32(v2.type_tag, JSON_NUMBER, 5);
+    if v2.num_val < -7.1 || v2.num_val > -6.9 {
+        println(f"FAIL test 6: negative number wrong");
+        exit(6);
+    }
+    println("  [PASS] parse negative -7");
+
+    // =========================================================================
+    // Test 3: Parse float
+    // =========================================================================
+    let float_str = "3.14";
+    let mut p3 = JsonParser::new(float_str as Ptr<u8>, 4);
+    let r3 = p3.parse_value();
+    assert_true(r3.is_ok(), 7);
+    let v3 = r3.unwrap();
+    assert_eq_i32(v3.type_tag, JSON_NUMBER, 8);
+    if v3.num_val < 3.13 || v3.num_val > 3.15 {
+        println(f"FAIL test 9: float wrong");
+        exit(9);
+    }
+    println("  [PASS] parse float 3.14");
+
+    // =========================================================================
+    // Test 4: Parse string
+    // =========================================================================
+    let str_input = "\"hello\"";
+    let mut p4 = JsonParser::new(str_input as Ptr<u8>, 7);
+    let r4 = p4.parse_value();
+    assert_true(r4.is_ok(), 10);
+    let v4 = r4.unwrap();
+    assert_eq_i32(v4.type_tag, JSON_STRING, 11);
+    // Check string content is "hello" (5 bytes)
+    if v4.str_len != 5 {
+        println(f"FAIL test 12: str_len expected 5, got {v4.str_len}");
+        exit(12);
+    }
+    println("  [PASS] parse string \"hello\"");
+
+    // =========================================================================
+    // Test 5: Parse true
+    // =========================================================================
+    let true_str = "true";
+    let mut p5 = JsonParser::new(true_str as Ptr<u8>, 4);
+    let r5 = p5.parse_value();
+    assert_true(r5.is_ok(), 13);
+    let v5 = r5.unwrap();
+    assert_eq_i32(v5.type_tag, JSON_BOOL, 14);
+    assert_true(v5.bool_val, 15);
+    println("  [PASS] parse true");
+
+    // =========================================================================
+    // Test 6: Parse false
+    // =========================================================================
+    let false_str = "false";
+    let mut p6 = JsonParser::new(false_str as Ptr<u8>, 5);
+    let r6 = p6.parse_value();
+    assert_true(r6.is_ok(), 16);
+    let v6 = r6.unwrap();
+    assert_eq_i32(v6.type_tag, JSON_BOOL, 17);
+    assert_true(!v6.bool_val, 18);
+    println("  [PASS] parse false");
+
+    // =========================================================================
+    // Test 7: Parse null
+    // =========================================================================
+    let null_str = "null";
+    let mut p7 = JsonParser::new(null_str as Ptr<u8>, 4);
+    let r7 = p7.parse_value();
+    assert_true(r7.is_ok(), 19);
+    let v7 = r7.unwrap();
+    assert_eq_i32(v7.type_tag, JSON_NULL, 20);
+    println("  [PASS] parse null");
+
+    // =========================================================================
+    // Test 8: Parse with leading whitespace
+    // =========================================================================
+    let ws_str = "  42  ";
+    let mut p8 = JsonParser::new(ws_str as Ptr<u8>, 6);
+    let r8 = p8.parse_value();
+    assert_true(r8.is_ok(), 21);
+    let v8 = r8.unwrap();
+    assert_eq_i32(v8.type_tag, JSON_NUMBER, 22);
+    println("  [PASS] parse with whitespace");
+
+    // =========================================================================
+    // Test 9: Write number to buffer
+    // =========================================================================
+    let mut out_buf: [u8; 64] = [0; 64];
+    let mut writer = JsonWriter::new(&out_buf[0] as Ptr<u8>, 64);
+    let num_val = JsonValue::number(42.0);
+    let written = writer.write_i64(42);
+    assert_true(written > 0, 23);
+    println(f"  [PASS] write integer (wrote {written} bytes)");
+
+    // =========================================================================
+    // Test 10: Write bool to buffer 
+    // =========================================================================
+    let mut out_buf2: [u8; 64] = [0; 64];
+    let mut w2 = JsonWriter::new(&out_buf2[0] as Ptr<u8>, 64);
+    let written2 = w2.write_bool(true);
+    assert_true(written2 == 4, 24);  // "true" = 4 bytes
+    println("  [PASS] write bool true");
+
+    // =========================================================================
+    // Test 11: Write null to buffer
+    // =========================================================================
+    let mut out_buf3: [u8; 64] = [0; 64];
+    let mut w3 = JsonWriter::new(&out_buf3[0] as Ptr<u8>, 64);
+    let written3 = w3.write_null();
+    assert_true(written3 == 4, 25);  // "null" = 4 bytes
+    println("  [PASS] write null");
+
+    // =========================================================================
+    // Test 12: Write string to buffer
+    // =========================================================================
+    let mut out_buf4: [u8; 64] = [0; 64];
+    let mut w4 = JsonWriter::new(&out_buf4[0] as Ptr<u8>, 64);
+    let written4 = w4.write_string("hello" as Ptr<u8>, 5);
+    assert_true(written4 == 7, 26);  // "\"hello\"" = 7 bytes
+    println("  [PASS] write string");
+
+    println("=== all json tests passed ===");
+    return 0;
+}

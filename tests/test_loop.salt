@@ -1,0 +1,49 @@
+package main
+
+fn main() -> i32 {
+    // Test 1: Basic loop with break
+    let mut x: i32 = 0;
+    loop {
+        x = 42;
+        break;
+    }
+    if x != 42 {
+        println("FAIL: loop body should execute");
+        return 1;
+    }
+
+    // Test 2: Loop with counter and conditional break
+    let mut count: i32 = 0;
+    loop {
+        count = count + 1;
+        if count == 5 {
+            break;
+        }
+    }
+    if count != 5 {
+        println("FAIL: loop counter should reach 5");
+        return 1;
+    }
+
+    // Test 3: Loop with continue
+    let mut sum: i32 = 0;
+    let mut i: i32 = 0;
+    loop {
+        i = i + 1;
+        if i > 10 {
+            break;
+        }
+        if i % 2 == 0 {
+            continue;
+        }
+        sum = sum + i;
+    }
+    // sum of odd numbers 1..10 = 1+3+5+7+9 = 25
+    if sum != 25 {
+        println("FAIL: sum of odd 1..10 should be 25");
+        return 1;
+    }
+
+    println("PASS: loop keyword works!");
+    return 0;
+}

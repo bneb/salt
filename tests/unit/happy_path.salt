@@ -1,0 +1,14 @@
+concept NonZero<T> {
+    requires(v: T) {
+        v != 0
+    }
+}
+
+fn safe_div<T: NonZero>(a: i32, b: T) -> i32 {
+    a / b
+}
+
+fn main() -> i32 {
+    // This should PASS verification because 2 != 0
+    safe_div(10, 2)
+}

@@ -1,0 +1,83 @@
+// tests/test_traits.salt — TDD for Clone, Ord
+package main
+
+import std.core.clone.Clone
+import std.ord.{Ord, LESS, EQUAL, GREATER}
+
+extern fn exit(code: i32);
+
+fn assert_true(cond: bool, test_id: i32) {
+    if !cond {
+        println(f"FAIL test {test_id}");
+        exit(test_id);
+    }
+}
+
+fn main() -> i32 {
+    println("=== Trait Tests ===");
+
+    // =====================================================================
+    // Clone
+    // =====================================================================
+    println("\n--- Clone ---");
+
+    let a: i32 = 42;
+    let b = a.clone();
+    assert_true(b == 42, 1);
+    println("  [PASS] i32.clone()");
+
+    let c: i64 = 100;
+    let d = c.clone();
+    assert_true(d == 100, 2);
+    println("  [PASS] i64.clone()");
+
+    let e: f64 = 3.14;
+    let f = e.clone();
+    assert_true(f > 3.13, 3);
+    println("  [PASS] f64.clone()");
+
+    let g: bool = true;
+    let h = g.clone();
+    assert_true(h, 4);
+    println("  [PASS] bool.clone()");
+
+    // =====================================================================
+    // Ord
+    // =====================================================================
+    println("\n--- Ord ---");
+
+    let x: i64 = 10;
+    let y: i64 = 20;
+    let z: i64 = 10;
+
+    assert_true(x.cmp(&y) == LESS, 10);
+    println("  [PASS] 10.cmp(20) == LESS");
+
+    assert_true(y.cmp(&x) == GREATER, 11);
+    println("  [PASS] 20.cmp(10) == GREATER");
+
+    assert_true(x.cmp(&z) == EQUAL, 12);
+    println("  [PASS] 10.cmp(10) == EQUAL");
+
+    // i32 Ord
+    let p: i32 = 5;
+    let q: i32 = 10;
+    assert_true(p.cmp(&q) == LESS, 13);
+    println("  [PASS] i32: 5.cmp(10) == LESS");
+
+    // f64 Ord
+    let fa: f64 = 1.5;
+    let fb: f64 = 2.5;
+    assert_true(fa.cmp(&fb) == LESS, 14);
+    println("  [PASS] f64: 1.5.cmp(2.5) == LESS");
+
+    // Comparison via cmp result
+    assert_true(x.cmp(&y) < 0, 15);
+    println("  [PASS] cmp < 0 for less-than");
+
+    assert_true(y.cmp(&x) > 0, 16);
+    println("  [PASS] cmp > 0 for greater-than");
+
+    println("\n=== All trait tests passed ===");
+    return 0;
+}

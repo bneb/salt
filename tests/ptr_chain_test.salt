@@ -1,0 +1,56 @@
+// TDD Test: Ptr method chaining — isolate the receiver-value error
+// This tests the exact pattern used in response.salt's copy_bytes
+
+package main
+
+import std.core.ptr.Ptr
+
+// Test 1: read from a ptr parameter (not self.ptr)
+fn read_byte(ptr: Ptr<u8>, idx: i64) -> u8 {
+    let p = ptr.offset(idx);
+    return p.read();
+}
+
+// Test 2: write to a ptr parameter
+fn write_byte(ptr: Ptr<u8>, idx: i64, val: u8) {
+    let p = ptr.offset(idx);
+    p.write(val);
+}
+
+// Test 3: copy_bytes — the exact pattern from response.salt
+fn copy_bytes(dst: Ptr<u8>, offset: i64, src: Ptr<u8>, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < len {
+        let sp = src.offset(i);
+        let val = sp.read();
+        let dp = dst.offset(offset + i);
+        dp.write(val);
+        i = i + 1;
+    }
+    return offset + len;
+}
+
+fn main() -> i32 {
+    let data = "Hello World";
+    let src = data as Ptr<u8>;
+
+    // Test read_byte
+    let ch = read_byte(src, 0) as i64;
+    println(f"byte 0: {ch}");  // 'H' = 72
+
+    let ch4 = read_byte(src, 4) as i64;
+    println(f"byte 4: {ch4}");  // 'o' = 111
+
+    // Test copy_bytes
+    let mut buf: [u8; 32] = [0; 32];
+    let dst = &buf[0] as Ptr<u8>;
+    let written = copy_bytes(dst, 0, src, 5);
+    println(f"copied: {written}");
+
+    // Verify copy
+    let copied_ch = read_byte(dst, 0) as i64;
+    println(f"dst[0]: {copied_ch}");  // 'H' = 72
+
+    println("=== ptr_chain test passed ===");
+    return 0;
+}

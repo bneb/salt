@@ -1,0 +1,10 @@
+fn get_none() -> Option<Box<i32>> {
+    return None
+}
+
+fn is_some(opt: Option<Box<i32>>) -> i32 {
+    match opt {
+        Some(x) => 1,
+        None => 0,
+    }
+}

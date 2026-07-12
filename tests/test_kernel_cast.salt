@@ -1,0 +1,23 @@
+// Test: Integer → Reference cast (kernel raw pointer pattern)
+// Validates that `addr as &mut T` works for bare-metal memory-mapped I/O.
+// This pattern is used extensively in kernel drivers (VGA, PMM).
+
+package test
+
+fn main() -> i32 {
+    // Allocate a stack variable, get its address, cast to &mut u8
+    let mut x: u8 = 42;
+    let addr = (&x) as u64;
+
+    // Cast address back to reference — the critical kernel pattern
+    let ref_back = addr as &u8;
+
+    // Verify round-trip
+    if *ref_back == 42 {
+        println("PASS: Integer -> Reference cast works");
+        return 0;
+    } else {
+        println("FAIL: Integer -> Reference cast broken");
+        return 1;
+    }
+}

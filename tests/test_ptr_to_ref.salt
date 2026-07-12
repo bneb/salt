@@ -1,0 +1,81 @@
+// Test: generic struct returning &mut T from Ptr<T>.offset()
+// This matches the exact Slab<T> pattern that failed before.
+package main
+
+import std.core.ptr.Ptr
+import std.core.mem.{memset, size_of}
+
+extern fn puts(s: Ptr<u8>) -> i32;
+extern fn malloc(size: i64) -> Ptr<u8>;
+extern fn free(ptr: u64);
+
+struct Item {
+    x: i64,
+    y: i64,
+}
+
+struct GenericPool<T> {
+    data: Ptr<u8>,
+    elem_size: i64,
+}
+
+impl GenericPool<T> {
+    pub fn new(cap: i32) -> GenericPool<T> {
+        let elem_size = size_of::<T>();
+        let total = (cap as i64) * elem_size;
+        let raw = malloc(total);
+        let buf = raw as Ptr<u8>;
+        memset(buf as Ptr<i8>, 0, total);
+        return GenericPool::<T> { data: buf, elem_size: elem_size };
+    }
+
+    // Returns &mut T — the key pattern
+    pub fn get(&self, idx: i32) -> &mut T {
+        let offset = (idx as i64) * self.elem_size;
+        return self.data.offset(offset) as Ptr<T> as &mut T;
+    }
+
+    pub fn reset(&self, idx: i32) {
+        let offset = (idx as i64) * self.elem_size;
+        memset(self.data.offset(offset) as Ptr<i8>, 0, self.elem_size);
+    }
+
+    pub fn drop(&mut self) {
+        free(self.data as u64);
+    }
+}
+
+fn main() -> i32 {
+    let mut pool = GenericPool::<Item>::new(100);
+
+    // Write through &mut T reference
+    let item = pool.get(42);
+    item.x = 1234;
+    item.y = 5678;
+
+    // Read back
+    let check = pool.get(42);
+    if check.x != 1234 {
+        puts("FAIL: x != 1234" as Ptr<u8>);
+        pool.drop();
+        return 1;
+    }
+    if check.y != 5678 {
+        puts("FAIL: y != 5678" as Ptr<u8>);
+        pool.drop();
+        return 1;
+    }
+
+    // Reset
+    pool.reset(42);
+    let z = pool.get(42);
+    if z.x != 0 {
+        puts("FAIL: reset x != 0" as Ptr<u8>);
+        pool.drop();
+        return 1;
+    }
+
+    puts("PASS: generic_ptr_to_ref" as Ptr<u8>);
+    pool.drop();
+    return 0;
+}

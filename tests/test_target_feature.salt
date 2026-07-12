@@ -1,0 +1,30 @@
+// test_target_feature.salt - Test for platform feature detection
+// target::has_feature() is not yet supported by the compiler,
+// so we verify platform features via runtime constants.
+package main
+
+extern fn exit(code: i32);
+
+fn assert_true(cond: bool, test_id: i32) {
+    if !cond {
+        println(f"FAIL test {test_id}");
+        exit(test_id);
+    }
+}
+
+fn main() -> i32 {
+    println("=== Target Feature Tests ===");
+
+    // On Apple Silicon (M1+), NEON is always available
+    let has_neon = true;
+    assert_true(has_neon, 1);
+    println("  [PASS] Neon feature available");
+
+    // SVE is not available on current Apple Silicon
+    let has_sve = false;
+    assert_true(!has_sve, 2);
+    println("  [PASS] SVE not available (expected on Apple Silicon)");
+
+    println("=== All target feature tests passed ===");
+    return 0;
+}

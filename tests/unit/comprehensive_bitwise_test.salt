@@ -1,0 +1,55 @@
+extern fn assert_eq(a: i64, b: i64);
+
+fn test_u8() {
+    let a: u8 = 0xAA; // 10101010
+    let b: u8 = 0x55; // 01010101
+    assert_eq((a | b) as i64, 0xFF);
+    assert_eq((a & b) as i64, 0x00);
+    assert_eq((a ^ 0xFF) as i64, 0x55);
+    
+    let c: u8 = 1;
+    assert_eq((c << 7) as i64, 128);
+    assert_eq(((c << 7) >> 7) as i64, 1);
+}
+
+fn test_u32() {
+    let a: u32 = 0x12345678;
+    assert_eq((a & 0xFFFF) as i64, 0x5678);
+    assert_eq((a >> 16) as i64, 0x1234);
+    assert_eq((a << 4) as i64, 0x123456780 & 0xFFFFFFFF);
+}
+
+fn test_usize() {
+    let a: usize = 1000;
+    let b: usize = 24;
+    assert_eq((a + b) as i64, 1024);
+    assert_eq((a >> 3) as i64, 125);
+}
+
+fn test_comparisons() {
+    let a: u32 = 0xFFFFFFFF;
+    let b: u32 = 1;
+    // Unsigned comparison: a > b should be true
+    if a > b {
+        assert_eq(1, 1);
+    } else {
+        assert_eq(0, 1); // Fail
+    }
+
+    let c: i32 = -1; // 0xFFFFFFFF
+    let d: i32 = 1;
+    // Signed comparison: c < d should be true
+    if c < d {
+        assert_eq(1, 1);
+    } else {
+        assert_eq(0, 1); // Fail
+    }
+}
+
+fn main() -> i32 {
+    test_u8();
+    test_u32();
+    test_usize();
+    test_comparisons();
+    move 0;
+}

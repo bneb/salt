@@ -1,0 +1,5 @@
+fn main() -> i32 {
+    let x = 42;
+    let y = x.field; // ERROR: Field on non-struct
+    return 0;
+}

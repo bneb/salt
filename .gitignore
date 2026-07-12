@@ -1,0 +1,172 @@
+# =============================================================================
+# Salt / Lattice — .gitignore
+# =============================================================================
+
+# ─── Build artifacts ─────────────────────────────────────────────────────────
+*.o
+*.a
+*.so
+*.dylib
+*.mlir
+*.ll
+*.s
+!kernel/arch/**/*.S
+*.bc
+*.testmlir
+build/
+
+# ─── Bazel ───────────────────────────────────────────────────────────────────
+bazel-*
+
+# ─── Rust / Cargo ────────────────────────────────────────────────────────────
+target/
+
+# ─── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+.venv/
+
+# ─── Profiling & coverage ───────────────────────────────────────────────────
+*.profraw
+*.profdata
+coverage_report/
+coverage_artifacts/
+coverage_summary*.txt
+html_report/
+**/fuzz/artifacts/
+**/fuzz/corpus/
+
+# ─── Editors & OS ───────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+
+# ─── VS Code extension build artifacts ──────────────────────────────────────
+tools/salt-lsp/editors/vscode/node_modules/
+tools/salt-lsp/editors/vscode/out/
+tools/salt-lsp/editors/vscode/*.vsix
+tools/salt-lsp/editors/vscode/package-lock.json
+
+# ─── Logs & temporary output ────────────────────────────────────────────────
+*.log
+*.bak
+compile_error.txt
+output.txt
+help.txt
+*_symbols.txt
+
+# ─── Generated binaries (root-level) ────────────────────────────────────────
+/for_loop_test_exe
+/test_debug
+/deep_recursion
+/edge_cases
+/sieve_c
+/sieve_rs
+/sieve_salt
+/sovereign_train
+/sovereign_train_c
+/sovereign_train_old
+/test_arena_alloc_bin
+/test_arena_poison_bin
+/common_bridge.o
+/driver_v3.o
+/ml_bridge.o
+/runtime.o
+/benchmark_results.json
+
+# ─── Root-level scratch .salt files ─────────────────────────────────────────
+/test_raw_vec_fix.salt
+/test_tensor_ops.salt
+
+# ─── Build directories ─────────────────────────────────────────────────────
+/sovereign_rt/
+/qemu_build/
+
+# ─── Benchmark binaries & output ────────────────────────────────────────────
+benchmarks/*_c
+benchmarks/*_cpp
+benchmarks/*_rs
+benchmarks/*_salt
+benchmarks/*_salt_bin
+benchmarks/*_rust
+benchmarks/matmul_baseline
+benchmarks/writer_perf
+benchmarks/bin/
+benchmarks/*.mlir
+benchmarks/*.ll
+benchmarks/*.o
+benchmarks/*.s
+benchmarks/*.txt
+benchmarks/*.repro
+benchmarks/MLIR
+benchmarks/sieve_test
+benchmarks/sieve_stdlib.*
+benchmarks/slab_alloc.*
+benchmarks/string.*
+benchmarks/print.*
+benchmarks/shb_*
+benchmarks/debug.*
+
+# ML benchmark artifacts
+benchmarks/ml/*_c
+benchmarks/ml/*_salt
+benchmarks/ml/*.mlir
+benchmarks/ml/*.ll
+benchmarks/ml/*.o
+benchmarks/ml/*.s
+benchmarks/ml/*.bin
+benchmarks/ml/*.csv
+benchmarks/ml/*.txt
+benchmarks/ml/data/
+benchmarks/ml/.venv/
+benchmarks/ml/sweep*.sh
+
+# C10M benchmark artifacts
+benchmarks/c10m/*_c
+benchmarks/c10m/*_rs
+benchmarks/c10m/*_salt
+benchmarks/c10m/*_salt_bin
+benchmarks/c10m/*.txt
+benchmarks/c10m/*.ts
+
+# ─── Salt-front temporaries ─────────────────────────────────────────────────
+salt-front/sieve
+salt-front/sieve_*
+salt-front/sieve*.salt
+salt-front/*_bin
+salt-front/*_c
+salt-front/*.py
+salt-front/Makefile
+salt-front/*.sh
+salt-front/contextual_trie_verification.salt
+salt-front/nested_hydration.salt
+salt-front/test_io.salt
+salt-front/test_println.salt
+salt-front/verification_generics.salt
+salt-front/src/phase22_full.salt
+
+# ─── Data files ─────────────────────────────────────────────────────────────
+*.bin
+mnist_*.bin
+
+# ─── Root-level stale files ─────────────────────────────────────────────────
+/pipeline.sh
+/lattice_status.h
+/mini_driver.c
+/mini_test.c
+/test_utils.c
+/sieve_check.c
+/test_ptr.salt
+/test.salt
+/ipc_ping_pong.salt
+fail_semantic_*.salt
+
+# Basalt benchmark cache
+.bench_basalt/
+salt/build_linux/
+docs/BLOG_OUTLINE.md
+docs/launch/hn_post.md
+tools/blog-style.css
+tools/blog-style.css
+.claude/
+AGENTS.md

@@ -1,0 +1,110 @@
+// =============================================================================
+// tests/test_addr_types.salt
+// TDD: PhysAddr / VirtAddr domain type correctness
+// =============================================================================
+// 1:1 test file for kernel/core/addr.salt
+// Runs on HOST. Verifies conversion math, round-trips, and boundary cases.
+
+package main
+
+extern fn exit(code: i32);
+
+const KERNEL_BASE: u64 = 0xFFFFFFFF80000000;
+
+// ---- Domain types (mirroring kernel/core/addr.salt) ----
+struct PhysAddr { val: u64 }
+struct VirtAddr { val: u64 }
+
+fn phys_to_virt(p: PhysAddr) -> VirtAddr {
+    return VirtAddr { val: p.val + KERNEL_BASE };
+}
+
+fn virt_to_phys(v: VirtAddr) -> PhysAddr {
+    return PhysAddr { val: v.val - KERNEL_BASE };
+}
+
+fn phys_add(p: PhysAddr, offset: u64) -> PhysAddr {
+    return PhysAddr { val: p.val + offset };
+}
+
+fn virt_add(v: VirtAddr, offset: u64) -> VirtAddr {
+    return VirtAddr { val: v.val + offset };
+}
+
+fn virt_sub(v: VirtAddr, offset: u64) -> VirtAddr {
+    return VirtAddr { val: v.val - offset };
+}
+
+fn phys_as_u64(p: PhysAddr) -> u64 {
+    return p.val;
+}
+
+fn virt_as_u64(v: VirtAddr) -> u64 {
+    return v.val;
+}
+
+// ---- Harness ----
+fn assert_eq_u64(got: u64, expected: u64, id: i32) {
+    if got != expected {
+        println(f"FAIL test {id}: got {got}, expected {expected}");
+        exit(id);
+    }
+}
+
+// ---- Tests ----
+fn main() -> i32 {
+    println("=== test_addr_types (1:1 for kernel/core/addr.salt) ===");
+
+    // T1: phys_to_virt(0) == KERNEL_BASE
+    let v1 = phys_to_virt(PhysAddr { val: 0 });
+    assert_eq_u64(v1.val, KERNEL_BASE, 1);
+    println("  [PASS] phys_to_virt(0) == KERNEL_BASE");
+
+    // T2: phys_to_virt(0x1000) == KERNEL_BASE + 0x1000
+    let v2 = phys_to_virt(PhysAddr { val: 0x1000 });
+    assert_eq_u64(v2.val, KERNEL_BASE + 0x1000, 2);
+    println("  [PASS] phys_to_virt(0x1000)");
+
+    // T3: phys_to_virt(2MB) — PMM start range
+    let v3 = phys_to_virt(PhysAddr { val: 0x200000 });
+    assert_eq_u64(v3.val, 0xFFFFFFFF80200000, 3);
+    println("  [PASS] phys_to_virt(2MB)");
+
+    // T4: Round-trip: virt_to_phys(phys_to_virt(x)) == x
+    let orig = PhysAddr { val: 0x03FF0000 };
+    let back = virt_to_phys(phys_to_virt(orig));
+    assert_eq_u64(back.val, 0x03FF0000, 4);
+    println("  [PASS] round_trip(0x03FF0000)");
+
+    // T5: phys_add arithmetic
+    let base = PhysAddr { val: 0x1000 };
+    let top = phys_add(base, 4096);
+    assert_eq_u64(top.val, 0x2000, 5);
+    println("  [PASS] phys_add(0x1000, 4096)");
+
+    // T6: virt_add / virt_sub symmetry
+    let va = VirtAddr { val: 0xFFFFFFFF80001000 };
+    let added = virt_add(va, 96);
+    assert_eq_u64(added.val, 0xFFFFFFFF80001060, 6);
+    let subd = virt_sub(added, 96);
+    assert_eq_u64(subd.val, 0xFFFFFFFF80001000, 7);
+    println("  [PASS] virt_add/virt_sub symmetry");
+
+    // T7: kstack_top (reproduces the KSTACK_SIZE bug scenario)
+    let kbase = PhysAddr { val: 0x03FF2000 };
+    let ktop = phys_add(kbase, 4096);
+    assert_eq_u64(ktop.val, 0x03FF3000, 8);
+    let ktop_virt = phys_to_virt(ktop);
+    assert_eq_u64(ktop_virt.val, 0xFFFFFFFF83FF3000, 9);
+    println("  [PASS] kstack_top arithmetic");
+
+    // T8: explicit extraction via as_u64
+    let p = PhysAddr { val: 0xDEAD };
+    assert_eq_u64(phys_as_u64(p), 0xDEAD, 10);
+    let v = VirtAddr { val: 0xBEEF };
+    assert_eq_u64(virt_as_u64(v), 0xBEEF, 11);
+    println("  [PASS] explicit as_u64 extraction");
+
+    println("=== all addr type tests passed ===");
+    return 0;
+}

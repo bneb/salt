@@ -1,0 +1,36 @@
+package main
+import std.channel.channel.Channel
+import std.core.result.Result
+extern fn exit(code: i32);
+fn assert_true(cond: bool, id: i32) { if !cond { println(f"FAIL test {id}"); exit(id); } }
+fn main() -> i32 {
+    println("=== Channel Tests ===");
+    let mut ch = Channel::bounded(4);
+    assert_true(ch.capacity() == 4, 1); assert_true(ch.len() == 0, 1);
+    println("  [PASS] Channel::bounded(4)");
+    assert_true(ch.send(42).is_ok(), 2); assert_true(ch.len() == 1, 2);
+    println("  [PASS] send(42)");
+    let _ = ch.send(100); let _ = ch.send(200);
+    assert_true(ch.len() == 3, 3);
+    println("  [PASS] send multiple values");
+    let v1 = ch.try_recv(); assert_true(v1.is_ok(), 4); assert_true(v1.unwrap() == 42, 4);
+    println("  [PASS] try_recv() == 42 (FIFO)");
+    let v2 = ch.try_recv(); assert_true(v2.unwrap() == 100, 5);
+    println("  [PASS] try_recv() == 100");
+    let v3 = ch.try_recv(); assert_true(v3.unwrap() == 200, 6);
+    println("  [PASS] try_recv() == 200");
+    let v4 = ch.try_recv(); assert_true(v4.is_err(), 7);
+    println("  [PASS] try_recv() == Err (empty)");
+    let _ = ch.send(1); let _ = ch.send(2); let _ = ch.send(3); let _ = ch.send(4);
+    assert_true(ch.len() == 4, 8); assert_true(ch.is_full(), 8);
+    println("  [PASS] channel full at capacity");
+    assert_true(ch.try_send(5).is_err(), 9);
+    println("  [PASS] try_send on full returns Err");
+    assert_true(ch.try_recv().unwrap() == 1, 10);
+    assert_true(ch.try_recv().unwrap() == 2, 10);
+    assert_true(ch.try_recv().unwrap() == 3, 10);
+    assert_true(ch.try_recv().unwrap() == 4, 10);
+    assert_true(ch.len() == 0, 10);
+    println("  [PASS] FIFO drain 1,2,3,4");
+    println("\n=== All channel tests passed ==="); return 0;
+}

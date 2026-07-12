@@ -1,0 +1,49 @@
+package main
+import std.collections.hash_map.HashMap
+import std.hash.wyhash_mix
+struct Point { x: i64, y: i64 }
+impl Point {
+    @inline pub fn hash(&self) -> u64 {
+        let h1 = wyhash_mix(self.x as u64); let h2 = wyhash_mix(self.y as u64);
+        return wyhash_mix(h1 ^ (h2 << 16) ^ (h2 >> 48));
+    }
+    @inline pub fn eq(&self, other: &Point) -> bool { return self.x == other.x && self.y == other.y; }
+}
+fn test_point_basic() {
+    let mut map = HashMap<Point, i64>::with_capacity(16);
+    map.insert(Point { x: 0, y: 0 }, 100); map.insert(Point { x: 1, y: 2 }, 200); map.insert(Point { x: -5, y: 10 }, 300);
+    if map.get_unchecked(&Point { x: 0, y: 0 }) == 100 { println("PASS: Point(0,0) -> 100"); } else { println("FAIL: Point(0,0) lookup"); }
+    if map.get_unchecked(&Point { x: 1, y: 2 }) == 200 { println("PASS: Point(1,2) -> 200"); } else { println("FAIL: Point(1,2) lookup"); }
+    if map.get_unchecked(&Point { x: -5, y: 10 }) == 300 { println("PASS: Point(-5,10) -> 300"); } else { println("FAIL: Point(-5,10) lookup"); }
+    map.drop();
+}
+fn test_point_collision() {
+    let mut map = HashMap<Point, i64>::with_capacity(16);
+    map.insert(Point { x: 1, y: 0 }, 10); map.insert(Point { x: 0, y: 1 }, 20); map.insert(Point { x: 1, y: 1 }, 30);
+    let mut e: i64 = 0;
+    if map.get_unchecked(&Point { x: 1, y: 0 }) != 10 { e += 1; }
+    if map.get_unchecked(&Point { x: 0, y: 1 }) != 20 { e += 1; }
+    if map.get_unchecked(&Point { x: 1, y: 1 }) != 30 { e += 1; }
+    if e == 0 { println("PASS: Collision"); } else { println("FAIL: Collision"); }
+    map.drop();
+}
+fn test_point_remove() {
+    let mut map = HashMap<Point, i64>::with_capacity(16);
+    map.insert(Point { x: 5, y: 5 }, 555);
+    if map.remove(&Point { x: 5, y: 5 }) { println("PASS: Point removal"); } else { println("FAIL: Point removal"); }
+    if map.get(&Point { x: 5, y: 5 }).is_none() { println("PASS: removed, get None"); } else { println("FAIL: still findable"); }
+    map.drop();
+}
+fn test_point_large_scale() {
+    let mut map = HashMap<Point, i64>::with_capacity(16);
+    let mut i: i64 = 0; while i < 1000 { map.insert(Point { x: i, y: i * 2 }, i * 7); i += 1; }
+    i = 0; let mut e: i64 = 0;
+    while i < 1000 { if map.get_unchecked(&Point { x: i, y: i * 2 }) != i * 7 { e += 1; } i += 1; }
+    if e == 0 { println("PASS: large scale"); } else { println(f"FAIL: {e} errors"); }
+    map.drop();
+}
+fn main() -> i32 {
+    println("=== HashMap<Point, i64> Tests ===");
+    test_point_basic(); test_point_collision(); test_point_remove(); test_point_large_scale();
+    println("=== Tests Complete ==="); return 0;
+}

@@ -1,0 +1,423 @@
+// Test: Unified Result<T> + Status
+// Verifies the two-type error model: Option<T> and Result<T>
+
+package tests.cases.result_unified
+
+import std.status.Status
+import std.core.result.Result
+import std.core.option.Option
+
+extern fn exit(code: i32);
+
+// TDD: struct payload for ? operator test
+pub struct Point {
+    x: i64,
+    y: i64
+}
+
+fn make_point_ok() -> Result<Point> {
+    return Result<Point>::Ok(Point { x: 10, y: 20 });
+}
+
+fn make_point_err() -> Result<Point> {
+    return Result<Point>::Err(Status::not_found("test point"));
+}
+
+// Test ? on Result<Point> — Ok path
+fn try_struct_ok() -> Result<Point> {
+    let p = make_point_ok()?;
+    return Result<Point>::Ok(p);
+}
+
+// Test ? on Result<Point> — Err propagation
+fn try_struct_err() -> Result<Point> {
+    let p = make_point_err()?;
+    return Result<Point>::Ok(p);
+}
+
+fn main() -> i64 {
+    let failures: i64 = 0;
+
+    println("=== Result<T> Unified Tests ===");
+
+    // -------------------------------------------------------
+    // Section 1: Status construction and field access
+    // -------------------------------------------------------
+    println("\n--- Status Tests ---");
+
+    let s = Status::ok();
+    if s.is_ok() {
+        println("PASS: Status::ok().is_ok()");
+    } else {
+        println("FAIL: Status::ok().is_ok()");
+        failures = failures + 1;
+    }
+
+    let s2 = Status::with_detail(13, 42);
+    if s2.code == 13 {
+        println("PASS: Status::internal().code == 13");
+    } else {
+        println("FAIL: Status::internal().code != 13");
+        failures = failures + 1;
+    }
+
+    if s2.detail == 42 {
+        println("PASS: Status::internal(42).detail == 42");
+    } else {
+        println("FAIL: Status::internal(42).detail != 42");
+        failures = failures + 1;
+    }
+
+    let s3 = Status::not_found("test");
+    if s3.code == 5 {
+        println("PASS: Status::not_found().code == 5");
+    } else {
+        println("FAIL: Status::not_found().code != 5");
+        failures = failures + 1;
+    }
+
+    // -------------------------------------------------------
+    // Section 2: Result<i64> — Ok path
+    // -------------------------------------------------------
+    println("\n--- Result<i64> Ok Tests ---");
+
+    let ok_val = Result<i64>::Ok(100);
+
+    if ok_val.is_ok() {
+        println("PASS: Ok(100).is_ok()");
+    } else {
+        println("FAIL: Ok(100).is_ok()");
+        failures = failures + 1;
+    }
+
+    let unwrapped = ok_val.unwrap();
+    if unwrapped == 100 {
+        println("PASS: Ok(100).unwrap() == 1");
+    } else {
+        println("FAIL: Ok(100).unwrap() != 1");
+        failures = failures + 1;
+    }
+
+    // -------------------------------------------------------
+    // Section 3: Result<i64> — Err path
+    // -------------------------------------------------------
+    println("\n--- Result<i64> Err Tests ---");
+
+    let err_val = Result<i64>::Err(Status::with_detail(8, 12));
+
+    if err_val.is_err() {
+        println("PASS: Err(...).is_err()");
+    } else {
+        println("FAIL: Err(...).is_err()");
+        failures = failures + 1;
+    }
+
+    let st = err_val.status();
+    if st.code == 8 {
+        println("PASS: Err(ResourceExhausted).status().code == 8");
+    } else {
+        println("FAIL: Err(ResourceExhausted).status().code != 8");
+        failures = failures + 1;
+    }
+
+    if st.detail == 12 {
+        println("PASS: Err(ResourceExhausted(12)).status().detail == 12");
+    } else {
+        println("FAIL: Err(ResourceExhausted(12)).status().detail != 12");
+        failures = failures + 1;
+    }
+
+    // -------------------------------------------------------
+    // Section 4: unwrap_or
+    // -------------------------------------------------------
+    println("\n--- unwrap_or Tests ---");
+
+    let fallback = err_val.unwrap_or(999);
+    if fallback == 999 {
+        println("PASS: Err(...).unwrap_or(999) == 999");
+    } else {
+        println("FAIL: Err(...).unwrap_or(999) != 999");
+        failures = failures + 1;
+    }
+
+    let no_fallback = ok_val.unwrap_or(999);
+    if no_fallback == 100 {
+        println("PASS: Ok(100).unwrap_or(999) == 1");
+    } else {
+        println("FAIL: Ok(100).unwrap_or(999) != 1");
+        failures = failures + 1;
+    }
+
+    // -------------------------------------------------------
+    // Section 5: Status is_* testers — every canonical code
+    // -------------------------------------------------------
+    println("\n--- Status is_* Tester Tests ---");
+
+    // is_ok (already tested above, but verify cross-check)
+    if !Status::ok().is_err() {
+        println("PASS: ok().is_err() == false");
+    } else {
+        println("FAIL: ok().is_err() should be false");
+        failures = failures + 1;
+    }
+
+    // is_cancelled
+    if Status::cancelled("test").is_cancelled() {
+        println("PASS: cancelled().is_cancelled()");
+    } else {
+        println("FAIL: cancelled().is_cancelled()");
+        failures = failures + 1;
+    }
+
+    // is_unknown
+    if Status::unknown("test").is_unknown() {
+        println("PASS: unknown().is_unknown()");
+    } else {
+        println("FAIL: unknown().is_unknown()");
+        failures = failures + 1;
+    }
+
+    // is_invalid_argument
+    if Status::invalid_argument("test").is_invalid_argument() {
+        println("PASS: invalid_argument().is_invalid_argument()");
+    } else {
+        println("FAIL: invalid_argument().is_invalid_argument()");
+        failures = failures + 1;
+    }
+
+    // is_deadline_exceeded
+    if Status::deadline_exceeded("test").is_deadline_exceeded() {
+        println("PASS: deadline_exceeded().is_deadline_exceeded()");
+    } else {
+        println("FAIL: deadline_exceeded().is_deadline_exceeded()");
+        failures = failures + 1;
+    }
+
+    // is_not_found
+    if Status::not_found("test").is_not_found() {
+        println("PASS: not_found().is_not_found()");
+    } else {
+        println("FAIL: not_found().is_not_found()");
+        failures = failures + 1;
+    }
+
+    // is_already_exists
+    if Status::already_exists("test").is_already_exists() {
+        println("PASS: already_exists().is_already_exists()");
+    } else {
+        println("FAIL: already_exists().is_already_exists()");
+        failures = failures + 1;
+    }
+
+    // is_permission_denied
+    if Status::permission_denied("test").is_permission_denied() {
+        println("PASS: permission_denied().is_permission_denied()");
+    } else {
+        println("FAIL: permission_denied().is_permission_denied()");
+        failures = failures + 1;
+    }
+
+    // is_resource_exhausted
+    if Status::resource_exhausted("test").is_resource_exhausted() {
+        println("PASS: resource_exhausted().is_resource_exhausted()");
+    } else {
+        println("FAIL: resource_exhausted().is_resource_exhausted()");
+        failures = failures + 1;
+    }
+
+    // is_failed_precondition
+    if Status::failed_precondition("test").is_failed_precondition() {
+        println("PASS: failed_precondition().is_failed_precondition()");
+    } else {
+        println("FAIL: failed_precondition().is_failed_precondition()");
+        failures = failures + 1;
+    }
+
+    // is_aborted
+    if Status::aborted("test").is_aborted() {
+        println("PASS: aborted().is_aborted()");
+    } else {
+        println("FAIL: aborted().is_aborted()");
+        failures = failures + 1;
+    }
+
+    // is_out_of_range
+    if Status::out_of_range("test").is_out_of_range() {
+        println("PASS: out_of_range().is_out_of_range()");
+    } else {
+        println("FAIL: out_of_range().is_out_of_range()");
+        failures = failures + 1;
+    }
+
+    // is_unimplemented
+    if Status::unimplemented("test").is_unimplemented() {
+        println("PASS: unimplemented().is_unimplemented()");
+    } else {
+        println("FAIL: unimplemented().is_unimplemented()");
+        failures = failures + 1;
+    }
+
+    // is_internal
+    if Status::internal("test").is_internal() {
+        println("PASS: internal().is_internal()");
+    } else {
+        println("FAIL: internal().is_internal()");
+        failures = failures + 1;
+    }
+
+    // is_unavailable
+    if Status::unavailable("test").is_unavailable() {
+        println("PASS: unavailable().is_unavailable()");
+    } else {
+        println("FAIL: unavailable().is_unavailable()");
+        failures = failures + 1;
+    }
+
+    // is_data_loss
+    if Status::data_loss("test").is_data_loss() {
+        println("PASS: data_loss().is_data_loss()");
+    } else {
+        println("FAIL: data_loss().is_data_loss()");
+        failures = failures + 1;
+    }
+
+    // is_unauthenticated
+    if Status::unauthenticated("test").is_unauthenticated() {
+        println("PASS: unauthenticated().is_unauthenticated()");
+    } else {
+        println("FAIL: unauthenticated().is_unauthenticated()");
+        failures = failures + 1;
+    }
+
+    // Cross-check: not_found is NOT is_internal
+    if !Status::not_found("test").is_internal() {
+        println("PASS: not_found().is_internal() == false");
+    } else {
+        println("FAIL: not_found().is_internal() should be false");
+        failures = failures + 1;
+    }
+
+    // Cross-check: all error statuses are is_err
+    if Status::cancelled("test").is_err() {
+        println("PASS: cancelled().is_err() == true");
+    } else {
+        println("FAIL: cancelled().is_err() should be true");
+        failures = failures + 1;
+    }
+
+    // -------------------------------------------------------
+    // Section 6: Option<i64> still works
+    // -------------------------------------------------------
+    println("\n--- Option<i64> Tests ---");
+
+    let some_v = Option<i64>::Some(77);
+    let none_v = Option<i64>::None;
+
+    if some_v.is_some() {
+        println("PASS: Some(77).is_some()");
+    } else {
+        println("FAIL: Some(77).is_some()");
+        failures = failures + 1;
+    }
+
+    if none_v.is_none() {
+        println("PASS: None.is_none()");
+    } else {
+        println("FAIL: None.is_none()");
+        failures = failures + 1;
+    }
+
+    // -------------------------------------------------------
+    // Section 7: ? operator on struct-payload Result<T>
+    // (TDD: this exercises the type-punning extractvalue path)
+    // -------------------------------------------------------
+    println("\n--- ? on Result<Struct> Tests ---");
+
+    let try_ok = try_struct_ok();
+    if try_ok.is_ok() {
+        let point = try_ok.unwrap();
+        if point.x == 10 {
+            println("PASS: try_struct_ok()?.x == 1");
+        } else {
+            println("FAIL: try_struct_ok()?.x != 1");
+            failures = failures + 1;
+        }
+        if point.y == 20 {
+            println("PASS: try_struct_ok()?.y == 2");
+        } else {
+            println("FAIL: try_struct_ok()?.y != 2");
+            failures = failures + 1;
+        }
+    } else {
+        println("FAIL: try_struct_ok() returned Err");
+        failures = failures + 1;
+    }
+
+    let try_err = try_struct_err();
+    if try_err.is_err() {
+        let st7 = try_err.status();
+        if st7.code == 5 {
+            println("PASS: try_struct_err() propagated not_found");
+        } else {
+            println("FAIL: try_struct_err() wrong error code");
+            failures = failures + 1;
+        }
+    } else {
+        println("FAIL: try_struct_err() should have returned Err");
+        failures = failures + 1;
+    }
+
+    // -------------------------------------------------------
+    // Section 8: Option.ok_or
+    // -------------------------------------------------------
+    println("\n--- ok_or Tests ---");
+
+    let some_opt = Option<i64>::Some(42);
+    let ok_or_result = some_opt.ok_or(Status::internal("test"));
+    if ok_or_result.is_ok() {
+        let val = ok_or_result.unwrap();
+        if val == 42 {
+            println("PASS: Some(42).ok_or(...) == Ok(42)");
+        } else {
+            println("FAIL: Some(42).ok_or(...) value wrong");
+            failures = failures + 1;
+        }
+    } else {
+        println("FAIL: Some(42).ok_or(...) returned Err");
+        failures = failures + 1;
+    }
+
+    let none_opt = Option<i64>::None;
+    let none_result = none_opt.ok_or(Status::with_detail(5, 99));
+    if none_result.is_err() {
+        let st8 = none_result.status();
+        if st8.code == 5 {
+            println("PASS: None.ok_or(not_found) == Err(not_found)");
+        } else {
+            println("FAIL: None.ok_or(not_found) wrong code");
+            failures = failures + 1;
+        }
+        if st8.detail == 99 {
+            println("PASS: None.ok_or(not_found(99)).detail == 99");
+        } else {
+            println("FAIL: None.ok_or(not_found(99)).detail wrong");
+            failures = failures + 1;
+        }
+    } else {
+        println("FAIL: None.ok_or(not_found) should be Err");
+        failures = failures + 1;
+    }
+
+    // -------------------------------------------------------
+    // Summary
+    // -------------------------------------------------------
+    println("\n=== Summary ===");
+    if failures == 0 {
+        println("ALL TESTS PASSED");
+    } else {
+        println("SOME TESTS FAILED");
+        exit(1);
+    }
+
+    return 0;
+}

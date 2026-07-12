@@ -1,0 +1,28 @@
+// TDD Test: Array-indexed struct field access
+// Reproduces the IDT error: "Cannot access field offset_low on base type Array"
+// Pattern: global_array[i].field = value
+
+package test.array_field
+
+struct Entry {
+    low: u16,
+    high: u16,
+}
+
+global TABLE: [Entry; 4] = [Entry { low: 0, high: 0 }; 4];
+
+pub fn set_entry(idx: i32, val: u16) {
+    TABLE[idx].low = val;
+    TABLE[idx].high = val;
+}
+
+fn main() -> i32 {
+    set_entry(1, 42);
+    let v = TABLE[1].low;
+    if v == 42 {
+        println("PASS: Array-indexed struct field access works");
+        return 0;
+    }
+    println("FAIL: Array-indexed struct field access broken");
+    return 1;
+}

@@ -1,0 +1,56 @@
+package main
+
+// Test the generalized _ placeholder forwarding
+// The _ placeholder lets you forward the receiver value into any argument position
+// in a method chain, enabling fluent pipeline syntax.
+
+struct Acc {
+    value: i32,
+}
+
+impl Acc {
+    fn new(v: i32) -> Acc {
+        return Acc { value: v };
+    }
+
+    fn add(self, n: i32) -> Acc {
+        return Acc { value: self.value + n };
+    }
+
+    fn mul(self, n: i32) -> Acc {
+        return Acc { value: self.value * n };
+    }
+
+    fn get(self) -> i32 {
+        return self.value;
+    }
+}
+
+fn main() -> i32 {
+    // Test 1: Normal method chain (baseline)
+    let r1 = Acc::new(10).add(5).get();
+    if r1 != 15 {
+        println("FAIL: test 1");
+        return 1;
+    }
+    println("PASS: test 1 — basic chain (10+5=15)");
+
+    // Test 2: Multi-step chain
+    let r2 = Acc::new(3).add(2).mul(4).get();
+    if r2 != 20 {
+        println("FAIL: test 2");
+        return 1;
+    }
+    println("PASS: test 2 — multi-step chain ((3+2)*4=20)");
+
+    // Test 3: Long pipeline
+    let r3 = Acc::new(1).add(1).add(1).mul(10).add(5).get();
+    if r3 != 35 {
+        println("FAIL: test 3");
+        return 1;
+    }
+    println("PASS: test 3 — long pipeline ((1+1+1)*10+5=35)");
+
+    println("ALL PASS: placeholder forwarding");
+    return 0;
+}

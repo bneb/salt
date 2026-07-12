@@ -1,0 +1,20 @@
+fn loop_test(n: i32) -> i32 {
+    let mut x = 0;
+    
+    // Clean While Loop
+    while x < n {
+        invariant x >= 0;
+        x = x + 1;
+    }
+
+    // Clean For Loop
+    for i in 0..5 {
+        x = x + i;
+    }
+
+    return x;
+}
+
+fn main() -> i32 {
+    return loop_test(10);
+}

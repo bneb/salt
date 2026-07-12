@@ -1,0 +1,22 @@
+// Test file to verify proof witness verification works for valid code.
+// This test calls a function with a valid precondition.
+
+package main
+
+fn safe_fn(x: i64) -> i64
+    requires { x < 10 }
+{
+    return x * 2;
+}
+
+fn main() -> i32 {
+    // This call should pass verification since 5 < 10
+    let result: i64 = safe_fn(5);
+    println(f"Result: {result}");
+    if result != 10 {
+        println("FAIL: expected 10");
+        return 1;
+    }
+    println("PASS: proof witness verification works");
+    return 0;
+}

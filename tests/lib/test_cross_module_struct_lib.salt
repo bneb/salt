@@ -1,0 +1,28 @@
+// =============================================================================
+// tests/lib/test_cross_module_struct_lib.salt
+// Library module that exports a struct type
+// =============================================================================
+// This is the "library" side of the cross-module struct TDD test.
+// It defines PhysAddr and a function that returns it.
+
+package test.types.addr
+
+pub struct PhysAddr {
+    pub val: u64,
+}
+
+pub struct VirtAddr {
+    pub val: u64,
+}
+
+const KERNEL_BASE: u64 = 0xFFFFFFFF80000000;
+
+pub fn phys_to_virt(p: PhysAddr) -> VirtAddr {
+    return VirtAddr { val: p.val + KERNEL_BASE };
+}
+
+pub fn make_phys(raw: u64) -> PhysAddr {
+    return PhysAddr { val: raw };
+}
+
+pub fn main() {}

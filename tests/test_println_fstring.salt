@@ -1,0 +1,57 @@
+// =============================================================================
+// Test: println with f-strings in release mode
+// =============================================================================
+// Verifies that println correctly handles:
+//   1. Plain string literals: println("hello")
+//   2. Format strings with {}: println("val: {}", x)
+//   3. F-strings: println(f"val: {x}")
+//   4. F-strings with expressions: println(f"sum: {a + b}")
+//   5. Embedded newlines: println("\nheader")
+//   6. Multiple types: i64, f32, bool
+// =============================================================================
+
+package main
+
+fn main() -> i32 {
+    // --- Test 1: Plain string println ---
+    println("=== println f-string test ===");
+
+    // --- Test 2: Classic format string ---
+    let x: i64 = 42;
+    println("x = {}", x);
+
+    // --- Test 3: Basic f-string with i64 ---
+    let epoch: i64 = 5;
+    println(f"Epoch: {epoch}");
+
+    // --- Test 4: F-string with multiple values ---
+    let a: i64 = 10;
+    let b: i64 = 20;
+    println(f"a={a}, b={b}");
+
+    // --- Test 5: F-string with expression ---
+    println(f"sum={a + b}");
+
+    // --- Test 6: F-string with f32 ---
+    let accuracy: f32 = 97.5f32;
+    println(f"accuracy: {accuracy}%");
+
+    // --- Test 7: Embedded newline in string ---
+    println("\n--- section ---");
+
+    // --- Test 8: Real-world pattern (keuos_train style) ---
+    let epoch_ms: i64 = 1234;
+    let acc: i64 = 95;
+    println(f"Epoch {epoch}: {acc}% accuracy ({epoch_ms} ms)");
+
+    // --- Test 9: Empty println ---
+    println("");
+
+    // --- Test 10: Multiple f-strings in sequence ---
+    let total: i64 = 9999;
+    println(f"Total time: {total} ms");
+    println("Done.");
+
+    println("println_fstring: PASS");
+    return 0;
+}

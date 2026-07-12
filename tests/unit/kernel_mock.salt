@@ -1,0 +1,16 @@
+package kernel.core.pmm;
+
+struct PmmState {
+    free_pages: u64,
+    total_pages: u64
+}
+
+global PMM: PmmState;
+
+fn init() -> i32 {
+    let state = PMM; // Read global
+    PMM = state;     // Write global
+    return 0;
+}
+
+pub fn main() {}

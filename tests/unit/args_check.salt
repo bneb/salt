@@ -1,0 +1,9 @@
+fn process(a: Owned<i32>, b: Owned<i32>) -> i32 {
+    let val = a[0];
+    b[0] = val;
+    return val;
+}
+
+fn main() -> i32 {
+    return 0;
+}

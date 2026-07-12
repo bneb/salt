@@ -1,0 +1,63 @@
+// =============================================================================
+// std.env — TDD Test Suite
+// =============================================================================
+// Tests environment variable access and argument access.
+
+package main
+
+import std.env.env.args_count
+import std.env.env.arg
+import std.env.env.get_env
+import std.core.option.Option
+
+extern fn exit(code: i32);
+
+fn main() -> i32 {
+    // =========================================================================
+    // Test 1: args_count() returns at least 1 (the program name)
+    // =========================================================================
+    let argc = args_count();
+    if argc < 1 {
+        println(f"FAIL test 1: argc={argc}, expected >= 1");
+        exit(1);
+    }
+    println(f"  [PASS] args_count() = {argc}");
+
+    // =========================================================================
+    // Test 2: arg(0) returns the program path (non-empty)
+    // =========================================================================
+    let prog = arg(0);
+    if prog.len < 1 {
+        println("FAIL test 2: arg(0) is empty");
+        exit(2);
+    }
+    println(f"  [PASS] arg(0) length = {prog.len}");
+
+    // =========================================================================
+    // Test 3: get_env("PATH") returns Some (PATH always set on POSIX)
+    // =========================================================================
+    let path_val = get_env("PATH");
+    if path_val.is_none() {
+        println("FAIL test 3: PATH env var is None");
+        exit(3);
+    }
+    let path_sv = path_val.unwrap();
+    if path_sv.len < 1 {
+        println("FAIL test 4: PATH env var is empty");
+        exit(4);
+    }
+    println(f"  [PASS] get_env(PATH) length = {path_sv.len}");
+
+    // =========================================================================
+    // Test 4: get_env for nonexistent var returns None
+    // =========================================================================
+    let missing = get_env("__SALT_NONEXISTENT_VAR_XYZ_12345__");
+    if missing.is_some() {
+        println("FAIL test 5: nonexistent env var returned Some");
+        exit(5);
+    }
+    println("  [PASS] get_env(nonexistent) = None");
+
+    println("=== all env tests passed ===");
+    return 0;
+}

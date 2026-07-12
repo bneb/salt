@@ -1,0 +1,19 @@
+// TDD Test: Module globals visible during function hydration
+// Reproduces the VGA/scheduler error: "Undefined variable or constant: cursor_row"
+// Pattern: global variable accessed from a hydrated (lazy-compiled) function
+
+package test.module_globals
+
+global COUNTER: u64 = 0;
+
+fn increment() {
+    COUNTER = COUNTER + 1;
+}
+
+pub fn test_globals() {
+    increment();
+    increment();
+    // COUNTER should be 2
+}
+
+pub fn main() {}

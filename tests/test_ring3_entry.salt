@@ -1,0 +1,137 @@
+// =============================================================================
+// TDD: IRETQ Frame Layout + User Memory Constants
+// =============================================================================
+// Tests for the Ring 0 -> Ring 3 transition (Step 5) and user-space virtual
+// memory layout (Step 6).
+//
+// The IRETQ hardware frame requires exactly 5 values pushed in order:
+//   [RSP+0]  RIP    (entry point)
+//   [RSP+8]  CS     (0x1B = User Code Selector, RPL 3)
+//   [RSP+16] RFLAGS (0x202 = IF | reserved bit 1)
+//   [RSP+24] RSP    (user stack top)
+//   [RSP+32] SS     (0x23 = User Data Selector, RPL 3)
+//
+// Test matrix:
+//   1.  User CS = 0x1B (0x18 | RPL 3)
+//   2.  User SS = 0x23 (0x20 | RPL 3)
+//   3.  RFLAGS = 0x202 (IF enabled, reserved bit 1)
+//   4.  IRETQ frame is 5 * 8 = 40 bytes
+//   5.  IF bit (bit 9) is set in RFLAGS
+//   6.  Reserved bit 1 is set in RFLAGS
+//   7.  USER_BASE = 0x400000
+//   8.  USER_STACK_TOP = 0x7FFFFFFFE000
+//   9.  USER_STACK_SIZE = 0x4000 (16KB)
+//  10.  Stack base = USER_STACK_TOP - USER_STACK_SIZE
+//  11.  USER_BASE is page-aligned (4KB)
+//  12.  USER_STACK_TOP is page-aligned
+//  13.  User stack does not overlap user base
+//  14.  User base is in lower canonical half
+//  15.  User stack is in lower canonical half
+// =============================================================================
+
+package main
+
+extern fn exit(code: i32);
+
+// =============================================================================
+// IRETQ Frame Constants
+// =============================================================================
+const IRETQ_CS: u64      = 0x1B;  // User Code: GDT index 3, RPL 3
+const IRETQ_SS: u64      = 0x23;  // User Data: GDT index 4, RPL 3
+const IRETQ_RFLAGS: u64  = 0x202; // IF=1 (bit 9), reserved bit 1
+const IRETQ_FRAME_SIZE: u64 = 40; // 5 qwords * 8 bytes
+
+// Flag bits
+const RFLAGS_IF: u64      = 0x200; // Interrupt Flag (bit 9)
+const RFLAGS_RESERVED: u64 = 0x2;  // Reserved, always set (bit 1)
+
+// =============================================================================
+// User Memory Constants
+// =============================================================================
+const USER_BASE: u64       = 0x400000;
+const USER_STACK_TOP: u64  = 0x7FFFFFFFE000;
+const USER_STACK_SIZE: u64 = 0x4000;          // 16KB
+const PAGE_SIZE: u64       = 4096;
+
+// Canonical limit for lower half
+const CANONICAL_USER_MAX: u64 = 0x7FFFFFFFFFFF;
+
+// =============================================================================
+// Test Harness
+// =============================================================================
+fn assert_eq(got: u64, expected: u64, test_name: &str, test_id: i32) {
+    if got == expected {
+        println(f"  [PASS] {test_name}");
+    } else {
+        println(f"  [FAIL] {test_name}: got {got}, expected {expected}");
+        exit(test_id);
+    }
+}
+
+fn assert_true(cond: bool, test_name: &str, test_id: i32) {
+    if cond {
+        println(f"  [PASS] {test_name}");
+    } else {
+        println(f"  [FAIL] {test_name}");
+        exit(test_id);
+    }
+}
+
+fn main() -> i32 {
+    // =========================================================================
+    // IRETQ Frame Tests (Step 5)
+    // =========================================================================
+
+    // Test 1: User CS = 0x1B
+    assert_eq(IRETQ_CS, 0x1B, "user CS = 0x1B", 1);
+
+    // Test 2: User SS = 0x23
+    assert_eq(IRETQ_SS, 0x23, "user SS = 0x23", 2);
+
+    // Test 3: RFLAGS = 0x202
+    assert_eq(IRETQ_RFLAGS, 0x202, "RFLAGS = 0x202", 3);
+
+    // Test 4: Frame is 40 bytes (5 qwords)
+    assert_eq(IRETQ_FRAME_SIZE, 40, "IRETQ frame = 40 bytes", 4);
+
+    // Test 5: IF bit (bit 9) is set
+    assert_true((IRETQ_RFLAGS & RFLAGS_IF) != 0, "IF bit set in RFLAGS", 5);
+
+    // Test 6: Reserved bit 1 is set
+    assert_true((IRETQ_RFLAGS & RFLAGS_RESERVED) != 0, "reserved bit 1 set", 6);
+
+    // =========================================================================
+    // User Memory Layout Tests (Step 6)
+    // =========================================================================
+
+    // Test 7: USER_BASE = 0x400000
+    assert_eq(USER_BASE, 0x400000, "USER_BASE = 0x400000", 7);
+
+    // Test 8: USER_STACK_TOP = 0x7FFFFFFFE000
+    assert_eq(USER_STACK_TOP, 0x7FFFFFFFE000, "STACK_TOP = 0x7FFFFFFFE000", 8);
+
+    // Test 9: USER_STACK_SIZE = 16KB
+    assert_eq(USER_STACK_SIZE, 16384, "STACK_SIZE = 16KB", 9);
+
+    // Test 10: Stack base math
+    let stack_base = USER_STACK_TOP - USER_STACK_SIZE;
+    assert_eq(stack_base, 0x7FFFFFFFA000, "stack base computed", 10);
+
+    // Test 11: USER_BASE is page-aligned
+    assert_true((USER_BASE % PAGE_SIZE) == 0, "USER_BASE page-aligned", 11);
+
+    // Test 12: USER_STACK_TOP is page-aligned
+    assert_true((USER_STACK_TOP % PAGE_SIZE) == 0, "STACK_TOP page-aligned", 12);
+
+    // Test 13: Stack does not overlap text base
+    assert_true(USER_STACK_TOP > USER_BASE, "stack above base", 13);
+
+    // Test 14: USER_BASE in lower canonical half
+    assert_true(USER_BASE <= CANONICAL_USER_MAX, "USER_BASE canonical", 14);
+
+    // Test 15: USER_STACK_TOP in lower canonical half
+    assert_true(USER_STACK_TOP <= CANONICAL_USER_MAX, "STACK_TOP canonical", 15);
+
+    println("=== all IRETQ + memory layout tests passed ===");
+    return 0;
+}

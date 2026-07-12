@@ -1,0 +1,68 @@
+// Test: Slab<T> with &mut T return — enables direct field access
+package main
+
+import std.core.ptr.Ptr
+import std.collections.slab.Slab
+
+extern fn puts(s: Ptr<u8>) -> i32;
+
+struct Slot {
+    x: i64,
+    y: i64,
+}
+
+fn main() -> i32 {
+    // Test 1: Create slab
+    let mut slab = Slab::<Slot>::new(100);
+
+    // Test 2: Write via &mut T field access
+    let item = slab.get(42);
+    item.x = 1234;
+    item.y = 5678;
+
+    // Test 3: Read back via &T
+    let check = slab.get(42);
+    if check.x != 1234 {
+        puts("FAIL: x != 1234" as Ptr<u8>);
+        slab.drop();
+        return 1;
+    }
+    if check.y != 5678 {
+        puts("FAIL: y != 5678" as Ptr<u8>);
+        slab.drop();
+        return 1;
+    }
+
+    // Test 4: Slot 0 should be zeroed
+    let zero = slab.get(0);
+    if zero.x != 0 {
+        puts("FAIL: slot 0 not zeroed" as Ptr<u8>);
+        slab.drop();
+        return 1;
+    }
+
+    // Test 5: Reset and verify
+    slab.reset(42);
+    let reset = slab.get(42);
+    if reset.x != 0 {
+        puts("FAIL: reset x != 0" as Ptr<u8>);
+        slab.drop();
+        return 1;
+    }
+    if reset.y != 0 {
+        puts("FAIL: reset y != 0" as Ptr<u8>);
+        slab.drop();
+        return 1;
+    }
+
+    // Test 6: cap check
+    if slab.cap() != 100 {
+        puts("FAIL: cap != 100" as Ptr<u8>);
+        slab.drop();
+        return 1;
+    }
+
+    puts("PASS: slab all tests" as Ptr<u8>);
+    slab.drop();
+    return 0;
+}

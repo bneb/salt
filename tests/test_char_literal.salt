@@ -1,0 +1,41 @@
+package main
+
+fn main() -> i32 {
+    // Test 1: Basic ASCII character literal
+    let a: i8 = 'A';
+    if a != 65 {
+        println("FAIL: 'A' should be 65");
+        return 1;
+    }
+
+    // Test 2: Null character
+    let null: i8 = '\0';
+    if null != 0 {
+        println("FAIL: '\\0' should be 0");
+        return 1;
+    }
+
+    // Test 3: Newline escape
+    let nl: i8 = '\n';
+    if nl != 10 {
+        println("FAIL: '\\n' should be 10");
+        return 1;
+    }
+
+    // Test 4: Space character
+    let sp: i8 = ' ';
+    if sp != 32 {
+        println("FAIL: ' ' should be 32");
+        return 1;
+    }
+
+    // Test 5: Digit character
+    let zero: i8 = '0';
+    if zero != 48 {
+        println("FAIL: '0' should be 48");
+        return 1;
+    }
+
+    println("PASS: Character literals work!");
+    return 0;
+}

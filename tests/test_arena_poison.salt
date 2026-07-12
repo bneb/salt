@@ -1,0 +1,43 @@
+// ============================================================================
+// ARENA TEST: Verifies Arena alloc and mark/reset work correctly.
+// ============================================================================
+// Tests that Arena:
+//   1. Correctly allocates and stores values
+//   2. Mark/reset_to correctly manages arena position
+//   3. New allocations after reset reuse memory
+// ============================================================================
+
+package main
+
+import std.core.arena.Arena
+
+struct Secret { val: i64 }
+
+fn main() -> i32 {
+    let arena = Arena::new(4096);
+    let m = arena.mark();
+
+    // 1. Allocate and write secret data
+    let s = arena.alloc::<Secret>(Secret { val: 42 });
+    println(f"Before Reset: {s.val}");
+
+    if s.val != 42 {
+        println(f"FAIL: initial value wrong");
+        return 1;
+    }
+
+    // 2. Reset the arena (frees the memory)
+    arena.reset_to(m);
+
+    // 3. Allocate again — should reuse the same region
+    let s2 = arena.alloc::<Secret>(Secret { val: 99 });
+    println(f"After Reset alloc: {s2.val}");
+
+    if s2.val != 99 {
+        println("FAIL: second allocation incorrect");
+        return 1;
+    }
+
+    println("PASS: Arena alloc/reset works correctly.");
+    return 0;
+}

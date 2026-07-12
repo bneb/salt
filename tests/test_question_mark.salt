@@ -1,0 +1,122 @@
+// =============================================================================
+// ? Operator — TDD Test Suite
+// =============================================================================
+// Tests the ? postfix operator for Result<T> early return.
+
+package main
+
+import std.status.Status
+import std.core.result.Result
+
+extern fn exit(code: i32);
+
+fn assert_eq(got: i64, expected: i64, test_id: i32) {
+    if got != expected {
+        println(f"FAIL test {test_id}: got {got}, expected {expected}");
+        exit(test_id);
+    }
+}
+
+// Helper: returns Ok(42)
+fn ok_value() -> Result<i32> {
+    return Result::Ok(42);
+}
+
+// Helper: returns Err with NOT_FOUND
+fn err_value() -> Result<i32> {
+    return Result::Err(Status::with_detail(5, 99));
+}
+
+// Uses ? on Ok — should extract the value and continue
+fn try_ok() -> Result<i32> {
+    let val = ok_value()?;
+    return Result::Ok(val + 1);
+}
+
+// Uses ? on Err — should early-return the Err
+fn try_err() -> Result<i32> {
+    let val = err_value()?;
+    // This line should never execute
+    return Result::Ok(val + 1000);
+}
+
+// Chains multiple ? calls — first succeeds, second fails
+fn try_chain() -> Result<i32> {
+    let a = ok_value()?;
+    let b = err_value()?;
+    // Should never reach here
+    return Result::Ok(a + b);
+}
+
+// Chains multiple ? calls — all succeed
+fn try_chain_all_ok() -> Result<i32> {
+    let a = ok_value()?;
+    let b = ok_value()?;
+    return Result::Ok(a + b);
+}
+
+fn main() -> i32 {
+    // =========================================================================
+    // Test 1: ? on Ok extracts value
+    // =========================================================================
+    let r1 = try_ok();
+    match r1 {
+        Result::Ok(v) => {
+            assert_eq(v as i64, 43, 1);
+            println("  [PASS] ? on Ok extracts value (42+1=43)");
+        },
+        Result::Err(_) => {
+            println("FAIL test 1: expected Ok, got Err");
+            exit(1);
+        }
+    }
+
+    // =========================================================================
+    // Test 2: ? on Err early-returns
+    // =========================================================================
+    let r2 = try_err();
+    match r2 {
+        Result::Ok(_) => {
+            println("FAIL test 2: expected Err, got Ok");
+            exit(2);
+        },
+        Result::Err(s) => {
+            assert_eq(s.code as i64, 5, 2);  // NOT_FOUND = 5
+            assert_eq(s.detail as i64, 99, 3);
+            println("  [PASS] ? on Err early-returns (NOT_FOUND, detail=99)");
+        }
+    }
+
+    // =========================================================================
+    // Test 3: Chained ? — first ok, second err
+    // =========================================================================
+    let r3 = try_chain();
+    match r3 {
+        Result::Ok(_) => {
+            println("FAIL test 3: expected Err, got Ok");
+            exit(4);
+        },
+        Result::Err(s) => {
+            assert_eq(s.code as i64, 5, 4);
+            println("  [PASS] chained ? short-circuits on second Err");
+        }
+    }
+
+    // =========================================================================
+    // Test 4: Chained ? — all Ok
+    // =========================================================================
+    let r4 = try_chain_all_ok();
+    match r4 {
+        Result::Ok(v) => {
+            assert_eq(v as i64, 84, 5);  // 42 + 42
+            println("  [PASS] chained ? all-Ok returns 84");
+        },
+        Result::Err(_) => {
+            println("FAIL test 4: expected Ok, got Err");
+            exit(5);
+        }
+    }
+
+    println("=== all ? operator tests passed ===");
+    return 0;
+}

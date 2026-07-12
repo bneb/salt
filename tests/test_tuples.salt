@@ -1,0 +1,82 @@
+// =============================================================================
+// Tuple Destructuring — TDD Test Suite
+// =============================================================================
+// Tests let (a, b) = ..., triple, and function return tuple destructuring.
+
+package main
+
+extern fn exit(code: i32);
+
+fn assert_eq(got: i64, expected: i64, test_id: i32) {
+    if got != expected {
+        println(f"FAIL test {test_id}: got {got}, expected {expected}");
+        exit(test_id);
+    }
+}
+
+fn make_pair() -> (i32, i64) {
+    return (42, 100);
+}
+
+fn make_triple() -> (i32, i32, i32) {
+    return (10, 20, 30);
+}
+
+fn swap(a: i32, b: i32) -> (i32, i32) {
+    return (b, a);
+}
+
+fn main() -> i32 {
+    // =========================================================================
+    // Test 1: Basic pair destructuring
+    // =========================================================================
+    let pair = make_pair();
+    let (a, b) = pair;
+    assert_eq(a as i64, 42, 1);
+    println("  [PASS] basic pair destructuring (a=42)");
+
+    // =========================================================================
+    // Test 2: Second element of pair
+    // =========================================================================
+    assert_eq(b, 100, 2);
+    println("  [PASS] basic pair destructuring (b=100)");
+
+    // =========================================================================
+    // Test 3: Triple destructuring
+    // =========================================================================
+    let triple = make_triple();
+    let (x, y, z) = triple;
+    assert_eq(x as i64, 10, 3);
+    println("  [PASS] triple destructuring (x=10)");
+
+    // =========================================================================
+    // Test 4: Triple second element
+    // =========================================================================
+    assert_eq(y as i64, 20, 4);
+    println("  [PASS] triple destructuring (y=20)");
+
+    // =========================================================================
+    // Test 5: Triple third element
+    // =========================================================================
+    assert_eq(z as i64, 30, 5);
+    println("  [PASS] triple destructuring (z=30)");
+
+    // =========================================================================
+    // Test 6: Swap via tuple return
+    // =========================================================================
+    let (s1, s2) = swap(1, 2);
+    assert_eq(s1 as i64, 2, 6);
+    assert_eq(s2 as i64, 1, 7);
+    println("  [PASS] swap via tuple return");
+
+    // =========================================================================
+    // Test 7: Inline tuple construction + destructuring
+    // =========================================================================
+    let (p, q) = (99, 77);
+    assert_eq(p as i64, 99, 8);
+    assert_eq(q as i64, 77, 9);
+    println("  [PASS] inline tuple destructuring");
+
+    println("=== all tuple tests passed ===");
+    return 0;
+}

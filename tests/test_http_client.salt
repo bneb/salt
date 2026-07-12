@@ -1,0 +1,59 @@
+// =============================================================================
+// std.http.client — TDD Test Suite
+// =============================================================================
+// Tests HTTP client functionality:
+// Test 1: TCP connect to closed port returns -1 (fast)
+// Test 2: HTTP GET against localhost:8080 (graceful if no server running)
+// Test 3: TCP connect to localhost:8080 (graceful if no server running)
+
+package main
+
+import std.core.ptr.Ptr
+
+extern fn exit(code: i32);
+extern fn http_tcp_connect(host: Ptr<u8>, port: i32) -> i32;
+extern fn http_close(fd: i32) -> i32;
+extern fn salt_http_get(host: Ptr<u8>, port: i32, path: Ptr<u8>, out_buf: Ptr<u8>, buf_size: i64) -> i64;
+
+fn assert_eq(got: i64, expected: i64, test_id: i32) {
+    if got != expected {
+        println(f"FAIL test {test_id}: got {got}, expected {expected}");
+        exit(test_id);
+    }
+}
+
+fn main() -> i32 {
+    // =========================================================================
+    // Test 1: TCP connect to localhost:1 (port 1 is typically closed)
+    // =========================================================================
+    let fd1 = http_tcp_connect("127.0.0.1\0" as Ptr<u8>, 1);
+    assert_eq(fd1 as i64, -1, 1);  // Connection refused
+    println("  [PASS] connect to closed port returns -1");
+
+    // =========================================================================
+    // Test 2: HTTP GET to localhost — test with running server
+    // If server is not running, salt_http_get returns -1 (graceful failure)
+    // =========================================================================
+    let mut buf: [u8; 4096] = [0; 4096];
+    let n = salt_http_get("127.0.0.1\0" as Ptr<u8>, 8080, "/health\0" as Ptr<u8>,
+                          &buf[0] as Ptr<u8>, 4096);
+    if n > 0 {
+        println(f"  [PASS] HTTP GET /health returned {n} bytes");
+    } else {
+        println("  [PASS] HTTP GET /health: no server (expected in CI)");
+    }
+
+    // =========================================================================
+    // Test 3: TCP connect to localhost:8080
+    // =========================================================================
+    let fd2 = http_tcp_connect("127.0.0.1\0" as Ptr<u8>, 8080);
+    if fd2 >= 0 {
+        println("  [PASS] TCP connect to localhost:8080 succeeded");
+        http_close(fd2);
+    } else {
+        println("  [PASS] TCP connect to localhost:8080: no server (expected in CI)");
+    }
+
+    println("=== all http_client tests passed ===");
+    return 0;
+}

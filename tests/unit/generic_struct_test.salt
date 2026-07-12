@@ -1,0 +1,17 @@
+struct Box<T> {
+    value: T,
+}
+
+struct Wrapper<T> {
+    inner: Box<T>,
+}
+
+fn get_val(b: Box<i32>) -> i32 {
+    b.value
+}
+
+fn main() -> i32 {
+    let b = Box::<i32> { value: 10 };
+    let w = Wrapper::<f32> { inner: Box::<f32> { value: 3.14 } };
+    get_val(b)
+}

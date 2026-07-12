@@ -1,0 +1,20 @@
+package kernel.mem;
+
+struct Page {
+    id: i32
+}
+
+fn test_types() -> i32 {
+    let p: Owned<Page> = PMM;
+    move p; // Statement move
+    
+    // Expression map_window (assuming let p = ... works via Expr::Call fallback)
+    let w: Window<Page, VGA> = map_window(0xB8000, 4096, VGA);
+    
+    // Reinterpret Cast
+    let p2: Owned<Page> = reinterpret_cast::<Page>(w);
+    
+    return 0;
+}
+
+pub fn main() {}

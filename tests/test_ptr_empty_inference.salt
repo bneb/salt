@@ -1,0 +1,31 @@
+// TDD: Test Ptr::empty() generic inference from return type
+// This exercises the same pattern as forest.salt, binary_tree_path.salt etc.
+// where Ptr::empty() is used in a return statement and the generic T 
+// should be inferred from the function's return type.
+
+package main
+
+import std.core.ptr.Ptr
+
+struct Node {
+    val: i64,
+    left: Ptr<Node>,
+    right: Ptr<Node>,
+}
+
+// Pattern 1: Ptr::empty() in return statement — T should be inferred from fn return type
+fn make_leaf(val: i64) -> Ptr<Node> {
+    if val < 0 {
+        return Ptr::empty();  // Must infer T = Node from fn return type Ptr<Node>
+    }
+    // For simplicity, just return empty for everything in this test
+    return Ptr::empty();
+}
+
+fn main() -> i64 {
+    let p = make_leaf(-1);
+    if p.is_null() {
+        return 0;  // Expected: null ptr means success
+    }
+    return 1;
+}

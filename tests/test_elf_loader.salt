@@ -1,0 +1,206 @@
+// =============================================================================
+// TDD: ELF Loader Validation
+// =============================================================================
+// Tests validate_elf() and parse_elf() with real ELF header field values
+// extracted from /tmp/hello_keuos (compiled by salt-front --target keuos-x86_64).
+//
+// Self-contained test — defines structs inline to match elf_loader.salt exactly.
+// run_test.sh does not support multi-file imports, so we mirror the structs
+// and functions here. The kernel module (kernel/core/elf_loader.salt) is the
+// canonical source of truth.
+//
+// Test matrix:
+//   1. Valid x86_64 ELF header → validate_elf returns true
+//   2. Corrupted magic byte 0 → rejected
+//   3. Corrupted magic byte 1 → rejected
+//   4. Wrong class (32-bit) → rejected
+//   5. Wrong machine (ARM64) → rejected
+//   6. Big-endian → rejected
+//   7. ET_DYN type → rejected
+//   8. parse_elf extracts correct entry point
+//   9. parse_elf extracts correct program header count
+//  10. parse_elf extracts correct phentsize
+//  11. parse_elf extracts correct machine
+// =============================================================================
+
+package main
+
+extern fn exit(code: i32);
+
+// =============================================================================
+// Mirror of kernel/core/elf_loader.salt structs
+// =============================================================================
+struct Elf64Header {
+    e_ident0: u8,
+    e_ident1: u8,
+    e_ident2: u8,
+    e_ident3: u8,
+    e_ident_class: u8,
+    e_ident_data: u8,
+    e_ident_version: u8,
+    e_ident_osabi: u8,
+    e_ident_pad0: u8,
+    e_ident_pad1: u8,
+    e_ident_pad2: u8,
+    e_ident_pad3: u8,
+    e_ident_pad4: u8,
+    e_ident_pad5: u8,
+    e_ident_pad6: u8,
+    e_ident_pad7: u8,
+    e_type: u16,
+    e_machine: u16,
+    e_version: u32,
+    e_entry: u64,
+    e_phoff: u64,
+    e_shoff: u64,
+    e_flags: u32,
+    e_ehsize: u16,
+    e_phentsize: u16,
+    e_phnum: u16,
+    e_shentsize: u16,
+    e_shnum: u16,
+    e_shstrndx: u16,
+}
+
+struct ElfInfo {
+    entry: u64,
+    phoff: u64,
+    phnum: u16,
+    phentsize: u16,
+    machine: u16,
+}
+
+// =============================================================================
+// Mirror of kernel/core/elf_loader.salt functions
+// =============================================================================
+fn validate_elf(header: &Elf64Header) -> bool {
+    if header.e_ident0 != 0x7F { return false; }
+    if header.e_ident1 != 69 { return false; }
+    if header.e_ident2 != 76 { return false; }
+    if header.e_ident3 != 70 { return false; }
+    if header.e_ident_class != 2 { return false; }
+    if header.e_ident_data != 1 { return false; }
+    if header.e_machine != 0x3E { return false; }
+    if header.e_type != 2 { return false; }
+    return true;
+}
+
+fn parse_elf(header: &Elf64Header) -> ElfInfo {
+    return ElfInfo(
+        header.e_entry,
+        header.e_phoff,
+        header.e_phnum,
+        header.e_phentsize,
+        header.e_machine
+    );
+}
+
+// =============================================================================
+// Test harness
+// =============================================================================
+fn assert_true(cond: bool, test_name: &str, test_id: i32) {
+    if cond {
+        println(f"  [PASS] {test_name}");
+    } else {
+        println(f"  [FAIL] {test_name}");
+        exit(test_id);
+    }
+}
+
+fn assert_false(cond: bool, test_name: &str, test_id: i32) {
+    if !cond {
+        println(f"  [PASS] {test_name}");
+    } else {
+        println(f"  [FAIL] {test_name}: expected false, got true");
+        exit(test_id);
+    }
+}
+
+fn assert_eq_u64(got: u64, expected: u64, test_name: &str, test_id: i32) {
+    if got == expected {
+        println(f"  [PASS] {test_name}");
+    } else {
+        println(f"  [FAIL] {test_name}: got {got}, expected {expected}");
+        exit(test_id);
+    }
+}
+
+// =============================================================================
+// Build a valid ELF64 header matching /tmp/hello_keuos
+// =============================================================================
+fn make_valid_header() -> Elf64Header {
+    let mut h = Elf64Header(
+        0x7F, 69, 76, 70,        // magic: \x7FELF
+        2, 1, 1, 0,              // class=64, data=LE, version=1, osabi=0
+        0, 0, 0, 0, 0, 0, 0, 0,  // padding
+        0, 0, 0,                  // e_type, e_machine, e_version (set below)
+        0, 0, 0,                  // e_entry, e_phoff, e_shoff (set below)
+        0, 0, 0, 0, 0, 0, 0      // remaining (set below)
+    );
+    h.e_type = 2;                 // ET_EXEC
+    h.e_machine = 0x3E;           // x86-64
+    h.e_version = 1;
+    h.e_entry = 0x401190;         // from readelf
+    h.e_phoff = 0x40;
+    h.e_shoff = 0x2C8;
+    h.e_flags = 0;
+    h.e_ehsize = 64;
+    h.e_phentsize = 56;
+    h.e_phnum = 5;
+    h.e_shentsize = 64;
+    h.e_shnum = 8;
+    h.e_shstrndx = 6;
+    return h;
+}
+
+fn main() -> i32 {
+    // Test 1: Valid header accepted
+    let valid = make_valid_header();
+    assert_true(validate_elf(&valid), "valid ELF header accepted", 1);
+
+    // Test 2: Corrupted magic[0] rejected
+    let mut bad_magic = make_valid_header();
+    bad_magic.e_ident0 = 0x00;
+    assert_false(validate_elf(&bad_magic), "corrupted magic[0] rejected", 2);
+
+    // Test 3: Corrupted magic[1] rejected
+    let mut bad_e = make_valid_header();
+    bad_e.e_ident1 = 88;
+    assert_false(validate_elf(&bad_e), "corrupted magic[1] rejected", 3);
+
+    // Test 4: 32-bit class rejected
+    let mut bad_class = make_valid_header();
+    bad_class.e_ident_class = 1;
+    assert_false(validate_elf(&bad_class), "32-bit ELF class rejected", 4);
+
+    // Test 5: Wrong machine (ARM64) rejected
+    let mut bad_machine = make_valid_header();
+    bad_machine.e_machine = 0xB7;
+    assert_false(validate_elf(&bad_machine), "wrong machine (ARM64) rejected", 5);
+
+    // Test 6: Big-endian rejected
+    let mut bad_endian = make_valid_header();
+    bad_endian.e_ident_data = 2;
+    assert_false(validate_elf(&bad_endian), "big-endian ELF rejected", 6);
+
+    // Test 7: ET_DYN type rejected
+    let mut bad_type = make_valid_header();
+    bad_type.e_type = 3;
+    assert_false(validate_elf(&bad_type), "ET_DYN type rejected", 7);
+
+    // Test 8: parse_elf extracts correct entry point
+    let info = parse_elf(&valid);
+    assert_eq_u64(info.entry, 0x401190, "entry == 0x401190", 8);
+
+    // Test 9: parse_elf extracts correct phnum
+    assert_eq_u64(info.phnum as u64, 5, "phnum == 5", 9);
+
+    // Test 10: parse_elf extracts correct phentsize
+    assert_eq_u64(info.phentsize as u64, 56, "phentsize == 56", 10);
+
+    // Test 11: parse_elf extracts correct machine
+    assert_eq_u64(info.machine as u64, 0x3E, "machine == 0x3E (x86-64)", 11);
+
+    println("=== all ELF loader tests passed ===");
+    return 0;
+}

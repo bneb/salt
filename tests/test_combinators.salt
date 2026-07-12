@@ -1,0 +1,69 @@
+package main
+
+import std.core.iter.Range
+import std.core.iter.{Filter, Map}
+import std.core.option.Option
+
+fn is_even(x: i64) -> bool {
+    let rem = x - (x / 2) * 2;
+    return rem == 0;
+}
+
+fn square(x: i64) -> i64 {
+    return x * x;
+}
+
+fn add(acc: i64, x: i64) -> i64 {
+    return acc + x;
+}
+
+fn main() -> i32 {
+    // Test 1: filter only
+    // Range(0..10) → filter(is_even) → [0, 2, 4, 6, 8]
+    let mut f = Range::new(0, 10).filter(is_even);
+    let mut sum: i64 = 0;
+    while true {
+        let opt = f.next();
+        if opt.is_none() { break; }
+        sum = sum + opt.unwrap();
+    }
+    // 0+2+4+6+8 = 20
+    if sum != 20 {
+        println("FAIL: filter sum != 20");
+        return 1;
+    }
+
+    // Test 2: map only
+    // Range(0..5) → map(square) → [0, 1, 4, 9, 16]
+    let mut m = Range::new(0, 5).map(square);
+    let mut sum2: i64 = 0;
+    while true {
+        let opt = m.next();
+        if opt.is_none() { break; }
+        sum2 = sum2 + opt.unwrap();
+    }
+    // 0+1+4+9+16 = 30
+    if sum2 != 30 {
+        println("FAIL: map sum != 30");
+        return 1;
+    }
+
+    // Test 3: fold
+    let mut r = Range::new(0, 5);
+    let result = r.fold(0, add);
+    if result != 10 {
+        println("FAIL: fold != 10");
+        return 1;
+    }
+
+    // Test 4: full chain — filter → map → fold
+    let mut pipeline = Range::new(0, 10).filter(is_even).map(square);
+    let total = pipeline.fold(0, add);
+    if total != 120 {
+        println("FAIL: chain != 120");
+        return 1;
+    }
+
+    println("PASS: All iterator combinator tests passed!");
+    return 0;
+}

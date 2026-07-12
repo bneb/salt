@@ -1,0 +1,19 @@
+// TDD Test: Import response.salt and call write_response
+
+package main
+
+import std.core.ptr.Ptr
+import std.core.str.StringView
+import std.http.response.write_response
+
+fn main() -> i32 {
+    let mut buf: [u8; 512] = [0; 512];
+    let ct = StringView::from_raw("text/plain" as Ptr<u8>, 10);
+    let body = StringView::from_raw("hello" as Ptr<u8>, 5);
+    let n = write_response(
+        &buf[0] as Ptr<u8>, 200, ct, body
+    );
+    println(f"response len: {n}");
+    println("=== response_test passed ===");
+    return 0;
+}

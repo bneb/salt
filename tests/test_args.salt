@@ -1,0 +1,51 @@
+// tests/test_args.salt — TDD for std.args ArgParser
+package main
+
+import std.args.args.ArgParser
+import std.env.env.{args_count, arg}
+
+extern fn exit(code: i32);
+
+fn assert_true(cond: bool, test_id: i32) {
+    if !cond {
+        println(f"FAIL test {test_id}");
+        exit(test_id);
+    }
+}
+
+fn main() -> i32 {
+    println("=== ArgParser Tests ===");
+
+    // Test 1: raw args_count is at least 1 (program name)
+    let argc = args_count();
+    assert_true(argc >= 1, 1);
+    println(f"  [PASS] args_count() = {argc}");
+
+    // Test 2: arg(0) is the program name
+    let prog = arg(0);
+    assert_true(prog.length() > 0, 2);
+    println(f"  [PASS] program name length > 0");
+
+    // Test 3: ArgParser construction
+    let parser = ArgParser::new();
+    assert_true(parser.count() >= 1, 3);
+    println("  [PASS] ArgParser::new()");
+
+    // Test 4: program_name()
+    let name = parser.program_name();
+    assert_true(name.length() > 0, 4);
+    println("  [PASS] parser.program_name()");
+
+    // Test 5: has_flag returns false for nonexistent flag
+    let has = parser.has_flag("--nonexistent");
+    assert_true(!has, 5);
+    println("  [PASS] has_flag(--nonexistent) == false");
+
+    // Test 6: get_option returns None for nonexistent option
+    let opt = parser.get_option("--missing");
+    assert_true(opt.is_none(), 6);
+    println("  [PASS] get_option(--missing) == None");
+
+    println("\n=== All ArgParser tests passed ===");
+    return 0;
+}

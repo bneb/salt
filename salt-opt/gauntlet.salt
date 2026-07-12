@@ -1,0 +1,11 @@
+fn safe_div(a: i32, b: i32) -> i32 
+    requires { b != 0 } 
+{
+    // Implementation omitted for frontend check
+    return 0;
+}
+
+fn main() {
+    // This pipeline should trigger the verifier
+    10 |> safe_div(0);
+}

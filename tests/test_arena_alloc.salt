@@ -1,0 +1,60 @@
+// TDD Test: Arena typed allocation — end-to-end
+// Tests Arena::alloc<T> (struct placement) and Arena::alloc_array<T> (buffer)
+// Also exercises mark/reset pattern.
+
+package main
+
+import std.core.arena.Arena
+
+struct Point { x: i64, y: i64 }
+
+fn main() -> i32 {
+    let arena = Arena::new(4096);
+    let m = arena.mark();
+
+    // Test 1: Allocate a struct via arena.alloc<T>
+    let p = arena.alloc::<Point>(Point { x: 42, y: 99 });
+    println(f"x = {p.x}");
+    println(f"y = {p.y}");
+
+    if p.x != 42 {
+        println("FAIL: p.x != 42");
+        return 1;
+    }
+    if p.y != 99 {
+        println("FAIL: p.y != 99");
+        return 1;
+    }
+
+    // Test 2: Allocate an array of f32
+    let arr = arena.alloc_array::<f32>(10);
+    let n: i64 = 10;
+    for i in 0..n {
+        let v: f32 = (i * 7) as f32;
+        arr.offset(i).write(v);
+    }
+    let val3 = arr.offset(3).read() as i64;
+    println(f"arr[3] = {val3}");
+    if val3 != 21 {
+        println("FAIL: arr[3] != 21");
+        return 1;
+    }
+
+    // Test 3: Allocate i64 array
+    let ints = arena.alloc_array::<i64>(5);
+    let m2: i64 = 5;
+    for i in 0..m2 {
+        ints.offset(i).write(i * 100);
+    }
+    let v4 = ints.offset(4).read();
+    if v4 != 400 {
+        println(f"FAIL: ints[4] = {v4}");
+        return 1;
+    }
+
+    // Test 4: Mark/Reset preserves correctness
+    arena.reset_to(m);
+
+    println("=== arena alloc test passed ===");
+    return 0;
+}

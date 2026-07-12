@@ -1,0 +1,178 @@
+// KeuOS Buffer: Zero-Copy Network Memory
+// The DMA-aware buffer for C10M packet processing.
+// Aligned to 64-byte cache lines to prevent false sharing.
+//
+// Ownership Model:
+//   NIC → KeuOSBuffer (RX) → TaskFrame → NIC (TX/Release)
+//   No copies. No allocations. Just pointer math.
+
+package std.net.buffer
+
+// ============================================================================
+// KeuOSBuffer: The Zero-Copy Primitive
+// ============================================================================
+
+struct KeuOSBuffer {
+    data: Ptr<u8>,      // Base pointer into DMA Arena memory
+    capacity: i64,      // Total buffer capacity (typically 4096 or 16384)
+    length: i64,        // Valid data length (set by NIC on RX completion)
+    offset: i64,        // Current read cursor position
+}
+
+impl KeuOSBuffer {
+    // Create a view into this buffer (zero-copy slice)
+    // Z3 proves: 0 <= start <= end <= self.length
+    fn slice(self: &KeuOSBuffer, start: i64, end: i64) -> KeuOSBuffer {
+        requires start >= 0;
+        requires end >= start;
+        requires end <= self.length;
+        return KeuOSBuffer {
+            data: self.data.offset(start),
+            capacity: end - start,
+            length: end - start,
+            offset: 0,
+        };
+    }
+
+    // Find the first occurrence of a byte starting from `start`
+    // Returns the index relative to buffer base, or -1 if not found
+    fn find(self: &KeuOSBuffer, start: i64, needle: u8) -> i64 {
+        requires start >= 0;
+        requires start <= self.length;
+        let mut i = start;
+        while i < self.length {
+            let byte = self.data.read_at(i);
+            if byte == needle {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    // Find the first occurrence of `needle` starting from `start`
+    // Stops at the delimiter and returns the position
+    fn find_until(self: &KeuOSBuffer, start: i64, delimiter: u8) -> i64 {
+        requires start >= 0;
+        requires start <= self.length;
+        return self.find(start, delimiter);
+    }
+
+    // Check if the buffer contains the full message
+    // For HTTP: checks if we've received the full header block (\r\n\r\n)
+    fn is_incomplete(self: &KeuOSBuffer) -> bool {
+        if self.length < 4 {
+            return true;
+        }
+        // Check for \r\n\r\n at end of headers
+        let pos = self.length - 4;
+        let b0 = self.data.read_at(pos);
+        let b1 = self.data.read_at(pos + 1);
+        let b2 = self.data.read_at(pos + 2);
+        let b3 = self.data.read_at(pos + 3);
+        return !(b0 == 13 && b1 == 10 && b2 == 13 && b3 == 10);
+    }
+
+    // Check if a specific byte sequence exists at a position
+    fn check_at(self: &KeuOSBuffer, pos: i64, pattern: Ptr<u8>, plen: i64) -> bool {
+        requires pos >= 0;
+        requires plen >= 0;
+        if pos + plen > self.length {
+            return false;
+        }
+        let mut i: i64 = 0;
+        while i < plen {
+            if self.data.read_at(pos + i) != pattern.read_at(i) {
+                return false;
+            }
+            i = i + 1;
+        }
+        return true;
+    }
+
+    // Read a single byte at offset (bounds-checked unless Z3 elides it)
+    fn byte_at(self: &KeuOSBuffer, idx: i64) -> u8 {
+        requires idx >= 0;
+        requires self.offset + idx < self.length;
+        return self.data.read_at(self.offset + idx);
+    }
+
+    // Advance the read cursor
+    fn advance(self: &mut KeuOSBuffer, n: i64) {
+        requires n >= 0;
+        requires self.offset + n <= self.length;
+        self.offset = self.offset + n;
+    }
+
+    // Remaining bytes available for reading
+    fn remaining(self: &KeuOSBuffer) -> i64 {
+        return self.length - self.offset;
+    }
+}
+
+// ============================================================================
+// DMA_Provider: Trait for Zero-Copy Buffer Lifecycle
+// ============================================================================
+
+trait DMA_Provider {
+    // Acquire a buffer from the DMA ring for receiving data
+    // The NIC will write directly into this memory
+    fn acquire_buffer(self: &Self) -> KeuOSBuffer;
+
+    // Release a buffer back to the NIC's transmit ring
+    // After this call, the buffer memory is owned by the NIC
+    fn release_to_nic(self: &Self, buf: KeuOSBuffer);
+}
+
+// ============================================================================
+// RequestView: Zero-Copy HTTP Parsing Result
+// ============================================================================
+
+struct RequestView {
+    method: KeuOSBuffer,   // View into the method bytes ("GET", "POST")
+    path: KeuOSBuffer,     // View into the path bytes ("/index.html")
+    headers_end: i64,          // Offset where headers end in the original buffer
+}
+
+// ============================================================================
+// NEON SIMD Header Scanner
+// Scans 16 bytes at a time to find \r\n\r\n
+// ============================================================================
+
+@pulse
+fn find_header_end(buf: &KeuOSBuffer) -> i64 {
+    let mut cursor = buf.offset;
+    let limit = buf.length - 16;
+
+    while cursor < limit {
+        // Load 16 bytes into NEON register
+        let chunk = intrinsics::m4_neon_load128(buf.data.offset(cursor));
+
+        // Compare each byte lane against '\r' (0x0D)
+        let cr_mask = intrinsics::m4_neon_cmpeq_i8(chunk, 13);
+
+        if cr_mask != 0 {
+            // Found a carriage return — check for full \r\n\r\n sequence
+            let sub_offset = intrinsics::m4_neon_movemask(cr_mask);
+            let pos = cursor + sub_offset;
+
+            if buf.check_at(pos, "\r\n\r\n", 4) {
+                return pos + 4;
+            }
+        }
+        cursor = cursor + 16;
+    }
+
+    // Fallback: scan remaining bytes one at a time
+    while cursor < buf.length - 3 {
+        if buf.data.read_at(cursor) == 13 &&
+           buf.data.read_at(cursor + 1) == 10 &&
+           buf.data.read_at(cursor + 2) == 13 &&
+           buf.data.read_at(cursor + 3) == 10 {
+            return cursor + 4;
+        }
+        cursor = cursor + 1;
+    }
+
+    return -1;
+}

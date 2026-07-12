@@ -1,0 +1,52 @@
+// TDD: Test that `let x = if ... { ... } else { ... }` works correctly
+// This should NOT be parsed as let-else, but as a regular let with an if-else initializer.
+package main
+
+extern fn exit(code: i32);
+
+fn assert_eq(got: i64, expected: i64, test_id: i32) {
+    if got != expected {
+        println(f"FAIL test {test_id}: got {got}, expected {expected}");
+        exit(test_id);
+    }
+}
+
+fn main() -> i32 {
+    println("=== Let-If-Else Tests ===");
+
+    let a: i64 = 10;
+    let b: i64 = 20;
+
+    // This is the critical pattern: let with if-else initializer
+    let max = if a > b {
+        a
+    } else {
+        b
+    };
+
+    assert_eq(max, 20, 1);
+    println("  [PASS] max(10, 20) == 20");
+
+    // Nested case
+    let min = if a < b {
+        a
+    } else {
+        b
+    };
+
+    assert_eq(min, 10, 2);
+    println("  [PASS] min(10, 20) == 10");
+
+    // Edge case: equal values
+    let eq_val = if a == a {
+        42
+    } else {
+        99
+    };
+
+    assert_eq(eq_val, 42, 3);
+    println("  [PASS] equal case selects true branch");
+
+    println("=== All let-if-else tests passed ===");
+    return 0;
+}

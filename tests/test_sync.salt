@@ -1,0 +1,77 @@
+// =============================================================================
+// std.sync — TDD Test Suite
+// =============================================================================
+// Tests Mutex and AtomicI64 synchronization primitives.
+
+package main
+
+import std.core.ptr.Ptr
+
+extern fn exit(code: i32);
+extern fn salt_atomic_load_i64(ptr: Ptr<i64>) -> i64;
+extern fn salt_atomic_store_i64(ptr: Ptr<i64>, val: i64);
+extern fn salt_atomic_add_i64(ptr: Ptr<i64>, val: i64) -> i64;
+extern fn salt_atomic_cas_i64(ptr: Ptr<i64>, expected: i64, desired: i64) -> i64;
+extern fn salt_mutex_create() -> i64;
+extern fn salt_mutex_lock(handle: i64);
+extern fn salt_mutex_unlock(handle: i64);
+extern fn salt_mutex_destroy(handle: i64);
+
+fn assert_eq(got: i64, expected: i64, test_id: i32) {
+    if got != expected {
+        println(f"FAIL test {test_id}: got {got}, expected {expected}");
+        exit(test_id);
+    }
+}
+
+fn main() -> i32 {
+    // =========================================================================
+    // Test 1: AtomicI64 store + load
+    // =========================================================================
+    let mut val: i64 = 0;
+    salt_atomic_store_i64(&val as Ptr<i64>, 42);
+    let loaded = salt_atomic_load_i64(&val as Ptr<i64>);
+    assert_eq(loaded, 42, 1);
+    println("  [PASS] atomic store+load (42)");
+
+    // =========================================================================
+    // Test 2: AtomicI64 fetch_add
+    // =========================================================================
+    let prev = salt_atomic_add_i64(&val as Ptr<i64>, 8);
+    assert_eq(prev, 42, 2);  // returns previous value
+    let after = salt_atomic_load_i64(&val as Ptr<i64>);
+    assert_eq(after, 50, 3);
+    println("  [PASS] atomic fetch_add (42+8=50)");
+
+    // =========================================================================
+    // Test 3: AtomicI64 compare_exchange (success)
+    // =========================================================================
+    let cas_result = salt_atomic_cas_i64(&val as Ptr<i64>, 50, 100);
+    assert_eq(cas_result, 50, 4);  // old value returned on success
+    let cas_check = salt_atomic_load_i64(&val as Ptr<i64>);
+    assert_eq(cas_check, 100, 5);
+    println("  [PASS] atomic CAS success (50→100)");
+
+    // =========================================================================
+    // Test 4: AtomicI64 compare_exchange (failure)
+    // =========================================================================
+    let cas_fail = salt_atomic_cas_i64(&val as Ptr<i64>, 50, 200);
+    // 50 != current (100), so CAS fails. Returns the actual value.
+    assert_eq(cas_fail, 100, 6);
+    let unchanged = salt_atomic_load_i64(&val as Ptr<i64>);
+    assert_eq(unchanged, 100, 7);
+    println("  [PASS] atomic CAS failure (value unchanged at 100)");
+
+    // =========================================================================
+    // Test 5: Mutex create/lock/unlock/destroy (no deadlock)
+    // =========================================================================
+    let m = salt_mutex_create();
+    salt_mutex_lock(m);
+    // Critical section — just verify we can enter and exit
+    salt_mutex_unlock(m);
+    salt_mutex_destroy(m);
+    println("  [PASS] mutex create/lock/unlock/destroy");
+
+    println("=== all sync tests passed ===");
+    return 0;
+}

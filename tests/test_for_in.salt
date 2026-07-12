@@ -1,0 +1,49 @@
+// tests/test_for_in.salt — TDD test for for-in iteration
+// Tests: Vec iteration, Range iteration, chained iterators
+package main
+
+import std.collections.vec.Vec
+import std.mem.allocator.HeapAllocator
+import std.core.option.Option
+
+fn main() -> i32 {
+    println("=== For-In Iteration Tests ===");
+
+    // Test 1: for-in over Range (already works via scf.for / affine.for)
+    let mut sum: i64 = 0;
+    for i in 0..5 {
+        sum = sum + i;
+    }
+    println("Range sum 0..5: {}", sum);  // Expected: 10
+
+    // Test 2: for-in over Vec via .iter()
+    let alloc = HeapAllocator {};
+    let mut v = Vec<i64, HeapAllocator>::new(alloc, 4);
+    v.push(10);
+    v.push(20);
+    v.push(30);
+
+    let mut vec_sum: i64 = 0;
+    for item in v.iter() {
+        vec_sum = vec_sum + item;
+    }
+    println("Vec sum: {}", vec_sum);  // Expected: 60
+
+    // Test 3: for-in with side effects (printing each item)
+    print("Vec items:");
+    for item in v.iter() {
+        print(" {}", item);
+    }
+    println("");  // Expected: " 10 20 30"
+
+    // Test 4: Counting items via iteration
+    let mut count: i64 = 0;
+    for _ in v.iter() {
+        count = count + 1;
+    }
+    println("Vec count: {}", count);  // Expected: 3
+
+    v.free();
+    println("=== All for-in tests passed ===");
+    return 0;
+}

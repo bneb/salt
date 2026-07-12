@@ -1,0 +1,256 @@
+// =============================================================================
+// TDD: GDT/TSS Ring 3 Infrastructure
+// =============================================================================
+// Tests for the 7-entry GDT and TSS64 structures that enable Ring 0→3
+// transitions. All values are hardware-dictated by the AMD64 architecture.
+//
+// Test matrix:
+//   1. GDT has exactly 7 entries
+//   2. Kernel Code selector = 0x08
+//   3. Kernel Data selector = 0x10
+//   4. User Code selector = 0x1B (0x18 | RPL 3)
+//   5. User Data selector = 0x23 (0x20 | RPL 3)
+//   6. TSS selector = 0x28
+//   7. Kernel Code access byte = 0x9A (present, DPL 0, code, exec+read)
+//   8. User Code access byte = 0xFA (present, DPL 3, code, exec+read)
+//   9. Kernel Data access byte = 0x92 (present, DPL 0, data, read+write)
+//  10. User Data access byte = 0xF2 (present, DPL 3, data, read+write)
+//  11. TSS64 rsp0 field is writable and readable
+//  12. TSS64 iomap_base = 104 (sizeof TSS, denies all IO ports)
+//  13. GDT null descriptor is all zeros
+// =============================================================================
+
+package main
+
+extern fn exit(code: i32);
+
+// =============================================================================
+// GDT Descriptor — 8 bytes per entry (except TSS which is 16)
+// =============================================================================
+// Standard x86_64 GDT entry layout:
+//   Bits 0-15:   limit_low
+//   Bits 16-31:  base_low
+//   Bits 32-39:  base_mid
+//   Bits 40-47:  access
+//   Bits 48-51:  limit_high
+//   Bits 52-55:  flags (G, D/B, L, AVL)
+//   Bits 56-63:  base_high
+// =============================================================================
+struct GdtEntry {
+    limit_low: u16,
+    base_low: u16,
+    base_mid: u8,
+    access: u8,
+    granularity: u8,   // limit_high[3:0] | flags[7:4]
+    base_high: u8,
+}
+
+// =============================================================================
+// TSS64 — 104 bytes, hardware-dictated layout
+// =============================================================================
+struct TSS64 {
+    reserved0: u32,
+    rsp0: u64,
+    rsp1: u64,
+    rsp2: u64,
+    reserved1: u64,
+    ist1: u64,
+    ist2: u64,
+    ist3: u64,
+    ist4: u64,
+    ist5: u64,
+    ist6: u64,
+    ist7: u64,
+    reserved2: u64,
+    reserved3: u16,
+    iomap_base: u16,
+}
+
+// =============================================================================
+// GDT Access Byte Constants — hardware-dictated
+// =============================================================================
+// Access byte format: P | DPL(2) | S | Type(4)
+//   P = Present (1)
+//   DPL = Descriptor Privilege Level (0 or 3)
+//   S = Descriptor type (1 = code/data, 0 = system)
+//   Type = segment type (0xA = code exec+read, 0x2 = data read+write)
+
+const ACCESS_KERNEL_CODE: u8 = 0x9A;  // P=1, DPL=0, S=1, Type=0xA (code, exec+read)
+const ACCESS_KERNEL_DATA: u8 = 0x92;  // P=1, DPL=0, S=1, Type=0x2 (data, read+write)
+const ACCESS_USER_CODE: u8   = 0xFA;  // P=1, DPL=3, S=1, Type=0xA (code, exec+read)
+const ACCESS_USER_DATA: u8   = 0xF2;  // P=1, DPL=3, S=1, Type=0x2 (data, read+write)
+
+// Granularity byte for 64-bit code segments: L=1, G=1, Limit=0xF
+const GRAN_CODE64: u8 = 0xAF;    // G=1, L=1, limit_high=0xF
+const GRAN_DATA64: u8 = 0xCF;    // G=1, D=1, limit_high=0xF
+
+// =============================================================================
+// Selectors — offset into GDT, with RPL for user segments
+// =============================================================================
+const SEL_NULL: u16        = 0x00;
+const SEL_KERNEL_CODE: u16 = 0x08;   // Index 1 * 8
+const SEL_KERNEL_DATA: u16 = 0x10;   // Index 2 * 8
+const SEL_USER_CODE: u16   = 0x1B;   // Index 3 * 8 | RPL 3
+const SEL_USER_DATA: u16   = 0x23;   // Index 4 * 8 | RPL 3
+const SEL_TSS: u16         = 0x28;   // Index 5 * 8
+
+// =============================================================================
+// GDT Entry Constructors
+// =============================================================================
+fn make_null_entry() -> GdtEntry {
+    return GdtEntry(0, 0, 0, 0, 0, 0);
+}
+
+fn make_code64_entry(dpl: u8) -> GdtEntry {
+    let mut e = GdtEntry(0, 0, 0, 0, 0, 0);
+    e.limit_low = 0xFFFF;
+    if dpl == 0 {
+        e.access = ACCESS_KERNEL_CODE;
+    } else {
+        e.access = ACCESS_USER_CODE;
+    }
+    e.granularity = GRAN_CODE64;
+    return e;
+}
+
+fn make_data64_entry(dpl: u8) -> GdtEntry {
+    let mut e = GdtEntry(0, 0, 0, 0, 0, 0);
+    e.limit_low = 0xFFFF;
+    if dpl == 0 {
+        e.access = ACCESS_KERNEL_DATA;
+    } else {
+        e.access = ACCESS_USER_DATA;
+    }
+    e.granularity = GRAN_DATA64;
+    return e;
+}
+
+// =============================================================================
+// TSS Constructor
+// =============================================================================
+fn make_tss(kernel_stack_top: u64) -> TSS64 {
+    let mut tss = TSS64(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    tss.rsp0 = kernel_stack_top;
+    tss.iomap_base = 104;
+    return tss;
+}
+
+// =============================================================================
+// Test Harness
+// =============================================================================
+fn assert_eq(got: u64, expected: u64, test_name: &str, test_id: i32) {
+    if got == expected {
+        println(f"  [PASS] {test_name}");
+    } else {
+        println(f"  [FAIL] {test_name}: got {got}, expected {expected}");
+        exit(test_id);
+    }
+}
+
+fn assert_eq_u8(got: u8, expected: u8, test_name: &str, test_id: i32) {
+    if got == expected {
+        println(f"  [PASS] {test_name}");
+    } else {
+        println(f"  [FAIL] {test_name}");
+        exit(test_id);
+    }
+}
+
+fn assert_eq_u16(got: u16, expected: u16, test_name: &str, test_id: i32) {
+    if got == expected {
+        println(f"  [PASS] {test_name}");
+    } else {
+        println(f"  [FAIL] {test_name}");
+        exit(test_id);
+    }
+}
+
+fn main() -> i32 {
+    // =========================================================================
+    // Test 1: Selector arithmetic — Kernel Code = 0x08
+    // =========================================================================
+    assert_eq_u16(SEL_KERNEL_CODE, 0x08, "kernel CS = 0x08", 1);
+
+    // =========================================================================
+    // Test 2: Selector arithmetic — Kernel Data = 0x10
+    // =========================================================================
+    assert_eq_u16(SEL_KERNEL_DATA, 0x10, "kernel DS = 0x10", 2);
+
+    // =========================================================================
+    // Test 3: User Code selector = 0x1B (0x18 | RPL 3)
+    // =========================================================================
+    assert_eq_u16(SEL_USER_CODE, 0x1B, "user CS = 0x1B (0x18|3)", 3);
+
+    // =========================================================================
+    // Test 4: User Data selector = 0x23 (0x20 | RPL 3)
+    // =========================================================================
+    assert_eq_u16(SEL_USER_DATA, 0x23, "user DS = 0x23 (0x20|3)", 4);
+
+    // =========================================================================
+    // Test 5: TSS selector = 0x28
+    // =========================================================================
+    assert_eq_u16(SEL_TSS, 0x28, "TSS selector = 0x28", 5);
+
+    // =========================================================================
+    // Test 6: Kernel Code access byte = 0x9A
+    // =========================================================================
+    let kcode = make_code64_entry(0);
+    assert_eq_u8(kcode.access, 0x9A, "kernel code access = 0x9A", 6);
+
+    // =========================================================================
+    // Test 7: User Code access byte = 0xFA
+    // =========================================================================
+    let ucode = make_code64_entry(3);
+    assert_eq_u8(ucode.access, 0xFA, "user code access = 0xFA", 7);
+
+    // =========================================================================
+    // Test 8: Kernel Data access byte = 0x92
+    // =========================================================================
+    let kdata = make_data64_entry(0);
+    assert_eq_u8(kdata.access, 0x92, "kernel data access = 0x92", 8);
+
+    // =========================================================================
+    // Test 9: User Data access byte = 0xF2
+    // =========================================================================
+    let udata = make_data64_entry(3);
+    assert_eq_u8(udata.access, 0xF2, "user data access = 0xF2", 9);
+
+    // =========================================================================
+    // Test 10: Null descriptor is all zeros
+    // =========================================================================
+    let null_ent = make_null_entry();
+    assert_eq_u8(null_ent.access, 0, "null descriptor access = 0", 10);
+    assert_eq_u16(null_ent.limit_low, 0, "null descriptor limit = 0", 10);
+
+    // =========================================================================
+    // Test 11: Code64 granularity = 0xAF (L=1 for long mode)
+    // =========================================================================
+    assert_eq_u8(kcode.granularity, 0xAF, "code64 gran = 0xAF (L=1)", 11);
+
+    // =========================================================================
+    // Test 12: TSS64 rsp0 is writable and readable
+    // =========================================================================
+    let kernel_stack: u64 = 0xFFFFFFFF80100000;
+    let tss = make_tss(kernel_stack);
+    assert_eq(tss.rsp0, 0xFFFFFFFF80100000, "TSS rsp0 set correctly", 12);
+
+    // =========================================================================
+    // Test 13: TSS64 iomap_base = 104 (sizeof TSS)
+    // =========================================================================
+    assert_eq_u16(tss.iomap_base, 104, "TSS iomap_base = 104", 13);
+
+    // =========================================================================
+    // Test 14: TSS64 reserved fields are zero
+    // =========================================================================
+    assert_eq(tss.reserved0 as u64, 0, "TSS reserved0 = 0", 14);
+    assert_eq(tss.reserved1, 0, "TSS reserved1 = 0", 14);
+
+    // =========================================================================
+    // Test 15: TSS64 IST entries are zero (no IST used yet)
+    // =========================================================================
+    assert_eq(tss.ist1, 0, "TSS ist1 = 0", 15);
+    assert_eq(tss.ist7, 0, "TSS ist7 = 0", 15);
+
+    println("=== all GDT/TSS tests passed ===");
+    return 0;
+}

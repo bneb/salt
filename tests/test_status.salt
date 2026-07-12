@@ -1,0 +1,57 @@
+// tests/test_status.salt — TDD test for Status diagnostic messages
+// Verifies that Status factory methods accept string messages
+// and that predicates work correctly.
+package main
+
+import std.status.Status
+
+extern fn exit(code: i32);
+
+fn assert_true(cond: bool, test_id: i32) {
+    if !cond {
+        println(f"FAIL test {test_id}");
+        exit(test_id);
+    }
+}
+
+fn main() -> i32 {
+    println("=== Status Tests ===");
+
+    // Test 1: Status::ok() — no message needed
+    let s1 = Status::ok();
+    assert_true(s1.is_ok(), 1);
+    println("  [PASS] Status::ok()");
+
+    // Test 2: Factory methods with string messages
+    let s2 = Status::not_found("user profile");
+    assert_true(s2.is_not_found(), 2);
+    assert_true(s2.is_err(), 2);
+    println("  [PASS] Status::not_found(msg)");
+
+    // Test 3: Other factory methods
+    let s3 = Status::invalid_argument("port must be > 0");
+    assert_true(s3.is_invalid_argument(), 3);
+    println("  [PASS] Status::invalid_argument(msg)");
+
+    let s4 = Status::internal("database connection failed");
+    assert_true(s4.is_internal(), 4);
+    println("  [PASS] Status::internal(msg)");
+
+    let s5 = Status::permission_denied("admin required");
+    assert_true(s5.is_permission_denied(), 5);
+    println("  [PASS] Status::permission_denied(msg)");
+
+    // Test 4: with_detail for integer payloads
+    let s6 = Status::with_detail(5, 42);  // NOT_FOUND with detail=42
+    assert_true(s6.is_not_found(), 6);
+    assert_true(s6.detail == 42, 6);
+    println("  [PASS] Status::with_detail(code, detail)");
+
+    // Test 5: from_code for bare construction
+    let s7 = Status::from_code(13);  // INTERNAL
+    assert_true(s7.is_internal(), 7);
+    println("  [PASS] Status::from_code(code)");
+
+    println("=== All status tests passed ===");
+    return 0;
+}

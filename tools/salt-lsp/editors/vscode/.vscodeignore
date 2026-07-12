@@ -1,0 +1,21 @@
+# Source files (compiled JS is in out/)
+src/**
+
+# TypeScript config
+tsconfig.json
+
+# Node dev dependencies
+node_modules/**
+
+# Package lock
+package-lock.json
+
+# Built VSIX packages
+*.vsix
+
+# Git
+.git/**
+.gitignore
+
+# Editor configs
+.vscode/**

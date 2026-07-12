@@ -1,0 +1,37 @@
+// TDD: Test ctz_u64 and clz_u64 intrinsics
+// These use llvm.intr.cttz / llvm.intr.ctlz which must emit exactly 1 operand in MLIR.
+package main
+
+import std.math.ctz_u64
+import std.math.clz_u64
+
+extern fn exit(code: i32);
+
+fn assert_eq(got: i64, expected: i64, test_id: i32) {
+    if got != expected {
+        println(f"FAIL test {test_id}: got {got}, expected {expected}");
+        exit(test_id);
+    }
+}
+
+fn main() -> i32 {
+    println("=== CTZ/CLZ Tests ===");
+
+    // ctz_u64(8) = ctz(0b1000) = 3
+    let ctz_8 = ctz_u64(8 as u64);
+    assert_eq(ctz_8 as i64, 3, 1);
+    println("  [PASS] ctz(8) == 3");
+
+    // ctz_u64(1) = ctz(0b1) = 0
+    let ctz_1 = ctz_u64(1 as u64);
+    assert_eq(ctz_1 as i64, 0, 2);
+    println("  [PASS] ctz(1) == 0");
+
+    // clz_u64(1) = 63 (leading zeros in 64-bit)
+    let clz_1 = clz_u64(1 as u64);
+    assert_eq(clz_1 as i64, 63, 3);
+    println("  [PASS] clz(1) == 63");
+
+    println("=== All ctz/clz tests passed ===");
+    return 0;
+}

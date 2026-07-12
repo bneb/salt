@@ -1,0 +1,118 @@
+// I/O Renaissance — TDD Tests (Standalone)
+// Tests File::read, File::write, File::write_all, BufferedReader
+//
+// Fix: Define OpenFlags constants locally to avoid the MLIR codegen bug
+// where pub const struct values from cross-module imports emit
+// llvm.mlir.addressof for non-existent globals.
+
+package main
+
+import std.core.ptr.Ptr
+import std.core.result.Result
+import std.status.Status
+
+extern fn malloc(size: i64) -> Ptr<u8>;
+extern fn free(ptr: Ptr<u8>);
+extern fn sys_open(path: &u8, flags: i32, mode: i32) -> i32;
+extern fn sys_close(fd: i32) -> i32;
+extern fn sys_read(fd: i32, buf: i64, len: i64) -> i64;
+extern fn sys_write(fd: i32, buf: &u8, len: i64) -> i64;
+
+// ===========================================================================
+// Local OpenFlags (avoids cross-module pub const struct codegen bug)
+// ===========================================================================
+const O_RDONLY: i32 = 0;
+const O_WRONLY: i32 = 1;
+const O_CREAT:  i32 = 64;
+const O_TRUNC:  i32 = 512;
+
+fn file_open(path: &u8, flags: i32) -> i32 {
+    return sys_open(path, flags, 420);
+}
+
+fn file_write(fd: i32, buf: &u8, len: i64) -> i64 {
+    return sys_write(fd, buf, len);
+}
+
+fn file_read(fd: i32, buf: Ptr<u8>, len: i64) -> i64 {
+    return sys_read(fd, buf as i64, len);
+}
+
+fn main() -> i32 {
+    let mut passed: i32 = 0;
+    let mut failed: i32 = 0;
+
+    // =========================================================================
+    // Section 1: File Write
+    // =========================================================================
+    let flags_w: i32 = O_WRONLY | O_CREAT | O_TRUNC;
+    let fd_w: i32 = file_open("/tmp/salt_io_test.txt\0", flags_w);
+
+    if fd_w < 0 { return 1; }
+
+    // Write "Hello\nWorld\n" = 12 bytes
+    let written: i64 = file_write(fd_w, "Hello\nWorld\n\0", 12);
+    if written == 12 { passed = passed + 1; } else { failed = failed + 1; }
+
+    sys_close(fd_w);
+
+    // =========================================================================
+    // Section 2: File Read
+    // =========================================================================
+    let fd_r: i32 = file_open("/tmp/salt_io_test.txt\0", O_RDONLY);
+    if fd_r < 0 { return 1; }
+
+    let buf: Ptr<u8> = malloc(64);
+    let bytes_read: i64 = file_read(fd_r, buf, 64);
+
+    // Should read exactly 12 bytes
+    if bytes_read == 12 { passed = passed + 1; } else { failed = failed + 1; }
+
+    // buf[0] == 'H' (72)
+    let b0: u8 = *((buf as u64) as &u8);
+    if b0 == 72 { passed = passed + 1; } else { failed = failed + 1; }
+
+    // buf[5] == '\n' (10)
+    let b5: u8 = *((buf as u64 + 5) as &u8);
+    if b5 == 10 { passed = passed + 1; } else { failed = failed + 1; }
+
+    // buf[6] == 'W' (87)
+    let b6: u8 = *((buf as u64 + 6) as &u8);
+    if b6 == 87 { passed = passed + 1; } else { failed = failed + 1; }
+
+    // buf[11] == '\n' (10)
+    let b11: u8 = *((buf as u64 + 11) as &u8);
+    if b11 == 10 { passed = passed + 1; } else { failed = failed + 1; }
+
+    free(buf);
+    sys_close(fd_r);
+
+    // =========================================================================
+    // Section 3: File Write (short)
+    // =========================================================================
+    let fd_w2: i32 = file_open("/tmp/salt_io_test2.txt\0", O_WRONLY | O_CREAT | O_TRUNC);
+    if fd_w2 < 0 { return 1; }
+
+    let w1: i64 = file_write(fd_w2, "ABC\0", 3);
+    if w1 == 3 { passed = passed + 1; } else { failed = failed + 1; }
+    sys_close(fd_w2);
+
+    // Read back
+    let fd_r2: i32 = file_open("/tmp/salt_io_test2.txt\0", O_RDONLY);
+    if fd_r2 < 0 { return 1; }
+
+    let buf2: Ptr<u8> = malloc(16);
+    let n2: i64 = file_read(fd_r2, buf2, 16);
+    if n2 == 3 { passed = passed + 1; } else { failed = failed + 1; }
+
+    let c0: u8 = *((buf2 as u64) as &u8);
+    if c0 == 65 { passed = passed + 1; } else { failed = failed + 1; }  // 'A'
+
+    free(buf2);
+    sys_close(fd_r2);
+
+    // =========================================================================
+    // Summary: 9 assertions, return failure count
+    // =========================================================================
+    return failed;
+}

@@ -1,0 +1,115 @@
+// =============================================================================
+// std.path — TDD Test Suite
+// =============================================================================
+// Tests path parsing, decomposition, and joining.
+
+package main
+
+import std.core.ptr.Ptr
+import std.core.str.StringView
+import std.path.path.Path
+
+extern fn exit(code: i32);
+
+fn assert_true(cond: bool, test_id: i32) {
+    if !cond {
+        println(f"FAIL test {test_id}");
+        exit(test_id);
+    }
+}
+
+fn main() -> i32 {
+    // =========================================================================
+    // Test 1: parent of "/foo/bar/baz.txt" -> "/foo/bar"
+    // =========================================================================
+    let p1_str = "/foo/bar/baz.txt";
+    let p1 = Path::from_raw(p1_str as Ptr<u8>, 16);
+    let parent1 = p1.parent();
+    assert_true(parent1.len == 8, 1);  // "/foo/bar" = 8 chars
+    println("  [PASS] parent(\"/foo/bar/baz.txt\") -> len=8");
+
+    // =========================================================================
+    // Test 2: parent of "/foo" -> "/"
+    // =========================================================================
+    let p2_str = "/foo";
+    let p2 = Path::from_raw(p2_str as Ptr<u8>, 4);
+    let parent2 = p2.parent();
+    assert_true(parent2.len == 1, 2);  // "/" = 1 char
+    println("  [PASS] parent(\"/foo\") -> len=1");
+
+    // =========================================================================
+    // Test 3: parent of "/" -> "/"
+    // =========================================================================
+    let p3_str = "/";
+    let p3 = Path::from_raw(p3_str as Ptr<u8>, 1);
+    let parent3 = p3.parent();
+    assert_true(parent3.len == 1, 3);  // "/" stays "/"
+    println("  [PASS] parent(\"/\") -> len=1");
+
+    // =========================================================================
+    // Test 4: filename of "/foo/bar/baz.txt" -> "baz.txt"
+    // =========================================================================
+    let fname = p1.filename();
+    assert_true(fname.len == 7, 4);  // "baz.txt" = 7 chars
+    println("  [PASS] filename(\"/foo/bar/baz.txt\") -> len=7");
+
+    // =========================================================================
+    // Test 5: extension of "/foo/bar/baz.txt" -> "txt"
+    // =========================================================================
+    let ext = p1.extension();
+    assert_true(ext.len == 3, 5);  // "txt" = 3 chars
+    println("  [PASS] extension(\"/foo/bar/baz.txt\") -> len=3");
+
+    // =========================================================================
+    // Test 6: stem of "/foo/bar/baz.txt" -> "baz"
+    // =========================================================================
+    let stm = p1.stem();
+    assert_true(stm.len == 3, 6);  // "baz" = 3 chars
+    println("  [PASS] stem(\"/foo/bar/baz.txt\") -> len=3");
+
+    // =========================================================================
+    // Test 7: is_absolute("/foo") -> true
+    // =========================================================================
+    assert_true(p2.is_absolute(), 7);
+    println("  [PASS] is_absolute(\"/foo\") -> true");
+
+    // =========================================================================
+    // Test 8: is_absolute("foo") -> false
+    // =========================================================================
+    let p4_str = "foo";
+    let p4 = Path::from_raw(p4_str as Ptr<u8>, 3);
+    assert_true(!p4.is_absolute(), 8);
+    println("  [PASS] is_absolute(\"foo\") -> false");
+
+    // =========================================================================
+    // Test 9: extension with no dot -> empty
+    // =========================================================================
+    let p5_str = "/foo/no_ext";
+    let p5 = Path::from_raw(p5_str as Ptr<u8>, 11);
+    let ext2 = p5.extension();
+    assert_true(ext2.len == 0, 9);
+    println("  [PASS] extension(\"no_ext\") -> empty");
+
+    // =========================================================================
+    // Test 10: join "/foo" + "bar.txt" -> "/foo/bar.txt"
+    // =========================================================================
+    let base_str = "/foo";
+    let base = Path::from_raw(base_str as Ptr<u8>, 4);
+    let mut join_buf: [u8; 128] = [0; 128];
+    let seg = "bar.txt";
+    let joined = base.join(seg as Ptr<u8>, 7, &join_buf[0] as Ptr<u8>, 128);
+    assert_true(joined.len == 12, 10);  // "/foo/bar.txt" = 12 chars
+    println(f"  [PASS] join(\"/foo\", \"bar.txt\") -> len={joined.len}");
+
+    // =========================================================================
+    // Test 11: filename of "file.txt" (no dir) -> "file.txt"
+    // =========================================================================
+    let p6_str = "file.txt";
+    let p6 = Path::from_raw(p6_str as Ptr<u8>, 8);
+    let fname2 = p6.filename();
+    assert_true(fname2.len == 8, 11);
+    println("  [PASS] filename(\"file.txt\") -> len=8");
+
+    println("=== all path tests passed ===");
+    return 0;
+}

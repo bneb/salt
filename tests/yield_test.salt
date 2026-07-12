@@ -1,0 +1,15 @@
+pub fn test_loop() {
+    let mut i = 0;
+    while i < 100 {
+        i = i + 1;
+    }
+}
+
+pub fn test_yield() {
+    let mut i = 0;
+    while i < 100 {
+        i = i + 1;
+    }
+}
+
+pub fn main() {}

@@ -1,0 +1,71 @@
+// =============================================================================
+// String Literal as StringView — TDD Test Suite
+// =============================================================================
+// Validates that string literals produce StringView by default (Council V1).
+// Tests: .length(), .byte_at(), as Ptr<u8> backward compat.
+
+package main
+
+import std.core.str.StringView
+
+extern fn exit(code: i32);
+
+fn assert_eq(got: i64, expected: i64, test_id: i32) {
+    if got != expected {
+        println(f"FAIL test {test_id}: got {got}, expected {expected}");
+        exit(test_id);
+    }
+}
+
+fn takes_view(v: StringView) -> i64 {
+    return v.length();
+}
+
+fn main() -> i32 {
+    // =========================================================================
+    // Test 1: String literal has .length() method (is StringView)
+    // =========================================================================
+    let sv = "hello";
+    let len = sv.length();
+    assert_eq(len, 5, 1);
+    println("  [PASS] \"hello\" is StringView — .length() = 5");
+
+    // =========================================================================
+    // Test 2: String literal has .byte_at() method
+    // =========================================================================
+    let sv2 = "Salt";
+    let byte = sv2.byte_at(0);
+    assert_eq(byte as i64, 83, 2);  // 'S' = 83
+    println("  [PASS] \"Salt\".byte_at(0) = 83 ('S')");
+
+    // =========================================================================
+    // Test 3: Empty string literal
+    // =========================================================================
+    let empty = "";
+    assert_eq(empty.length(), 0, 3);
+    println("  [PASS] \"\".length() = 0");
+
+    // =========================================================================
+    // Test 4: Long string literal
+    // =========================================================================
+    let long = "Hello, Salt Language!";
+    assert_eq(long.length(), 21, 4);
+    println("  [PASS] long literal .length() = 21");
+
+    // =========================================================================
+    // Test 5: String literal cast to Ptr<u8> still works (backward compat)
+    // =========================================================================
+    let raw = "hello" as Ptr<u8>;
+    // Just verify it doesn't crash — the cast should succeed
+    println("  [PASS] \"hello\" as Ptr<u8> — backward compat");
+
+    // =========================================================================
+    // Test 6: Passing string literal where StringView expected
+    // =========================================================================
+    let len6 = takes_view("world");
+    assert_eq(len6, 5, 6);
+    println("  [PASS] passing literal to fn(StringView) — auto-match");
+
+    println("=== all string literal tests passed ===");
+    return 0;
+}

@@ -1,0 +1,102 @@
+// =============================================================================
+// tests/test_page_flags.salt
+// TDD: PageFlags domain type correctness
+// =============================================================================
+// 1:1 test file for kernel/mem/page.salt
+// Verifies flag composition, extraction, and named flag sets.
+
+package main
+
+extern fn exit(code: i32);
+
+// ---- Domain types (mirroring kernel/mem/page.salt) ----
+struct PageFlags { val: u64 }
+
+const PTE_PRESENT: u64 = 0x1;
+const PTE_WRITE: u64   = 0x2;
+const PTE_USER: u64    = 0x4;
+const PTE_PS: u64      = 0x80;
+
+fn user_page_flags() -> PageFlags {
+    return PageFlags { val: PTE_PRESENT | PTE_WRITE | PTE_USER };
+}
+
+fn kernel_huge_flags() -> PageFlags {
+    return PageFlags { val: PTE_PRESENT | PTE_WRITE | PTE_PS };
+}
+
+fn flags_or(a: PageFlags, b: PageFlags) -> PageFlags {
+    return PageFlags { val: a.val | b.val };
+}
+
+fn flags_has(flags: PageFlags, bit: u64) -> bool {
+    return (flags.val & bit) != 0;
+}
+
+fn flags_as_u64(f: PageFlags) -> u64 {
+    return f.val;
+}
+
+// ---- Harness ----
+fn assert_eq_u64(got: u64, expected: u64, id: i32) {
+    if got != expected {
+        println(f"FAIL test {id}: got {got}, expected {expected}");
+        exit(id);
+    }
+}
+
+fn assert_true(cond: bool, id: i32) {
+    if !cond {
+        println(f"FAIL test {id}: expected true");
+        exit(id);
+    }
+}
+
+fn assert_false(cond: bool, id: i32) {
+    if cond {
+        println(f"FAIL test {id}: expected false");
+        exit(id);
+    }
+}
+
+// ---- Tests ----
+fn main() -> i32 {
+    println("=== test_page_flags (1:1 for kernel/mem/page.salt) ===");
+
+    // T1: user_page_flags == 0x7
+    let uf = user_page_flags();
+    assert_eq_u64(uf.val, 0x7, 1);
+    println("  [PASS] user_page_flags == 0x7");
+
+    // T2: kernel_huge_flags == 0x83
+    let kf = kernel_huge_flags();
+    assert_eq_u64(kf.val, 0x83, 2);
+    println("  [PASS] kernel_huge_flags == 0x83");
+
+    // T3: flags_has detects individual bits
+    assert_true(flags_has(uf, PTE_PRESENT), 3);
+    assert_true(flags_has(uf, PTE_WRITE), 4);
+    assert_true(flags_has(uf, PTE_USER), 5);
+    assert_false(flags_has(uf, PTE_PS), 6);
+    println("  [PASS] flags_has individual bit checks");
+
+    // T4: flags_or composition
+    let a = PageFlags { val: PTE_PRESENT };
+    let b = PageFlags { val: PTE_WRITE | PTE_USER };
+    let combined = flags_or(a, b);
+    assert_eq_u64(combined.val, 0x7, 7);
+    println("  [PASS] flags_or composition");
+
+    // T5: kernel huge page — has PS, no USER
+    assert_true(flags_has(kf, PTE_PS), 8);
+    assert_false(flags_has(kf, PTE_USER), 9);
+    println("  [PASS] kernel_huge: PS=1, USER=0");
+
+    // T6: explicit extraction via flags_as_u64
+    let f = PageFlags { val: 0x87 };
+    assert_eq_u64(flags_as_u64(f), 0x87, 10);
+    println("  [PASS] flags_as_u64 extraction");
+
+    println("=== all page flag tests passed ===");
+    return 0;
+}

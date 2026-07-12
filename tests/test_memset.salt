@@ -1,0 +1,55 @@
+// Test: memset intrinsic correctly handles i32→i8 truncation
+// and Ptr<T>→!llvm.ptr conversion.
+package main
+
+import std.core.ptr.Ptr
+import std.core.mem.{memset}
+
+extern fn puts(s: Ptr<u8>) -> i32;
+extern fn malloc(size: i64) -> Ptr<u8>;
+extern fn free(ptr: u64);
+
+fn main() -> i32 {
+    // Allocate 16 bytes
+    let raw = (malloc(16) as u64);
+    let buf = raw as Ptr<u8>;
+
+    // Test 1: memset to 0 (the original bug - 0 emitted as i32)
+    memset(buf as Ptr<i8>, 0, 16);
+    let v0 = buf.read();
+    if v0 != 0 {
+        puts("FAIL: memset 0" as Ptr<u8>);
+        free(raw);
+        return 1;
+    }
+
+    // Test 2: memset to 0xFF (-1 as i8 / 255 as u8)
+    memset(buf as Ptr<i8>, 0xFF, 16);
+    let v1 = buf.read();
+    if v1 != 255 {
+        puts("FAIL: memset 0xFF" as Ptr<u8>);
+        free(raw);
+        return 1;
+    }
+
+    // Test 3: memset to 0x42 ('B')
+    memset(buf as Ptr<i8>, 0x42, 16);
+    let v2 = buf.read();
+    if v2 != 66 {
+        puts("FAIL: memset 0x42" as Ptr<u8>);
+        free(raw);
+        return 1;
+    }
+
+    // Test 4: Verify all 16 bytes were set
+    let v_last = buf.offset(15).read();
+    if v_last != 66 {
+        puts("FAIL: memset last byte" as Ptr<u8>);
+        free(raw);
+        return 1;
+    }
+
+    puts("PASS: memset all tests" as Ptr<u8>);
+    free(raw);
+    return 0;
+}
