@@ -813,16 +813,35 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
     }
     
     fn resolve_signature(&mut self, template: &SaltFn, map: &BTreeMap<String, Type>) -> Result<(Type, Vec<Type>), String> {
+        // ORDER MATTERS: parse signatures GENERICALLY first (template
+        // param names stay substitutable Generic placeholders), apply the
+        // bindings, THEN run codegen resolution on the bound type.
+        // Resolving first let package-prefix fabrication turn unbound
+        // placeholders into Concrete("main__SIZE") ghosts that
+        // substitution could never match.
+        let gen_names: std::collections::HashSet<String> = template.generics.as_ref()
+            .map(|g| g.params.iter().map(|p| match p {
+                crate::grammar::GenericParam::Type { name, .. } => name.to_string(),
+                crate::grammar::GenericParam::Const { name, .. } => name.to_string(),
+            }).collect())
+            .unwrap_or_default();
+        fn resolve_bound(
+            ctx: &mut crate::codegen::context::LoweringContext<'_, '_>,
+            t: &crate::grammar::SynType,
+            gen_names: &std::collections::HashSet<String>,
+            map: &BTreeMap<String, Type>,
+        ) -> Type {
+            let raw = Type::from_syn_with_generics(t, gen_names).unwrap_or(Type::Unit);
+            let bound = raw.substitute(map);
+            crate::codegen::types::resolution::resolve_codegen_type(ctx, &bound)
+        }
          let ret = if let Some(rt) = &template.ret_type {
-             let resolved = crate::codegen::type_bridge::resolve_type(self.ctx, rt);
-             let _substituted = resolved.substitute(map);
-             
-             resolved.substitute(map)
+             resolve_bound(self.ctx, rt, &gen_names, map)
          } else { Type::Unit };
          
          let args = template.args.iter().map(|a| {
              let ty = a.ty.as_ref().ok_or_else(|| format!("Missing type for argument {}", a.name))?;
-             Ok(crate::codegen::type_bridge::resolve_type(self.ctx, ty).substitute(map))
+             Ok(resolve_bound(self.ctx, ty, &gen_names, map))
          }).collect::<Result<Vec<_>, String>>()?;
          
          Ok((ret, args))
