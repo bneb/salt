@@ -275,6 +275,34 @@ impl Parse for SynType {
                 // Expect comma before dimension block
                 input.parse::<Token![,]>()?;
                 
+                // Already-rewritten form: preprocess() converts
+                // `Tensor<f32, {1, D}>` into `Tensor<f32, __Shape_2_1_D__>`
+                // before parsing, so the shape arrives as a single marker
+                // ident. Accept it here; otherwise the braced! below rejects
+                // every preprocessed shape (struct fields included) with a
+                // bare "expected curly braces".
+                if input.peek(Ident) {
+                    let marker: Ident = input.parse()?;
+                    let name = marker.to_string();
+                    if name.starts_with("__Shape_") && name.ends_with("__") {
+                        let body = &name[8..name.len() - 2];
+                        let cells: Vec<usize> = body.split('_')
+                            .filter_map(|c| c.parse().ok())
+                            .collect();
+                        let (rank, dims) = match cells.split_first() {
+                            Some((r, d)) => (*r, d.to_vec()),
+                            None => (0usize, Vec::new()),
+                        };
+                        input.parse::<Token![>]>()?;
+                        return Ok(SynType::ShapedTensor {
+                            element: Box::new(element),
+                            rank,
+                            dims: Box::new(dims.into_iter().map(TensorDim::Static).collect()),
+                        });
+                    }
+                    return Err(syn::Error::new(marker.span(), "expected Tensor shape block"));
+                }
+                
                 // Parse dimension block: {Rank, D1, D2, ...}
                 let content;
                 syn::braced!(content in input);
