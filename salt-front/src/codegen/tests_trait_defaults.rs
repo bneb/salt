@@ -429,7 +429,7 @@ mod contract_inheritance {
     }
 
     #[test]
-    fn override_dropping_requires_yields_obligation() {
+    fn overridden_default_with_clauses_yields_obligation() {
         let obligations = expand(r#"
             package main
 
@@ -443,14 +443,19 @@ mod contract_inheritance {
                 fn wrapped(&self, k: i64) -> i64 { return k; }
             }
         "#);
-        assert_eq!(obligations.len(), 1, "dropped requires must obligate");
+        assert_eq!(obligations.len(), 1, "overridden default must obligate");
         assert_eq!(obligations[0].trait_name, "Guarded");
         assert_eq!(obligations[0].method, "wrapped");
-        assert_eq!(obligations[0].dropped_ensures, 0);
+        assert_eq!(obligations[0].params, vec!["self".to_string(), "k".to_string()]);
+        assert_eq!(obligations[0].default_requires.len(), 1);
+        assert_eq!(obligations[0].ovr_requires.len(), 0);
     }
 
     #[test]
-    fn conformant_override_yields_no_obligation() {
+    fn overridden_clause_carrying_default_yields_obligation() {
+        // Stage 2: EVERY override of a clause-carrying default becomes an
+        // obligation; Z3 refinement decides strengthen vs weaken at
+        // compile time (see tests/contract_inheritance_test.rs).
         let obligations = expand(r#"
             package main
 
@@ -464,6 +469,9 @@ mod contract_inheritance {
                 fn wrapped(&self, k: i64) -> i64 requires(k > 0) { return k * 2; }
             }
         "#);
-        assert!(obligations.is_empty(), "strengthening override is legal");
+        assert_eq!(obligations.len(), 1);
+        assert_eq!(obligations[0].default_requires.len(), 1);
+        assert_eq!(obligations[0].ovr_requires.len(), 1);
+        assert_eq!(obligations[0].default_ensures.len(), 0);
     }
 }

@@ -26,6 +26,7 @@ pub mod pointer_state;
 pub mod arena_escape;
 pub mod ptr_bounds_verifier;
 pub mod proof_hint;
+pub(crate) mod contract_inheritance;
 mod fold_constants;
 #[cfg(test)] mod z3_smoke_tests;
 

@@ -32,15 +32,19 @@ use super::module_loader::ModuleLoader;
 /// Namespace-qualified trait identity: `<package path>.<trait name>`.
 type QualifiedId = String;
 
-/// An override whose contract dropped clauses the default carried.
-/// Stage-1 record (clause counts); stage-2 replaces counts with the
-/// clause Exprs for Z3 refinement.
+/// An override of a default that carried contract clauses. Carries the
+/// clause Exprs plus the method's parameter names so stage-2 Z3
+/// refinement can judge semantics rather than clause counts.
 #[derive(Debug)]
 pub struct OverrideObligation {
     pub trait_name: String,
     pub method: String,
-    pub dropped_requires: usize,
-    pub dropped_ensures: usize,
+    /// Receiver + argument names of the method signature, in order.
+    pub params: Vec<String>,
+    pub default_requires: Vec<syn::Expr>,
+    pub ovr_requires: Vec<syn::Expr>,
+    pub default_ensures: Vec<syn::Expr>,
+    pub ovr_ensures: Vec<syn::Expr>,
 }
 
 /// Indexes default method tables for every loaded source.
@@ -257,20 +261,21 @@ fn inherit_into(
     let mut obligations = Vec::new();
     for default_fn in defaults.iter() {
         let override_fn = methods.iter().find(|m| m.name == default_fn.name);
-        // Contract inheritance, stage 1: an override dropping clauses the
-        // default carried is recorded as an obligation. Presence-only
-        // compare -- semantic refinement is stage 2 (Z3).
+        // Contract inheritance: any override of a default that carries
+        // clauses becomes an obligation. Stage-2 Z3 refinement decides
+        // whether the override strengthens or weakens each kind.
         if let Some(ovr) = override_fn {
-            let dropped_requires =
-                default_fn.requires.len().saturating_sub(ovr.requires.len());
-            let dropped_ensures =
-                default_fn.ensures.len().saturating_sub(ovr.ensures.len());
-            if dropped_requires > 0 || dropped_ensures > 0 {
+            if !default_fn.requires.is_empty() || !default_fn.ensures.is_empty() {
+                let params: Vec<String> = default_fn.args.iter()
+                    .map(|a| a.name.to_string()).collect();
                 obligations.push(OverrideObligation {
                     trait_name: trait_name.to_string(),
                     method: default_fn.name.to_string(),
-                    dropped_requires,
-                    dropped_ensures,
+                    params,
+                    default_requires: default_fn.requires.clone(),
+                    ovr_requires: ovr.requires.clone(),
+                    default_ensures: default_fn.ensures.clone(),
+                    ovr_ensures: ovr.ensures.clone(),
                 });
             }
         }

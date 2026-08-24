@@ -159,26 +159,9 @@ pub fn set_proof_stats_json(on: bool) {
         // method sets. Single choke point; nothing downstream re-derives it.
         let override_obligations =
             trait_defaults::expand_trait_defaults(file, &mut loader, &mut loader_registry);
-        // Contract inheritance, stage 1: an override dropping requires or
-        // ensures clauses its default carried is a hard error. (Stage 2
-        // will replace this with Z3 refinement of the clause Exprs.)
-        if let Some(obligation) = override_obligations.first() {
-            let mut what = String::new();
-            if obligation.dropped_requires > 0 {
-                what.push_str(&format!("{} requires clause(s)", obligation.dropped_requires));
-            }
-            if obligation.dropped_ensures > 0 {
-                if !what.is_empty() { what.push_str(" and "); }
-                what.push_str(&format!("{} ensures clause(s)", obligation.dropped_ensures));
-            }
-            return Err(crate::errors::coded(
-                "E009",
-                format!(
-                    "override of trait `{}` method `{}` drops {} present on the default; overrides must satisfy or strengthen the default contract",
-                    obligation.trait_name, obligation.method, what
-                ),
-            ));
-        }
+        // Contract-inheritance obligations drain after
+        // initialize_context (see below), where a LoweringContext exists
+        // for Z3-based satisfy-or-strengthen refinement.
         // Register/scan a resolved copy of the ENTRY file (under its own package)
         // plus each imported module (under its own package, via the loops inside
         // register_all_templates_and_signatures / scan_definitions). The previous
@@ -193,6 +176,15 @@ pub fn set_proof_stats_json(on: bool) {
         let mut ctx = CodegenContext::new(file, release_mode, Some(&loader_registry), &z3_ctx);
         initialize_context(&mut ctx, file, &loader, no_verify, disable_alias_scopes, lib_mode, sip_mode, debug_info, deny_deferred, source_file);
         crate::codegen::expr::memory::clear_field_axioms_cache();
+        if !override_obligations.is_empty() {
+            ctx.with_lowering_ctx(|lctx| -> Result<(), String> {
+                for obligation in &override_obligations {
+                    crate::codegen::verification::contract_inheritance::
+                        check_override_conformance(lctx, obligation)?;
+                }
+                Ok(())
+            })?;
+        }
         register_all_templates_and_signatures(&ctx, &combined, &loader)?;
         scan_definitions(&mut ctx, &combined, &loader)?;
         let call_graph_analyzer = run_call_graph_analysis(file, release_mode);
