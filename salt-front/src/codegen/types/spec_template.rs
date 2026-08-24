@@ -146,7 +146,6 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
                 
                 // Method-level generics (e.g., mmap<T> on File struct)
                 // CRITICAL: func.generics.params includes BOTH impl-level and method-level params.
-                // Only method-level ones must be mapped (skip struct_generic_count from func.generics).
                 if let Some(fn_generics) = &func.generics {
                     // Use the CALLER's self_ty for correct struct_generic_count
                     let struct_generic_count = self_ty.as_ref()
@@ -163,7 +162,27 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
                             _ => None
                         })
                         .unwrap_or(0);
-                    
+
+                    // IMPL-level params: the wrapper declares the impl's
+                    // names (`impl<T> Pair<A>` wrappers carry T) while
+                    // map_generics above bound the STRUCT template's names
+                    // (A). Bodies reference the impl names, so bind them
+                    // positionally to the receiver's concrete args when the
+                    // counts line up; never clobber existing bindings.
+                    if fn_generics.params.len() >= struct_generic_count
+                        && concrete_tys.len() >= struct_generic_count {
+                        for (i, param) in fn_generics.params.iter().take(struct_generic_count).enumerate() {
+                            let pname = match param {
+                                crate::grammar::GenericParam::Type { name, .. } => name.to_string(),
+                                crate::grammar::GenericParam::Const { name, .. } => name.to_string(),
+                            };
+                            if let Some(arg) = concrete_tys.get(i) {
+                                self.current_type_map_mut()
+                                    .entry(pname).or_insert_with(|| arg.clone());
+                            }
+                        }
+                    }
+
                     let method_args: Vec<Type> = concrete_tys.iter().skip(struct_generic_count).cloned().collect();
 
                     if !method_args.is_empty() {
