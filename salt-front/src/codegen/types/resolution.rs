@@ -178,6 +178,13 @@ fn resolve_codegen_type_concrete(ctx: &mut LoweringContext, base_name: &str, tar
     if target_params.is_empty() {
         let concrete_opt = ctx.current_type_map().get(base_name).cloned();
         if let Some(concrete_ty) = concrete_opt {
+            // Self-binding guard: a param bound to its own bare-name Concrete
+            // (`SIZE -> Concrete("SIZE")`, produced when a turbofish names a
+            // const param outside generic-name context) can never resolve
+            // further — recursing here overflowed the stack. Keep the value.
+            if matches!(&concrete_ty, Type::Concrete(n, _) if n == base_name) {
+                return concrete_ty;
+            }
             return resolve_codegen_type(ctx, &concrete_ty);
         }
     }

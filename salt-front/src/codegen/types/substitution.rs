@@ -1,9 +1,14 @@
 use crate::types::Type;
+use std::collections::BTreeMap;
 use crate::codegen::context::LoweringContext;
 
 /// Returns true when a type_map entry maps `name` back to itself.
+/// `Concrete(name)` counts too: a const param bound to its own bare-name
+/// Concrete (`SIZE -> Concrete("SIZE")`, from turbofish parsed outside
+/// generic-name context) makes substitution infinitely self-recursive
+/// unless treated as self-reference here.
 fn is_self_ref(n: &str, c: &Type) -> bool {
-    matches!(c, Type::Struct(s) | Type::Generic(s) if s == n)
+    matches!(c, Type::Struct(s) | Type::Generic(s) | Type::Concrete(s, _) if s == n)
 }
 
 fn sub_through(m: &std::collections::BTreeMap<String, Type>, n: &str, ty: &Type) -> Type {
@@ -21,7 +26,27 @@ fn try_suffix(m: &std::collections::BTreeMap<String, Type>, n: &str) -> Option<T
 /// Recursively substitute generic placeholders using current_type_map.
 /// When HashMap<i64, i64> references Entry<K, V>, this function consults the
 /// active type context to produce Entry<i64, i64>.
+///
+/// Totality: pathological type maps can make entries expand into types that
+/// re-reference themselves (const params bound to template-shaped Concretes),
+/// growing the result without bound. A generous depth cap keeps the function
+/// total; real-world generic nesting stays far below it.
 pub fn substitute_generics(type_map: &std::collections::BTreeMap<String, Type>, ty: &Type) -> Type {
+    thread_local! {
+        static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+    let d = DEPTH.with(|c| c.get()) + 1;
+    DEPTH.with(|c| c.set(d));
+    let _guard = DepthReset;
+    struct DepthReset;
+    impl Drop for DepthReset {
+        fn drop(&mut self) {
+            DEPTH.with(|c| c.set(c.get() - 1));
+        }
+    }
+    if d > 256 {
+        return ty.clone();
+    }
     match ty {
         Type::Struct(name) if type_map.contains_key(name) => sub_through(type_map, name, ty),
         Type::Generic(name) => sub_through(type_map, name, ty),
@@ -70,6 +95,99 @@ pub fn substitute_generics(type_map: &std::collections::BTreeMap<String, Type>, 
 pub fn substitute_generics_ctx(ctx: &mut LoweringContext, ty: &Type) -> Type {
     let type_map = ctx.current_type_map();
     substitute_generics(type_map, ty)
+}
+
+/// Collects the generic placeholder names a call's return type still
+/// carries, in order of first appearance. A placeholder is a `Generic`
+/// or a zero-arg `Concrete` whose name is not a known mangled path
+/// (i.e. an unsubstituted type/const param like `T` or `U`).
+pub(crate) fn collect_placeholder_names(ty: &Type, out: &mut Vec<String>) {
+    match ty {
+        Type::Generic(n) => {
+            if !out.contains(n) { out.push(n.clone()); }
+        }
+        Type::Struct(n) if !n.contains("__") && !is_primitive_name(n) => {
+            if !out.contains(n) { out.push(n.clone()); }
+        }
+        Type::Concrete(n, args) if args.is_empty() && !n.contains("__") => {
+            if !out.contains(n) { out.push(n.clone()); }
+        }
+        Type::Pointer { element, .. } | Type::Owned(element) | Type::Tensor(element, _) =>
+            collect_placeholder_names(element, out),
+        Type::Reference(inner, _) => collect_placeholder_names(inner, out),
+        Type::Array(inner, _, _) => collect_placeholder_names(inner, out),
+        Type::Fn(args, ret) => {
+            for a in args { collect_placeholder_names(a, out); }
+            collect_placeholder_names(ret, out);
+        }
+        Type::Tuple(elems) => {
+            for e in elems { collect_placeholder_names(e, out); }
+        }
+        Type::Concrete(_, args) => {
+            for a in args { collect_placeholder_names(a, out); }
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_placeholder(ty: &mut Type, bindings: &BTreeMap<String, Type>) {
+    match ty {
+        Type::Generic(n) => {
+            if let Some(bound) = bindings.get(n) { *ty = bound.clone(); }
+        }
+        Type::Struct(n) if !n.contains("__") => {
+            if let Some(bound) = bindings.get(n) { *ty = bound.clone(); }
+        }
+        Type::Concrete(n, args) if args.is_empty() && !n.contains("__") => {
+            if let Some(bound) = bindings.get(n) { *ty = bound.clone(); }
+        }
+        Type::Pointer { element, .. } | Type::Owned(element) | Type::Tensor(element, _) =>
+            rewrite_placeholder(element, bindings),
+        Type::Reference(inner, _) => rewrite_placeholder(inner, bindings),
+        Type::Array(inner, _, _) => rewrite_placeholder(inner, bindings),
+        Type::Fn(args, ret) => {
+            for a in args { rewrite_placeholder(a, bindings); }
+            rewrite_placeholder(ret, bindings);
+        }
+        Type::Tuple(elems) => {
+            for e in elems { rewrite_placeholder(e, bindings); }
+        }
+        Type::Concrete(_, args) => {
+            for a in args { rewrite_placeholder(a, bindings); }
+        }
+        _ => {}
+    }
+}
+
+/// Binds leftover generic placeholders in a resolved call return type to
+/// the LAST path segment's turbofish args, positionally. Tracers resolve
+/// signatures without fn-generic context, so
+/// `Pair::<i64>::swapped_with::<f32>(7)` otherwise keeps raw placeholders
+/// (`U`) that later casts reject ("Unsupported explicit cast T -> i32").
+pub(crate) fn bind_call_return_placeholders(ret: &Type, turbofish_args: &[Type]) -> Type {
+    if turbofish_args.is_empty() { return ret.clone(); }
+    let mut names = Vec::new();
+    collect_placeholder_names(ret, &mut names);
+    if names.is_empty() { return ret.clone(); }
+    let mut bindings = BTreeMap::new();
+    for (name, arg) in names.into_iter().zip(turbofish_args.iter()) {
+        bindings.insert(name, arg.clone());
+    }
+    let mut out = ret.clone();
+    rewrite_placeholder(&mut out, &bindings);
+    out
+}
+
+fn is_primitive_name(n: &str) -> bool {
+    matches!(n, "i8"|"i16"|"i32"|"i64"|"u8"|"u16"|"u32"|"u64"|"usize"|"f32"|"f64"|"bool")
+}
+
+/// Public wrapper: rewrites bare template placeholders (including
+/// `Struct("T")` forms produced by context-free type resolution)
+/// against the given bindings.
+pub(crate) fn rewrite_bare_placeholders(mut ty: Type, bindings: &BTreeMap<String, Type>) -> Type {
+    rewrite_placeholder(&mut ty, bindings);
+    ty
 }
 
 #[cfg(test)]
@@ -197,3 +315,4 @@ mod tests {
         assert_eq!(substitute_generics(&m, &Type::SelfType), Type::SelfType);
     }
 }
+

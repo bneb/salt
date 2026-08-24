@@ -33,16 +33,28 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
             if let Some(params) = gen_params {
                 for (i, param) in params.iter().enumerate() {
                     let pname = match param { crate::grammar::GenericParam::Type { name, .. } => name.to_string(), crate::grammar::GenericParam::Const { name, .. } => name.to_string() };
+                    // A param bound to its own bare-name Concrete
+                    // (`SIZE -> Concrete("SIZE")`, from turbofish parsed
+                    // outside generic-name context) poisons resolution into
+                    // infinite self-substitution; bind it as Generic instead.
+                    let normalize = |arg: &Type, pname: &str| -> Type {
+                        match arg {
+                            Type::Concrete(n, _) if n == pname => Type::Generic(pname.to_string()),
+                            other => other.clone(),
+                        }
+                    };
                     if let Type::Concrete(_, args) = &st {
                         if let Some(arg) = args.get(i) {
-                            self.current_type_map_mut().insert(pname, arg.clone());
+                            let bound = normalize(arg, &pname);
+                            self.current_type_map_mut().insert(pname, bound);
                         }
                     } else if let Type::Pointer { element, .. } = &st {
                         if i == 0 {
                             self.current_type_map_mut().insert(pname, (**element).clone());
                         }
                     } else if let Some(arg) = concrete_tys.get(i) {
-                        self.current_type_map_mut().insert(pname, arg.clone());
+                        let bound = normalize(arg, &pname);
+                        self.current_type_map_mut().insert(pname, bound);
                     }
                 }
             }
