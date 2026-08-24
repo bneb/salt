@@ -114,16 +114,20 @@ impl<'a> TypeTracer for CodegenContext<'a> {
                     // LoweringContext tracer) — without this, seeker-typed
                     // locals from `Pair::<i64>::m::<f32>(...)` keep raw
                     // placeholders that later casts reject.
-                    let fn_turbofish: Vec<Type> = p.path.segments.last().and_then(|seg| {
+                    let fn_turbofish: Vec<Type> = p.path.segments.iter().flat_map(|seg| {
                         if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
-                            Some(args.args.iter().filter_map(|g| match g {
+                            args.args.iter().filter_map(|g| match g {
                                 syn::GenericArgument::Type(t) =>
                                     crate::grammar::SynType::from_std(t.clone()).ok()
                                         .and_then(|st| Type::from_syn(&st)),
+                                syn::GenericArgument::Const(syn::Expr::Lit(syn::ExprLit {
+                                    lit: syn::Lit::Int(li), .. })) =>
+                                    li.base10_parse::<i64>().ok()
+                                        .map(|v| Type::Struct(v.to_string())),
                                 _ => None,
-                            }).collect())
-                        } else { None }
-                    }).unwrap_or_default();
+                            }).collect::<Vec<_>>()
+                        } else { Vec::new() }
+                    }).collect::<Vec<_>>();
                     // Signature lookups yield the whole Type::Fn; a call's
                     // traced type is its RETURN type — unwrap it.
                     if let Some((_, sig)) = self.resolve_global_signature(&key.mangle()) {
