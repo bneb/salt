@@ -26,3 +26,5 @@ jobs:
         run: SALTC=./target/release/saltc bash scripts/proof_gate.sh
         env:
           MIN_PROVEN_PCT: "45"
+      - name: MLIR determinism gate
+        run: SALTC=./target/release/saltc bash scripts/mlir_determinism_gate.sh
