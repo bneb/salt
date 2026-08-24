@@ -93,6 +93,15 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
                              let resolved = crate::codegen::type_bridge::resolve_type(self.ctx, &syn_ty);
                              generics.push(resolved.clone());
                              fn_level_generics.push(resolved);
+                         } else if let syn::GenericArgument::Const(syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(li), .. })) = arg {
+                             if let Ok(val) = li.base10_parse::<i64>() {
+                                 // Const-generic values ride as value-named
+                                 // Struct types (scan_types convention) so
+                                 // distinct ints distinct-specialize.
+                                 let v = crate::types::Type::Struct(val.to_string());
+                                 generics.push(v.clone());
+                                 fn_level_generics.push(v);
+                             }
                          }
                      }
                  }
@@ -234,6 +243,10 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
                 if let syn::GenericArgument::Type(ty) = arg {
                     let syn_ty = crate::grammar::SynType::from_std(ty.clone()).map_err(|e| e.to_string())?;
                     generics.push(crate::codegen::type_bridge::resolve_type(self.ctx, &syn_ty));
+                } else if let syn::GenericArgument::Const(syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(li), .. })) = arg {
+                    if let Ok(val) = li.base10_parse::<i64>() {
+                        generics.push(crate::types::Type::Struct(val.to_string()));
+                    }
                 }
             }
         }
