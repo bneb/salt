@@ -134,6 +134,18 @@ use crate::common::mangling::Mangler;
 use crate::types::Type;
 use crate::registry::Registry;
 use std::collections::{HashMap, HashSet};
+
+/// Process-lifetime CLI switch: when set, assemble_module prints one
+/// machine-readable JSON proof-summary line on stdout (sibling of the
+/// stderr "Z3:" prose line). Set via `--emit-proof-stats json`.
+static PROOF_STATS_JSON: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Enables the JSON proof-summary line (see PROOF_STATS_JSON).
+pub fn set_proof_stats_json(on: bool) {
+    PROOF_STATS_JSON.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
     #[allow(clippy::too_many_arguments)]
     // REASON: all 10 parameters are independently meaningful; bundling would obscure intent
     #[allow(unused_mut)]
@@ -554,6 +566,15 @@ impl<'a> CodegenContext<'a> {
             elided, total,
             if total > 0 { (elided * 100) / total } else { 0 },
             deferred);
+        if PROOF_STATS_JSON.load(std::sync::atomic::Ordering::Relaxed) {
+            // Exactly one JSON line on stdout; consumers (scripts/
+            // proof_gate.sh) key on the basename and assert proven<=total.
+            let pct = if total > 0 { (elided * 100) / total } else { 0 };
+            println!(
+                "{{\"proof_stats\":{{\"proven\":{},\"total\":{},\"deferred\":{},\"pct\":{}}}}}",
+                elided, total, deferred, pct
+            );
+        }
         if self.deny_deferred && deferred > 0 {
             return Err(format!(
                 "[E011] --deny-deferred: {} Z3 check(s) could not be statically \

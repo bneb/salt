@@ -22,3 +22,7 @@ jobs:
       - name: Z3 contracts
         run: SALTC=./target/release/saltc bash tests/z3_contracts/run_tests.sh
         working-directory: salt-front
+      - name: Proof-ratio gate
+        run: SALTC=./target/release/saltc bash scripts/proof_gate.sh
+        env:
+          MIN_PROVEN_PCT: "45"

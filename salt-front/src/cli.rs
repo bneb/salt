@@ -60,7 +60,9 @@ pub fn parse_args(args: Vec<String>) -> anyhow::Result<Option<CliConfig>> {
             println!("  --emit-sir         Emit SIR (Salt Intermediate Representation) as JSON");
             println!("  --disable-alias-scopes  Suppress LLVM alias scope metadata");
             println!("  --danger-no-verify  Disable Z3 contract verification (verification is on by default)");
-            println!("  --deny-deferred     Error if any Z3 check is deferred to runtime (CI enforcement)");
+            println!("  --deny-deferred     Error if any Z3 check is deferred to runtime (CI enforcement)
+  --emit-proof-stats json
+                      Print one JSON proof-summary line to stdout");
             println!("  --explain <code>        Show detailed explanation of an error code");
             println!("  --version               Show version information");
             println!("  --help                  Show this help message");
@@ -132,6 +134,14 @@ pub fn parse_args(args: Vec<String>) -> anyhow::Result<Option<CliConfig>> {
             debug_info = true;
         } else if arg == "--deny-deferred" {
             deny_deferred = true;
+        } else if arg == "--emit-proof-stats" {
+            match args.get(i + 1).map(|s| s.as_str()) {
+                Some("json") => {
+                    crate::codegen::set_proof_stats_json(true);
+                    i += 1;
+                }
+                _ => anyhow::bail!("[E004] --emit-proof-stats requires 'json'"),
+            }
         } else if arg == "-o" {
             if i + 1 < args.len() {
                 output_path = Some(args[i+1].clone());

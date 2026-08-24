@@ -1,0 +1,168 @@
+{
+  "aggregate": {
+    "proven": 57,
+    "total": 116
+  },
+  "rows": [
+    {
+      "name": "test_array_fill.salt",
+      "proven": 8,
+      "total": 9
+    },
+    {
+      "name": "test_array_length_proved.salt",
+      "proven": 0,
+      "total": 1
+    },
+    {
+      "name": "test_binary_search.salt",
+      "proven": 0,
+      "total": 1
+    },
+    {
+      "name": "test_bubble_sort.salt",
+      "proven": 8,
+      "total": 8
+    },
+    {
+      "name": "test_bv.salt",
+      "proven": 1,
+      "total": 5
+    },
+    {
+      "name": "test_bv_shifts.salt",
+      "proven": 2,
+      "total": 4
+    },
+    {
+      "name": "test_comprehensive.salt",
+      "proven": 9,
+      "total": 16
+    },
+    {
+      "name": "test_contract_library.salt",
+      "proven": 0,
+      "total": 4
+    },
+    {
+      "name": "test_contract_proved.salt",
+      "proven": 0,
+      "total": 1
+    },
+    {
+      "name": "test_contract_timeout.salt",
+      "proven": 0,
+      "total": 1
+    },
+    {
+      "name": "test_cross_fn_chain.salt",
+      "proven": 1,
+      "total": 2
+    },
+    {
+      "name": "test_ensures_forall_body.salt",
+      "proven": 2,
+      "total": 2
+    },
+    {
+      "name": "test_ensures_nonzero_proved.salt",
+      "proven": 2,
+      "total": 2
+    },
+    {
+      "name": "test_exists.salt",
+      "proven": 1,
+      "total": 2
+    },
+    {
+      "name": "test_exists_symbolic.salt",
+      "proven": 1,
+      "total": 2
+    },
+    {
+      "name": "test_for_loop_slice.salt",
+      "proven": 2,
+      "total": 5
+    },
+    {
+      "name": "test_forall_requires_proved.salt",
+      "proven": 1,
+      "total": 3
+    },
+    {
+      "name": "test_insertion_sort.salt",
+      "proven": 2,
+      "total": 5
+    },
+    {
+      "name": "test_insertion_sort_concrete.salt",
+      "proven": 0,
+      "total": 0
+    },
+    {
+      "name": "test_loop_call_precond_proved.salt",
+      "proven": 2,
+      "total": 5
+    },
+    {
+      "name": "test_matmul_operator.salt",
+      "proven": 0,
+      "total": 0
+    },
+    {
+      "name": "test_preservation.salt",
+      "proven": 2,
+      "total": 3
+    },
+    {
+      "name": "test_requires_bounds_proved.salt",
+      "proven": 0,
+      "total": 1
+    },
+    {
+      "name": "test_selection_sort.salt",
+      "proven": 4,
+      "total": 5
+    },
+    {
+      "name": "test_slice_cursor_proved.salt",
+      "proven": 2,
+      "total": 4
+    },
+    {
+      "name": "test_slice_len_construction_proved.salt",
+      "proven": 0,
+      "total": 1
+    },
+    {
+      "name": "test_string_length_proved.salt",
+      "proven": 0,
+      "total": 1
+    },
+    {
+      "name": "test_string_ops.salt",
+      "proven": 0,
+      "total": 3
+    },
+    {
+      "name": "test_strings.salt",
+      "proven": 0,
+      "total": 2
+    },
+    {
+      "name": "test_strings_symbolic.salt",
+      "proven": 0,
+      "total": 5
+    },
+    {
+      "name": "test_struct_field_bounds.salt",
+      "proven": 1,
+      "total": 1
+    },
+    {
+      "name": "test_type_bounds.salt",
+      "proven": 6,
+      "total": 12
+    }
+  ]
+}
