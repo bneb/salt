@@ -109,7 +109,15 @@ impl ModuleLoader {
 
     /// Recursively loads a module and its dependencies
     /// Check the bundled stdlib for a namespace before hitting the filesystem.
-    fn try_bundled_stdlib(&self, namespace: &str) -> Option<String> {
+    ///
+    /// Returns the TRUE bundle key alongside the source: an item-level
+    /// import like `std.core.result.Result` is served by the parent module's
+    /// source (`std.core.result`), and callers must register everything under
+    /// that key — a phantom `ModuleInfo` packaged as `std.core.result.Result`
+    /// re-mangles the module's enums into doubled names
+    /// (`std__core__result__Result__Result`), splitting every downstream
+    /// specialization/lookup that uses the single canonical form.
+    fn try_bundled_stdlib(&self, namespace: &str) -> Option<(String, String)> {
         if !namespace.starts_with("std") {
             return None;
         }
@@ -119,8 +127,8 @@ impl ModuleLoader {
         let parts: Vec<&str> = namespace.split('.').collect();
         for len in (1..=parts.len()).rev() {
             let key = parts[..len].join(".");
-            if bundle.contains_key(&key) {
-                return bundle.get(&key).map(|s| s.to_string());
+            if let Some(source) = bundle.get(&key) {
+                return Some((key, source.to_string()));
             }
         }
         None
@@ -143,18 +151,23 @@ impl ModuleLoader {
         self.loading_stack.push(namespace.to_string());
 
         // 3. Check bundled stdlib first (no filesystem needed)
-        if let Some(source) = self.try_bundled_stdlib(namespace) {
+        if let Some((true_ns, source)) = self.try_bundled_stdlib(namespace) {
             let processed = crate::preprocess(&source);
             if let Ok(ast) = syn::parse_str::<crate::grammar::SaltFile>(&processed) {
-                let mut info = ModuleInfo::new(namespace);
+                // Register under the bundle key matching the source's own
+                // `package` declaration, never the requested item path.
+                let mut info = ModuleInfo::new(&true_ns);
                 info.imports = ast.imports.clone();
                 for item in &ast.items {
                     self.extract_item_info(item, &mut info, &ast.imports);
                 }
                 registry.register(info);
                 self.merge_into_combined(ast.clone());
-                self.loaded_files.insert(namespace.to_string(), ast.clone());
-                self.loaded_modules.insert(namespace.to_string());
+                self.loaded_files.insert(true_ns.clone(), ast.clone());
+                self.loaded_modules.insert(true_ns.clone());
+                if true_ns != namespace {
+                    self.loaded_modules.insert(namespace.to_string());
+                }
                 // Recursively load the stdlib module's own imports
                 let sub_imports: Vec<String> = ast.imports.iter()
                     .map(|imp| imp.name.iter().map(|id| id.to_string()).collect::<Vec<_>>().join("."))
