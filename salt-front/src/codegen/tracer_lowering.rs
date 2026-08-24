@@ -66,6 +66,15 @@ fn trace_path(ctx: &LoweringContext, path: &syn::ExprPath, locals: &BTreeMap<Str
         if let Some(ty) = ctx.lookup_global_type(&key) {
             return Ok(ty);
         }
+        // Function items live in discovery.globals under their MANGLED
+        // name as Type::Fn. A bare fn name used as a value IS a
+        // signature-typed item (emission coerces it to a pointer where a
+        // fn-pointer slot demands it); tracing it keeps payload
+        // conformance able to reject fn items in scalar slots instead of
+        // silently storing entry addresses.
+        if let Some(ty @ Type::Fn(..)) = ctx.discovery.globals.get(&key.mangle()) {
+            return Ok(ty.clone());
+        }
     }
     if let Some(ty) = ctx.discovery.globals.get(&name) {
         return Ok(ty.clone());
@@ -122,13 +131,31 @@ fn trace_call(ctx: &LoweringContext, c: &syn::ExprCall, locals: &BTreeMap<String
         }
     }
     let key = ctx.resolve_path_to_fqn(&p.path)?;
-    if let Some((_, ret)) = ctx.resolve_global_signature(&key.mangle()) {
-        return Ok(ret);
+    // Last segment's turbofish args bind the fn's own generic params
+    // positionally; without this, `Pair::<i64>::swapped_with::<f32>(7)`
+    // traces as raw placeholder `U`/`T` and later casts reject.
+    let fn_turbofish: Vec<Type> = p.path.segments.last().and_then(|seg| {
+        if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+            Some(args.args.iter().filter_map(|g| match g {
+                syn::GenericArgument::Type(t) =>
+                    crate::grammar::SynType::from_std(t.clone()).ok()
+                        .and_then(|st| Type::from_syn(&st)),
+                _ => None,
+            }).collect())
+        } else { None }
+    }).unwrap_or_default();
+    // Signature lookups yield the whole Type::Fn; a call's traced type is
+    // its RETURN type. (Before payload conformance consumed traced types
+    // strictly, this path leaked full signatures and callers deferred.)
+    if let Some((_, sig)) = ctx.resolve_global_signature(&key.mangle()) {
+        let ret = crate::codegen::tracer::call_return_type(sig);
+        return Ok(crate::codegen::types::substitution::bind_call_return_placeholders(&ret, &fn_turbofish));
     }
     // Free fns defined in this unit live in discovery.globals as Type::Fn;
     // a call yields their RETURN type.
     if let Some(Type::Fn(_, boxed_ret)) = ctx.discovery.globals.get(&key.mangle()) {
-        return Ok((**boxed_ret).clone());
+        let ret = (**boxed_ret).clone();
+        return Ok(crate::codegen::types::substitution::bind_call_return_placeholders(&ret, &fn_turbofish));
     }
     Ok(Type::Unit)
 }

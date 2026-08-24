@@ -15,6 +15,16 @@ pub trait TypeTracer {
 // NOTE: the LoweringContext tracer lives in tracer_lowering.rs; it carries
 // extra arms (Binary/Unary/Paren via tracer_binop, Tuple) that the default
 // CodegenContext tracer intentionally does not.
+
+/// A resolved global signature arrives as the WHOLE `Type::Fn`; a call
+/// expression's traced type is its RETURN type, so unwrap it.
+pub(crate) fn call_return_type(sig: Type) -> Type {
+    match sig {
+        Type::Fn(_, boxed_ret) => *boxed_ret,
+        other => other,
+    }
+}
+
 impl<'a> TypeTracer for CodegenContext<'a> {
     fn trace_expr_type(&self, expr: &Expr, locals: &BTreeMap<String, Type>) -> Result<Type, String> {
         match expr {
@@ -99,8 +109,26 @@ impl<'a> TypeTracer for CodegenContext<'a> {
                     }
 
                     let key = self.resolve_path_to_fqn(&p.path)?;
-                    if let Some((_, ret)) = self.resolve_global_signature(&key.mangle()) {
-                        return Ok(ret);
+                    // Last segment's turbofish args bind the fn's own
+                    // generic params positionally (mirror of the
+                    // LoweringContext tracer) — without this, seeker-typed
+                    // locals from `Pair::<i64>::m::<f32>(...)` keep raw
+                    // placeholders that later casts reject.
+                    let fn_turbofish: Vec<Type> = p.path.segments.last().and_then(|seg| {
+                        if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+                            Some(args.args.iter().filter_map(|g| match g {
+                                syn::GenericArgument::Type(t) =>
+                                    crate::grammar::SynType::from_std(t.clone()).ok()
+                                        .and_then(|st| Type::from_syn(&st)),
+                                _ => None,
+                            }).collect())
+                        } else { None }
+                    }).unwrap_or_default();
+                    // Signature lookups yield the whole Type::Fn; a call's
+                    // traced type is its RETURN type — unwrap it.
+                    if let Some((_, sig)) = self.resolve_global_signature(&key.mangle()) {
+                        let ret = call_return_type(sig);
+                        return Ok(crate::codegen::types::substitution::bind_call_return_placeholders(&ret, &fn_turbofish));
                     }
                 }
                 Ok(Type::Unit)

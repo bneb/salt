@@ -174,14 +174,16 @@ Round-13b additions:
   Reference-typed args are auto-deref'd one level to match promote_numeric.
   The registry fast path (already-specialized enums) runs the SAME per-arg
   conformance since B2; it previously bypassed every check. Tracer-gap args
-  (untraceable or Fn-signature results from resolve_global_signature) are
-  skipped and left to emission diagnostics - the while-invariant contract
-  test covers this skip path (Status::from_code ctor arg inside
-  std/core/result usage). Fn-item args (Ok(g), bare fn) are ALSO skipped
-  today: they silently store the fn address as the payload - documented
-  limitation, pinned by test_fn_item_ctor_arg_compiles_silently in
-  tests/generic_enum_ctor_test.rs and ticketed alongside payload-slot
-  conformance.
+  (untraceable) are skipped and left to emission diagnostics - the
+  while-invariant contract test covers this skip path (Status::from_code ctor
+  arg inside std/core/result usage). Fn-item args (Ok(g), bare fn) were ALSO
+  skipped and silently stored the fn address as the payload; CLOSED: the
+  tracer now types bare fn names as Type::Fn (tracer_lowering trace_path
+  probes discovery.globals under the mangled fn key) and conformance rejects
+  fn items in any non-fn-pointer slot with a clean [E003] mismatch naming the
+  wrap-the-call fix. Genuine fn items into `fn(...)->...` slots still coerce
+  at emission. Locked by tests/fn_item_payload_conformance_test.rs and the
+  flipped pin test_fn_item_ctor_arg_rejected in tests/generic_enum_ctor_test.rs.
 
 - NEW TICKET (proven blocker for fully generic traits): GENERIC STRUCT FIELD
   ACCESS inside impl methods fails on erased self-types. Repro A (direct

@@ -231,9 +231,11 @@ fn payload_slot_list(payload: &Type, arg_count: usize) -> Vec<Type> {
     }
 }
 
-/// One argument: trace it; untraceable args and Fn-typed items (tracer gap
-/// for associated fns, or genuine fn-items) DEFER to emission diagnostics;
+/// One argument: trace it; untraceable args DEFER to emission diagnostics;
 /// everything else requires structural or numeric compatibility with the slot.
+/// A traced function item into a NON-fn slot is rejected here — emission
+/// would otherwise silently ptrtoint the function's entry address into the
+/// payload (e.g. `Val(answer)` filling an i64 slot with a code pointer).
 fn check_single_ctor_arg(
     ctx: &LoweringContext,
     label: &str,
@@ -243,14 +245,18 @@ fn check_single_ctor_arg(
     trace_locals: &BTreeMap<String, Type>,
 ) -> Result<(), String> {
     if matches!(slot, Type::Fn(..)) {
-        return Ok(());  // slot itself is a fn pointer: nothing to conformance-check
+        return Ok(());  // fn-pointer slot: genuine fn items coerce at emission
     }
     let traced = match ctx.trace_expr_type(arg, trace_locals) {
         Ok(t) => t,
         Err(_) => return Ok(()),  // untraceable: emission reports what it sees
     };
     if matches!(traced, Type::Fn(..)) {
-        return Ok(());  // fn-item arg: known tracer gap, deferred (see ticket)
+        return Err(format!(
+            "Constructor argument type mismatch in {} argument {}: expected {:?}, found a function item (function names are not values; wrap the call: {}())",
+            label, arg_no, slot,
+            quote_arg_expr(arg)
+        ));
     }
     let traced = auto_deref_for_slot(traced, &slot);
     if !ctor_args_compatible(&slot, &traced) {
@@ -260,6 +266,12 @@ fn check_single_ctor_arg(
         ));
     }
     Ok(())
+}
+
+/// Renders the offending argument expression back to source form for the
+/// diagnostic (e.g. `answer()` in "wrap the call: answer()").
+fn quote_arg_expr(arg: &syn::Expr) -> String {
+    quote::quote!(#arg).to_string()
 }
 
 /// Slot/value compatibility, narrowed to what emission ACTUALLY coerces

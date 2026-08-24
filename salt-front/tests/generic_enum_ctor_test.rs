@@ -236,13 +236,13 @@ fn test_usize_arg_coerces_into_i32_slot() {
     assert!(result.is_ok(), "Usize-into-i32-slot coercion failed: {:?}", result.err());
 }
 
-/// PINNED BEHAVIOR (documented limitation, see docs/stdlib-health.md
-/// payload-slot conformance ticket): Fn-typed arguments bypass conformance
-/// because the tracer cannot type fn items - Ok(g) under Opt<i64> silently
-/// stores the fn address as the payload. This MUST keep compiling until the
-/// tracer gains fn-item support; flip this pin only alongside that fix.
+/// PIN FLIPPED (payload-slot conformance ticket CLOSED): the tracer now
+/// types bare fn items as `Type::Fn` (tracer_lowering trace_path probes
+/// discovery.globals under the mangled fn key), so conformance no longer
+/// defers them. Ok(g) under Opt<i64> is a hard resolution-time error —
+/// emission used to silently ptrtoint the fn address into the i64 slot.
 #[test]
-fn test_fn_item_ctor_arg_compiles_silently() {
+fn test_fn_item_ctor_arg_rejected() {
     let code = r#"
         package main
 
@@ -261,7 +261,8 @@ fn test_fn_item_ctor_arg_compiles_silently() {
         }
     "#;
     let result = compile(code, false, None, true);
-    assert!(result.is_ok(), "Fn-item ctor arg pin broke: {:?}", result.err());
+    let err = format!("{}", result.expect_err("fn item into i64 slot must be rejected"));
+    assert!(err.contains("function item"), "expected 'function item' in error, got: {}", err);
 }
 
 /// R5: unannotated TUPLE-payload ctors infer via the tracer's Expr::Tuple
