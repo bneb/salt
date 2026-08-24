@@ -300,7 +300,7 @@ impl<'a> CodegenContext<'a> {
         Ok(())
     }
 
-    fn merge_method_generics(&self, m: &SaltFn, generics: &Option<crate::grammar::Generics>) -> SaltFn {
+    pub(crate) fn merge_method_generics(&self, m: &SaltFn, generics: &Option<crate::grammar::Generics>) -> SaltFn {
         let mut m_clone = m.clone();
         if let Some(ig) = generics {
             if let Some(mg) = &mut m_clone.generics {

@@ -1928,10 +1928,7 @@ fn register_impl_signatures(ctx: &CodegenContext, imp: &SaltImpl) -> Result<(), 
             key.specialization = None;
         }
 
-        for m in methods {
-            let current_imports = ctx.imports().clone();
-            ctx.trait_registry_mut().register_simple(key.clone(), m.clone(), Some(parsed_ty.clone()), current_imports);
-        }
+        register_impl_methods_merged(ctx, methods, generics, key.clone(), &parsed_ty);
     } else if let SaltImpl::Trait { trait_name: _, target_ty, methods, generics } = imp {
         let parsed_ty = resolve_type_safe(ctx, target_ty);
         
@@ -1943,12 +1940,29 @@ fn register_impl_signatures(ctx: &CodegenContext, imp: &SaltImpl) -> Result<(), 
             key.specialization = None;
         }
 
-        for m in methods {
-            let current_imports = ctx.imports().clone();
-            ctx.trait_registry_mut().register_simple(key.clone(), m.clone(), Some(parsed_ty.clone()), current_imports);
-        }
+        register_impl_methods_merged(ctx, methods, generics, key.clone(), &parsed_ty);
     }
     Ok(())
+}
+
+/// Registers impl methods under `key` using the MERGED wrapper form
+/// (impl generics folded into fn generics). The pre-scan registration
+/// wins pick_method_by_identity's rank-0 match; storing the unmerged fn
+/// there left hydration type_maps without the impl's param bindings, so
+/// renamed impl params (`impl<T> Pair<A>`) never resolved in bodies.
+fn register_impl_methods_merged(
+    ctx: &CodegenContext,
+    methods: &[SaltFn],
+    generics: &Option<crate::grammar::Generics>,
+    key: crate::types::TypeKey,
+    parsed_ty: &crate::types::Type,
+) {
+    for m in methods {
+        let merged = ctx.merge_method_generics(m, generics);
+        let imports = ctx.imports().clone();
+        ctx.trait_registry_mut()
+            .register_simple(key.clone(), merged, Some(parsed_ty.clone()), imports);
+    }
 }
 
 
