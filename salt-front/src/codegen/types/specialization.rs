@@ -238,6 +238,43 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
                     self.populate_explicit_specialization_map(&func, &concrete_tys, st, &mut old_const_vals);
                 }
 
+                // IMPL-rename aliasing: wrappers merged from
+                // `impl<T> Pair<A>` carry the IMPL's param names (T) while
+                // populate bound the STRUCT template's names (A).
+                // Monomorphized bodies reference the impl names, so bind
+                // them positionally to the receiver's concrete args when
+                // counts line up -- never clobbering existing bindings.
+                if let Some(st) = &s_ty {
+                    let mut recv = st.clone();
+                    loop {
+                        let next: Option<Type> = match &recv {
+                            Type::Pointer { element, .. } | Type::Owned(element) =>
+                                Some(*element.clone()),
+                            Type::Reference(inner, _) => Some(*inner.clone()),
+                            _ => None,
+                        };
+                        match next { Some(n) => recv = n, None => break }
+                    }
+                    let rargs_ok = match (&recv, &func.generics) {
+                        (Type::Concrete(_, rargs), Some(g)) => g.params.len() == rargs.len(),
+                        _ => false,
+                    };
+                    if rargs_ok {
+                        if let Some(g) = &func.generics {
+                            for (i, param) in g.params.iter().enumerate() {
+                                let pname = match param {
+                                    crate::grammar::GenericParam::Type { name, .. } => name.to_string(),
+                                    crate::grammar::GenericParam::Const { name, .. } => name.to_string(),
+                                };
+                                if let Some(arg) = concrete_tys.get(i) {
+                                    self.current_type_map_mut()
+                                        .entry(pname).or_insert_with(|| arg.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+
                 spec_map = self.current_type_map().clone();
 
                 *self.current_type_map_mut() = old_map;
