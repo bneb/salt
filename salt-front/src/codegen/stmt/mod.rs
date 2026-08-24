@@ -287,7 +287,7 @@ fn emit_unhoisted_local_init(ctx: &mut LoweringContext, out: &mut String, local:
                 ctx.consumed_vars_mut().insert(rhs_var_name);
             }
         }
-        (v, t)
+        (v, refine_method_placeholder_ty(ctx, &init.expr, t, local_vars))
     } else {
         ("%c0".to_string(), Type::I32)
     };
@@ -672,3 +672,104 @@ pub fn emit_let_else(
 
     Ok(false)
 }
+
+/// True when a type is an unsubstituted template placeholder: a bare
+/// `Struct`/`Generic`/zero-arg `Concrete` whose name carries no package
+/// mangling (e.g. `Struct("T")` leaking from a generic method's return).
+fn is_bare_placeholder(ty: &Type) -> bool {
+    match ty {
+        Type::Struct(n) | Type::Generic(n) => !n.contains("__"),
+        Type::Concrete(n, args) => !n.contains("__") && args.is_empty(),
+        _ => false,
+    }
+}
+
+/// Decodes the concrete args encoded in a specialized receiver name
+/// (`main__Pair_f32` with template key `main__Pair`) against that
+/// template's declared parameter order.
+fn receiver_template_bindings(
+    ctx: &mut LoweringContext,
+    recv_name: &str,
+) -> Option<(Vec<String>, Vec<Type>)> {
+    let keys: Vec<String> = ctx.struct_templates().keys().cloned()
+        .chain(ctx.enum_templates().keys().cloned()).collect();
+    for key in keys {
+        if !recv_name.starts_with(key.as_str()) { continue; }
+        let suffix = match recv_name[key.len()..].strip_prefix('_') {
+            Some(s) if !s.is_empty() => s,
+            _ => continue,
+        };
+        let params: Option<Vec<String>> = ctx.struct_templates().get(&key)
+            .and_then(|t| t.generics.as_ref().map(|g| g.params.iter()
+                .map(|p| match p {
+                    crate::grammar::GenericParam::Type { name, .. } => name.to_string(),
+                    crate::grammar::GenericParam::Const { name, .. } => name.to_string(),
+                }).collect()))
+            .or_else(|| ctx.enum_templates().get(&key).and_then(|e| e.generics.as_ref().map(|g| g.params.iter()
+                .map(|p| match p {
+                    crate::grammar::GenericParam::Type { name, .. } => name.to_string(),
+                    crate::grammar::GenericParam::Const { name, .. } => name.to_string(),
+                }).collect())));
+        if let Some(params) = params {
+            if params.is_empty() { continue; }
+            return Some((params, suffix.split('_').filter_map(parse_suffix_type).collect()));
+        }
+    }
+    None
+}
+
+fn parse_suffix_type(part: &str) -> Option<Type> {
+    match part {
+        "i8" => Some(Type::I8), "i16" => Some(Type::I16), "i32" => Some(Type::I32),
+        "i64" => Some(Type::I64), "u8" => Some(Type::U8), "u16" => Some(Type::U16),
+        "u32" => Some(Type::U32), "u64" => Some(Type::U64), "usize" => Some(Type::Usize),
+        "f32" => Some(Type::F32), "f64" => Some(Type::F64), "bool" => Some(Type::Bool),
+        other => Some(Type::Struct(other.to_string())),
+    }
+}
+
+/// A method returning one of its receiver-struct's params can surface the
+/// raw placeholder (`Struct("T")`) when resolution ran without fn-generic
+/// context. Rewrite it against the receiver's own recorded type so later
+/// casts/stores see the concrete instantiation.
+fn refine_method_placeholder_ty(
+    ctx: &mut LoweringContext,
+    init: &syn::Expr,
+    ty: Type,
+    local_vars: &HashMap<String, (Type, LocalKind)>,
+) -> Type {
+    if !is_bare_placeholder(&ty) { return ty; }
+    let syn::Expr::MethodCall(m) = init else { return ty };
+    let syn::Expr::Path(p) = &*m.receiver else { return ty };
+    let Some(ident) = p.path.get_ident() else { return ty };
+    let ident_name = ident.to_string();
+    let Some((recv_ty, _)) = local_vars.get(&ident_name) else { return ty };
+    let mut recv = recv_ty.clone();
+    loop {
+        let next = match &recv {
+            Type::Pointer { element, .. } | Type::Owned(element) => Some((**element).clone()),
+            Type::Reference(inner, _) => Some((**inner).clone()),
+            _ => None,
+        };
+        match next {
+            Some(n) => recv = n,
+            None => break,
+        }
+    }
+    let Type::Struct(recv_name) = &recv else { return ty };
+    let Some((params, args)) = receiver_template_bindings(ctx, recv_name) else { return ty };
+    // Prefer POSITIONAL binding: the impl may rename the struct's params
+    // (`impl<T> Pair<A>` leaks `T` where the template declares `A`), so
+    // name matching alone cannot link them. When counts line up, zip in
+    // declaration order; otherwise fall back to name matching.
+    let mut names: Vec<String> = Vec::new();
+    crate::codegen::types::substitution::collect_placeholder_names(&ty, &mut names);
+    let bindings: std::collections::BTreeMap<String, Type> =
+        if names.len() == args.len() {
+            names.into_iter().zip(args).collect()
+        } else {
+            params.into_iter().zip(args).collect()
+        };
+    crate::codegen::types::substitution::rewrite_bare_placeholders(ty, &bindings)
+}
+

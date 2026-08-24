@@ -71,20 +71,28 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
     
     // --- Helper Logic ---
 
-    fn resolve_path(&mut self, expr: &syn::Expr) -> Result<(String, Vec<Type>), String> {
+    fn resolve_path(&mut self, expr: &syn::Expr) -> Result<(String, Vec<Type>, Vec<Type>), String> {
         if let syn::Expr::Path(p) = expr {
              let segments: Vec<String> = p.path.segments.iter().map(|s| s.ident.to_string()).collect();
 
              let mut generics = Vec::new();
-             
+             // Args carried on the LAST segment bind the fn/method's own
+             // generic params (`Pair::<i64>::swapped_with::<f32>` -> [f32]);
+             // earlier segments' args belong to the receiver type. Callers
+             // must not feed receiver args into fn-level unification.
+             let mut fn_level_generics = Vec::new();
+
              // Extract generics from ALL segments
              // e.g. Vec::<u8>::with_capacity -> u8 is on 'Vec' segment
              for segment in &p.path.segments {
                  if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                     fn_level_generics.clear();
                      for arg in &args.args {
                          if let syn::GenericArgument::Type(ty) = arg {
                              let syn_ty = crate::grammar::SynType::from_std(ty.clone()).map_err(|e| e.to_string())?;
-                             generics.push(crate::codegen::type_bridge::resolve_type(self.ctx, &syn_ty));
+                             let resolved = crate::codegen::type_bridge::resolve_type(self.ctx, &syn_ty);
+                             generics.push(resolved.clone());
+                             fn_level_generics.push(resolved);
                          }
                      }
                  }
@@ -93,19 +101,19 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
              // Special Case: intrin module
              if segments.first().map(|s| s == "intrin").unwrap_or(false)
                  && segments.len() == 2 {
-                     return Ok((segments[1].clone(), generics));
+                     return Ok((segments[1].clone(), generics, fn_level_generics));
                  }
 
              // Qualified enum-ctor identity: canonicalize Enum::Variant to
              // the enum's true home module (see helper doc).
              if let Some(fqn) = self.canonicalize_enum_ctor_path(&segments) {
-                 return Ok((fqn, generics));
+                 return Ok((fqn, generics, fn_level_generics));
              }
 
              // Package Resolution (Imports)
              if let Some((pkg, item)) = resolve_package_prefix_ctx(self.ctx, &segments) {
                  let full_name = if item.is_empty() { pkg } else { format!("{}__{}", pkg, item) };
-                 return Ok((full_name, generics));
+                 return Ok((full_name, generics, fn_level_generics));
              }
              
              // Default: Mangled Local Path
@@ -130,7 +138,7 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
              // Extern fn declarations take priority over wildcard imports.
              // If the symbol is declared as `extern fn` in this file, don't expand it.
              if segments.len() == 1 && self.ctx.external_decls().contains(&mangled) {
-                 return Ok((mangled, generics));
+                 return Ok((mangled, generics, fn_level_generics));
              }
 
              // Wildcard Import Resolution: Check `use X::*` imports via Registry
@@ -138,7 +146,7 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
                  .unwrap_or(mangled);
 
 
-             Ok((resolved_name, generics))
+             Ok((resolved_name, generics, fn_level_generics))
 
         } else {
              Err("Call target must be a path".to_string())
@@ -1068,7 +1076,7 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
         local_vars: &HashMap<String, (Type, crate::codegen::context::LocalKind)>,
         expected_ty: Option<&Type>,
     ) -> Result<CallKind, String> {
-        let (func_name, explicit_generics) = self.resolve_path(&call.func)?;
+        let (func_name, explicit_generics, fn_level_generics) = self.resolve_path(&call.func)?;
         
         if self.is_intrinsic(&func_name) {
              return Ok(CallKind::Intrinsic(func_name, explicit_generics));
@@ -1100,11 +1108,45 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
                 format!("Undefined function or symbol: '{}'", func_name)
             })?;
 
-        let spec_map = self.unify_generics(&target, &explicit_generics, &call_args, local_vars, expected_ty)?;
+        // Fn/method-level unification must see ONLY the last segment's
+        // turbofish args. Receiver-segment args (`Pair::<i64>::method::<f32>`)
+        // describe the type, not the call — feeding them in let U bind the
+        // struct's arg and left method returns unsubstituted.
+        let fn_generics: Vec<Type> = if fn_level_generics.is_empty() {
+            explicit_generics.clone()
+        } else {
+            fn_level_generics.clone()
+        };
+        let spec_map = self.unify_generics(&target, &fn_generics, &call_args, local_vars, expected_ty)?;
 
         let mangled_name = self.mangle_specialization(&target.base_name, &spec_map, &target.template);
 
-        let (ret_ty, arg_tys) = self.resolve_signature(&target.template, &spec_map)?;
+        // Receiver substitution for the SIGNATURE: a method of a generic
+        // impl returning one of the STRUCT's own params
+        // (`impl<T> Pair<T> { fn get(&self) -> T }` at Pair<i64>) must see
+        // T concretely bound, or hydration consumes raw placeholders while
+        // the monomorphized body emits the substituted type. Kept OUT of
+        // spec_map so the mangled fn identity is untouched.
+        let mut sig_map = spec_map.clone();
+        if let Some(self_ty) = &target.self_ty {
+            if let Type::Concrete(sname, sargs) = self_ty {
+                let params: Option<Vec<String>> = self.ctx.struct_templates().get(sname)
+                    .and_then(|t| t.generics.as_ref().map(|g| g.params.clone()))
+                    .or_else(|| self.ctx.enum_templates().get(sname)
+                        .and_then(|e| e.generics.as_ref().map(|g| g.params.clone())))
+                    .map(|ps| ps.iter().map(|p| match p {
+                        crate::grammar::GenericParam::Type { name, .. } => name.to_string(),
+                        crate::grammar::GenericParam::Const { name, .. } => name.to_string(),
+                    }).collect());
+                if let Some(params) = params {
+                    for (pname, arg) in params.into_iter().zip(sargs.iter()) {
+                        sig_map.entry(pname).or_insert_with(|| arg.clone());
+                    }
+                }
+            }
+        }
+
+        let (ret_ty, arg_tys) = self.resolve_signature(&target.template, &sig_map)?;
 
         let concrete_tys: Vec<Type> = {
             let mut tys = Vec::new();

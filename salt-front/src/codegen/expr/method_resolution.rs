@@ -136,6 +136,40 @@ fn resolve_generic_method_args(
             let _ = ctx.request_specialization(original_mangled, concrete.clone(), Some(receiver_ty.clone()));
 
             let mut subst_map = std::collections::BTreeMap::new();
+            // RECEIVER substitution first: struct/enum params of the impl
+            // (`impl<T> Pair<T>`) bind from the receiver's concrete args so
+            // methods returning a struct param hydrate concretely.
+            {
+                let mut recv = receiver_ty.clone();
+                loop {
+                    let next = match &recv {
+                        Type::Pointer { element, .. } | Type::Owned(element) => Some((**element).clone()),
+                        Type::Reference(inner, _) => Some((**inner).clone()),
+                        _ => None,
+                    };
+                    match next { Some(n) => recv = n, None => break }
+                }
+                let (rname, rargs) = match &recv {
+                    Type::Concrete(n, a) if !a.is_empty() => (n.clone(), a.clone()),
+                    _ => (String::new(), Vec::new()),
+                };
+                if !rargs.is_empty() {
+                    let rparams: Option<Vec<String>> =
+                        ctx.struct_templates().get(&rname)
+                        .and_then(|t| t.generics.as_ref().map(|g| g.params.clone()))
+                        .or_else(|| ctx.enum_templates().get(&rname)
+                            .and_then(|e| e.generics.as_ref().map(|g| g.params.clone())))
+                        .map(|ps| ps.iter().map(|p| match p {
+                            crate::grammar::GenericParam::Type { name, .. } => name.to_string(),
+                            crate::grammar::GenericParam::Const { name, .. } => name.to_string(),
+                        }).collect());
+                    if let Some(rp) = rparams {
+                        for (pname, arg) in rp.into_iter().zip(rargs) {
+                            subst_map.entry(pname).or_insert(arg);
+                        }
+                    }
+                }
+            }
             for (i, param) in generics.params.iter().enumerate() {
                 if let crate::grammar::GenericParam::Type { name, .. } = param {
                      if let Some(c) = concrete.get(i) {
@@ -147,12 +181,37 @@ fn resolve_generic_method_args(
             let ret_ty_base = if let Some(rt) = &func_ret_type {
                 Type::from_syn_with_generics(rt, &generic_names).unwrap_or(Type::Unit)
             } else { Type::Unit };
+            let args_base: Vec<Type> = func_args.iter().filter_map(|arg| {
+                 arg.ty.as_ref().and_then(|t| Type::from_syn_with_generics(t, &generic_names))
+            }).collect();
             let ret_ty_subst = ret_ty_base.substitute(&subst_map);
+            let args_subst: Vec<Type> = args_base.iter()
+                .map(|t| t.substitute(&subst_map)).collect();
 
-            let args_subst = func_args.iter().filter_map(|arg| {
-                 arg.ty.as_ref().and_then(|t| Type::from_syn_with_generics(t, &generic_names)).map(|t| t.substitute(&subst_map))
-            }).collect::<Vec<_>>();
-            
+            // POSITIONAL fallback: an impl renaming the struct's params
+            // (`impl<T> Pair<A>` whose fns say `T`) leaves placeholders that
+            // name-matching cannot reach. When the count of leftover
+            // placeholders equals the receiver's arg count, zip in order.
+            {
+                let mut leftover: Vec<String> = Vec::new();
+                crate::codegen::types::substitution::collect_placeholder_names(&ret_ty_subst, &mut leftover);
+                for a in &args_subst {
+                    crate::codegen::types::substitution::collect_placeholder_names(a, &mut leftover);
+                }
+                let recv_args: Vec<Type> = match &receiver_ty.clone() {
+                    Type::Concrete(_, a) => a.clone(),
+                    _ => Vec::new(),
+                };
+                if !leftover.is_empty() && leftover.len() == recv_args.len() {
+                    let m2: std::collections::BTreeMap<String, Type> =
+                        leftover.into_iter().zip(recv_args).collect();
+                    let r2 = ret_ty_subst.substitute(&m2);
+                    let a2: Vec<Type> = args_subst.iter().map(|t| t.substitute(&m2)).collect();
+                    specialized_sig = Some((r2, a2));
+                    return Ok((emitted_vals, emitted_tys, specialized_sig));
+                }
+            }
+
             specialized_sig = Some((ret_ty_subst, args_subst));
         }
     }
@@ -388,6 +447,11 @@ fn try_resolve_static_method(
              let args_str = final_args.join(", ");
              let arg_tys_str = final_arg_tys.iter().map(|t| t.to_mlir_type(ctx)).collect::<Result<Vec<_>, String>>()?.join(", ");
              
+             // Receiver-generic substitution: a method returning one of the
+             // STRUCT's params (`fn get(&self) -> T` on Pair<T>) must rewrite
+             // that param against the receiver's concrete args
+             // (Pair<f32> => T -> f32), independent of fn-level generics.
+             let ret_ty = bind_receiver_params(ctx, ret_ty, receiver_ty);
              let res = if ret_ty != Type::Unit { format!("%mcall_res_{}", ctx.next_id()) } else { "".to_string() };
 
              ctx.ensure_func_declared(&mangled, &final_arg_tys, &ret_ty)?;
@@ -1237,4 +1301,32 @@ fn resolve_pending_task_signature(
     *ctx.current_self_ty_mut() = old_self_ty;
     
     Some((ret_ty, args))
+}
+
+/// Maps the receiver type's concrete generic args onto the struct/enum
+/// template's parameter names and substitutes them into `ret`. No-op when
+/// the receiver carries no specialization args.
+fn bind_receiver_params(ctx: &mut LoweringContext, ret: Type, receiver_ty: &Type) -> Type {
+    let mut base = receiver_ty;
+    while let Type::Reference(inner, _) = base {
+        base = inner;
+    }
+    let (name, args) = match base {
+        Type::Concrete(n, a) if !a.is_empty() => (n.clone(), a.clone()),
+        _ => return ret,
+    };
+    let params: Vec<String> = ctx.struct_templates().get(&name)
+        .and_then(|t| t.generics.as_ref().map(|g| g.params.clone()))
+        .or_else(|| ctx.enum_templates().get(&name).and_then(|e| e.generics.as_ref().map(|g| g.params.clone())))
+        .map(|ps| ps.iter().map(|p| match p {
+            crate::grammar::GenericParam::Type { name, .. } => name.to_string(),
+            crate::grammar::GenericParam::Const { name, .. } => name.to_string(),
+        }).collect())
+        .unwrap_or_default();
+    if params.is_empty() { return ret; }
+    let mut map = std::collections::BTreeMap::new();
+    for (pname, arg) in params.into_iter().zip(args) {
+        map.insert(pname, arg);
+    }
+    ret.substitute(&map)
 }

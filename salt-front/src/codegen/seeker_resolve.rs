@@ -33,6 +33,27 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
         }
         self.hydrate_impl_scope(base_ty, &mut type_map);
 
+        // 1b. Impl-rename aliasing: `impl<T> Pair<A>` — the wrapper's
+        // declared params are the IMPL's names while hydrate_impl_scope
+        // bound the STRUCT's (`A -> I64`). Bodies reference the impl names,
+        // so bind them positionally to the receiver's concrete args when
+        // counts line up (explicit fn turbofish below still wins).
+        if let Type::Concrete(_, base_args) = base_ty {
+            if let Some(g) = &func.generics {
+                if g.params.len() == base_args.len() {
+                    for (i, param) in g.params.iter().enumerate() {
+                        let pname = match param {
+                            crate::grammar::GenericParam::Type { name, .. } => name.to_string(),
+                            crate::grammar::GenericParam::Const { name, .. } => name.to_string(),
+                        };
+                        type_map.entry(pname).or_insert_with(|| {
+                            base_args.get(i).cloned().unwrap_or(Type::Unit)
+                        });
+                    }
+                }
+            }
+        }
+
         // 2. Hydrate Method Scope
         if let Some(g) = &func.generics {
             for (i, param) in g.params.iter().enumerate() {
