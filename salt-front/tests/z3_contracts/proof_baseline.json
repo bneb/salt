@@ -1,7 +1,7 @@
 {
   "aggregate": {
-    "proven": 57,
-    "total": 116
+    "proven": 58,
+    "total": 117
   },
   "rows": [
     {
@@ -163,6 +163,11 @@
       "name": "test_type_bounds.salt",
       "proven": 6,
       "total": 12
+    },
+    {
+      "name": "test_while_invariant.salt",
+      "proven": 1,
+      "total": 1
     }
   ]
 }

@@ -441,6 +441,7 @@ fn emit_index_ptr_ref(ctx: &mut LoweringContext, out: &mut String, i: &syn::Expr
                                  });
                              let lookup_name = ssa_name.as_deref().unwrap_or(&src_name);
                              if let Some(z3_idx) = ctx.symbolic_tracker.get(lookup_name).cloned() {
+                                 *ctx.total_checks += 1;
                                  ctx.z3_solver.push();
                                  let alloc = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, n);
                                  ctx.z3_solver.assert(&z3_idx.ge(&alloc));
