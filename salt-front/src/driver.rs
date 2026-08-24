@@ -122,7 +122,10 @@ impl std::str::FromStr for DriverTarget {
             "windows" | "windows-x86_64" | "win32" => Ok(DriverTarget::WindowsX86_64),
             "keuos" | "keuos-arm64" => Ok(DriverTarget::KeuOSArm64),
             "keuos-x86" | "keuos-x86_64" => Ok(DriverTarget::KeuOSX86_64),
-            _ => Err(format!("unknown target: {}", s)),
+            _ => Err(format!(
+                "unknown target '{}' (supported: macos, linux-arm64, windows, keuos, keuos-x86_64)",
+                s
+            )),
         }
     }
 }

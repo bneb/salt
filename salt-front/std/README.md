@@ -79,3 +79,20 @@ Pure Salt encoding utilities: Base64 (`base64_encode`, `base64_encoded_len`) and
 | `std.log` | Logging utilities |
 | `std.tensor` | Tensor primitives |
 | `std.mem` | Memory safety (`SafeView<T>`, `mmap_view`) |
+
+## Module Health
+
+Audited by compiling every module standalone (see
+[`docs/stdlib-health.md`](../../docs/stdlib-health.md) for method, per-class
+breakdown, and repro commands):
+
+- **101 of 101 modules** compile clean today.
+- Known failure classes: generic enum construction (`Option::Some`), a few
+  grammar gaps (`static fn` in impls, defaulted trait methods), kernel-target-only
+  sources that are not expected to build for userspace, and assorted single-module
+  issues.
+- The working set covers everything the benchmark suite and examples use:
+  collections, strings, I/O printing, math, hashing.
+
+Fixes land continuously; re-run the audit one-liner in the health doc after
+changes.

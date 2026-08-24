@@ -9,6 +9,10 @@ This is a contributor reference. Each section links to a concrete example in the
 ```bash
 git clone https://github.com/bneb/salt.git && cd salt
 
+# macOS with Homebrew Z3: point cargo at the headers/libs first
+export C_INCLUDE_PATH=/opt/homebrew/include
+export LIBRARY_PATH=/opt/homebrew/lib
+
 cd salt-front && cargo build --release   # build the Salt compiler
 cargo test                                # run all compiler unit tests
 ```
@@ -64,8 +68,15 @@ Key reference files:
 ```bash
 cargo test                          # compiler unit tests only (fast)
 
+bash salt-front/tests/z3_contracts/run_tests.sh   # 44 contract regression cases
+
+bash scripts/verify_lowering.sh     # structural gate on emitted MLIR
+
 cd salt-front && cargo clippy -- -D warnings   # lint check (must pass before PR)
 ```
+
+All four gates must be green before a PR. Cold rebuilds need the Z3
+`C_INCLUDE_PATH`/`LIBRARY_PATH` exports from section 1.
 
 Test file locations:
 - Compiler unit tests are co-located with source: [`salt-front/src/codegen/tests_*.rs`](salt-front/src/codegen/tests_postcondition.rs)

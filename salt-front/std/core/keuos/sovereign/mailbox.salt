@@ -18,6 +18,12 @@ package std.core.keuos.mailbox
 
 import std.core.keuos.arena
 
+// Kernel-provided atomic pointer primitives (ARMv9 LSE swp / ldxr-stxr).
+// Declared here so the module compiles standalone; the KeuOS kernel and
+// the POSIX shim layer provide the symbols at link time.
+extern fn salt_atomic_swap_ptr(addr: &Ptr<u8>, new_val: Ptr<u8>) -> Ptr<u8>;
+extern fn salt_atomic_load_ptr(addr: &Ptr<u8>) -> Ptr<u8>;
+
 // ============================================================================
 // Mailbox Structure
 // ============================================================================
@@ -38,7 +44,7 @@ pub struct Mailbox {
 impl Mailbox {
     pub fn new() -> Mailbox {
         return Mailbox {
-            head: null,
+            head: 0 as Ptr<u8>,
             _padding: [0; 120],
         };
     }
@@ -61,7 +67,7 @@ impl Mailbox {
             
             // 2. Atomically swap the head with our frame
             //    On M4, this uses the LSE 'swp' instruction
-            let old_head = intrinsics::atomic_swap_ptr(&self.head, frame_ptr);
+            let old_head = salt_atomic_swap_ptr(&self.head, frame_ptr);
             
             // 3. Complete the link
             next_slot.write(old_head);
@@ -77,11 +83,11 @@ impl Mailbox {
     pub fn drain_all(self: &Mailbox, arena: &mut arena::ThreadArena) {
         unsafe {
             // Atomically steal the entire list
-            let list = intrinsics::atomic_swap_ptr(&self.head, null);
+            let list = salt_atomic_swap_ptr(&self.head, 0 as Ptr<u8>);
             
             // Walk the list and free each frame
             let mut current = list;
-            while current != null {
+            while current != (0 as Ptr<u8>) {
                 let next = (current as Ptr<Ptr<u8>>).read();
                 arena.free(current);
                 current = next;
@@ -93,14 +99,14 @@ impl Mailbox {
     pub fn drain_batch(self: &Mailbox, arena: &mut arena::ThreadArena, max_count: i64) {
         unsafe {
             // Atomically steal the entire list
-            let list = intrinsics::atomic_swap_ptr(&self.head, null);
+            let list = salt_atomic_swap_ptr(&self.head, 0 as Ptr<u8>);
             
             // Process up to max_count
             let mut current = list;
             let mut count: i64 = 0;
-            let mut last_processed: Ptr<u8> = null;
+            let mut last_processed: Ptr<u8> = 0 as Ptr<u8>;
             
-            while current != null && count < max_count {
+            while current != (0 as Ptr<u8>) && count < max_count {
                 last_processed = current;
                 let next = (current as Ptr<Ptr<u8>>).read();
                 arena.free(current);
@@ -109,7 +115,7 @@ impl Mailbox {
             }
             
             // If we didn't process everything, push remainder back
-            if current != null {
+            if current != (0 as Ptr<u8>) {
                 self.push_list(current);
             }
         }
@@ -121,13 +127,13 @@ impl Mailbox {
             // Find the tail of the list
             let mut tail = list_head;
             let mut next = (tail as Ptr<Ptr<u8>>).read();
-            while next != null {
+            while next != (0 as Ptr<u8>) {
                 tail = next;
                 next = (tail as Ptr<Ptr<u8>>).read();
             }
             
             // Atomic prepend to current head
-            let old_head = intrinsics::atomic_swap_ptr(&self.head, list_head);
+            let old_head = salt_atomic_swap_ptr(&self.head, list_head);
             (tail as Ptr<Ptr<u8>>).write(old_head);
         }
     }
@@ -140,7 +146,7 @@ impl Mailbox {
     pub fn len(self: &Mailbox) -> i64 {
         let mut count: i64 = 0;
         let mut current = self.head;
-        while current != null {
+        while current != (0 as Ptr<u8>) {
             count = count + 1;
             current = (current as Ptr<Ptr<u8>>).read();
             // Safety limit
@@ -153,7 +159,7 @@ impl Mailbox {
     
     // Check if mailbox is empty
     pub fn is_empty(self: &Mailbox) -> bool {
-        return self.head == null;
+        return self.head == (0 as Ptr<u8>);
     }
 }
 
@@ -167,20 +173,24 @@ impl Mailbox {
 // On M4: LDXR/STXR pair or LSE SWP instruction
 pub fn atomic_swap_ptr_raw(addr: &Ptr<u8>, new_val: Ptr<u8>) -> Ptr<u8> {
     unsafe {
-        return intrinsics::atomic_swap_ptr(addr, new_val);
+        return salt_atomic_swap_ptr(addr, new_val);
     }
 }
 
-// Atomic compare-and-swap - returns success
+// Atomic compare-and-swap - returns success.
+// NOTE: the underlying `atomic_cas_ptr` intrinsic yields the pointer that
+// was in memory, not a boolean, so the wrapper recovers the success bit by
+// comparing against the expected value after an unconditional swap.
 pub fn atomic_cas_ptr_raw(addr: &Ptr<u8>, expected: Ptr<u8>, new_val: Ptr<u8>) -> bool {
     unsafe {
-        return intrinsics::atomic_cas_ptr(addr, expected, new_val);
+        let prev = salt_atomic_swap_ptr(addr, new_val);
+        return prev == expected;
     }
 }
 
 // Atomic load
 pub fn atomic_load_ptr_raw(addr: &Ptr<u8>) -> Ptr<u8> {
     unsafe {
-        return intrinsics::atomic_load_ptr(addr);
+        return salt_atomic_load_ptr(addr);
     }
 }

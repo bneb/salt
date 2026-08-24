@@ -247,6 +247,28 @@ impl ModuleLoader {
         self.combined_ast.items.extend(ast.items);
     }
 
+    /// Re-copies `Item::Impl` snapshots from the loaded ASTs into `registry`.
+    ///
+    /// `load_module` snapshots impls while loading, but trait-default
+    /// expansion rewrites the ASTs afterwards; without this resync,
+    /// registry-driven registration (`init_registry_impls`) would read a
+    /// stale, pre-expansion method set and miss inherited defaults.
+    /// Namespaces are visited in sorted order for determinism.
+    pub fn refresh_impl_snapshots(&self, registry: &mut Registry) {
+        let mut namespaces: Vec<&String> = self.loaded_files.keys().collect();
+        namespaces.sort();
+        for namespace in namespaces {
+            let ast = &self.loaded_files[namespace];
+            let Some(info) = registry.modules.get_mut(namespace) else { continue };
+            info.impls.clear();
+            for item in &ast.items {
+                if let Item::Impl(impl_item) = item {
+                    info.impls.push((impl_item.clone(), ast.imports.to_vec()));
+                }
+            }
+        }
+    }
+
     /// Extract type/function info from an item for the registry
     fn extract_item_info(&self, item: &Item, info: &mut ModuleInfo, imports: &[ImportDecl]) {
         let pkg_mangled = info.package.replace(".", "__");

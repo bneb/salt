@@ -96,6 +96,20 @@ fn test_intrinsic_ptr_patterns_recognized() {
 }
 
 // =============================================================================
+// PTR WRITE_AT - Indexed store counterpart of ptr_read_at
+// =============================================================================
+
+#[test]
+fn test_intrinsic_ptr_write_at_compiles() {
+    // ptr_write_at(ptr, index, value) takes 3 arguments, mirroring
+    // ptr_read_at(ptr, index). Regression: it used to be routed to the
+    // 2-argument ptr_write emitter and failed with an arity error.
+    assert!(compiles_intrinsic(
+        "let mut x: u8 = 0; let p: Ptr<u8> = ref_to_addr(&x) as Ptr<u8>; ptr_write_at(p, 0, 65u8);"
+    ));
+}
+
+// =============================================================================
 // INTRIN NAMESPACE FLATTENING
 // Tests that intrin:: calls are NOT mangled with module prefix
 // =============================================================================

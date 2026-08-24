@@ -335,6 +335,8 @@ pub fn verify_arena_reset_safety() -> ExecutorProofResult {
 // =============================================================================
 
 #[cfg(test)]
+// Some non-test helpers live below the tests module by design;
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 

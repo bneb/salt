@@ -1,0 +1,20 @@
+// Fixture for tests/trait_default_methods_cross_module_test.rs.
+// Trait with defaulted methods living in a DIFFERENT module than its
+// implementors; default bodies reference this module's Pt type on purpose
+// (home-module type references inside inherited bodies).
+package tests.fixtures.trait_defaults.greet
+
+struct Pt {
+    x: i64,
+}
+
+trait Greet {
+    fn hi(&self) -> i64;
+    fn hello(&self) -> i64 {
+        return 8888888;
+    }
+    fn label(&self) -> Pt {
+        let p = Pt { x: 4242424 };
+        return p;
+    }
+}

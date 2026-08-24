@@ -187,7 +187,12 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
     })?;
 
     let processed = crate::preprocess(&code);
-    let mut file: crate::grammar::SaltFile = syn::parse_str(&processed)?;
+    let mut file: crate::grammar::SaltFile = syn::parse_str(&processed).map_err(|e| {
+        anyhow::anyhow!(
+            "{}",
+            crate::errors::coded("E002", format!("failed to parse '{}': {}", config.path, e))
+        )
+    })?;
 
     let mut registry = crate::registry::Registry::new();
     let main_pkg = if let Some(pkg) = &file.package {
@@ -404,7 +409,13 @@ pub fn load_imports(
                     // Break the fallback loop as we found the module
                     break;
                 } else if let Err(e) = syn::parse_str::<crate::grammar::SaltFile>(&processed) {
-                    eprintln!("[E008] Warning: Failed to parse imported file {}: {}", found_path, e);
+                    eprintln!(
+                        "{}",
+                        crate::errors::coded(
+                            "W008",
+                            format!("could not parse imported file '{}': {} (module skipped)", found_path, e)
+                        )
+                    );
                     // If parsing fails, we probably shouldn't try fallback? 
                     // Or maybe we should if the path ended up pointing to a non-Salt file by accident (unlikely)
                     // Let's assume hard failure on parse error for matched file.
@@ -416,7 +427,16 @@ pub fn load_imports(
                     parts.pop();
                     // Continue loop to try parent path
                 } else {
-                    eprintln!("[E008] Warning: Could not find imported file: {} (scanned parents)", original_parts.join("."));
+                    eprintln!(
+                        "{}",
+                        crate::errors::coded(
+                            "W008",
+                            format!(
+                                "could not find imported module '{}' (searched cwd and parent directories)",
+                                original_parts.join(".")
+                            )
+                        )
+                    );
                     break;
                 }
             }

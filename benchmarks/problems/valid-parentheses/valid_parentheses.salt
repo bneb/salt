@@ -1,0 +1,82 @@
+// Valid Parentheses -- LeetCode 20: stack-based bracket validation
+package basalt.valid_parentheses
+
+import std.core.ptr.Ptr
+import std.core.arena
+
+// Bracket types: 0='(' 1='[' 2='{' and 3=')' 4=']' 5='}'. Strings are
+// generated as an opener prefix plus a mirrored closer suffix, so they
+// are balanced by construction; every few strings get one character
+// flipped, which always breaks validity. validate() returns matched
+// pairs for a valid string, or -1.
+const EXPECTED: i64 = 30730000;
+
+fn lcg(x: i64) -> i64 {
+    return (1103515245 * x + 12345) % 2147483648;
+}
+
+fn gen_string(buf: Ptr<i32>, len: i64, seed_in: i64, corrupt: i64) -> i64
+    requires len > 0
+{
+    let mut s = seed_in;
+    let half = len / 2;
+    for j in 0..half {
+        invariant j >= 0;
+        s = lcg(s);
+        unsafe {
+            let t = (s % 3) as i32;
+            buf[j] = t;
+            buf[len - 1 - j] = t + 3;
+        }
+    }
+    if corrupt == 1 {
+        s = lcg(s);
+        unsafe {
+            let idx = s % len;
+            buf[idx] = (((buf[idx] as i64) + 3) % 6) as i32;
+        }
+    }
+    return s;
+}
+
+fn validate(buf: Ptr<i32>, stack: Ptr<i32>, len: i64) -> i64
+    requires len > 0
+{
+    let mut depth: i64 = 0;
+    let mut pairs: i64 = 0;
+    let mut ok: i64 = 1;
+    for j in 0..len {
+        invariant j >= 0;
+        unsafe {
+            let t = buf[j];
+            if t < 3 {
+                stack[depth] = t;
+                depth += 1;
+            }
+            if t >= 3 && depth == 0 { ok = 0; }
+            if t >= 3 && depth > 0 {
+                depth -= 1;
+                if stack[depth] == t - 3 { pairs += 1; } else { ok = 0; }
+            }
+        }
+    }
+    if ok == 1 && depth == 0 { return pairs; }
+    return -1;
+}
+
+fn main() -> i32 {
+    let len = 4096 as i64;
+    let strings = 20000 as i64;
+    let buf = arena::alloc(len * 4) as Ptr<i32>;
+    let stack = arena::alloc(len * 4) as Ptr<i32>;
+    let mut s: i64 = 12345;
+    let mut checksum: i64 = 0;
+    for k in 0..strings {
+        invariant k >= 0;
+        s = gen_string(buf, len, s, (1 - (k % 4)) as i64);
+        let r = validate(buf, stack, len);
+        if r >= 0 { checksum += r + 1; } else { checksum -= 1; }
+    }
+    if checksum == EXPECTED { return 0; }
+    return 1;
+}

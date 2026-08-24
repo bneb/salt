@@ -52,10 +52,27 @@ impl Parse for Attribute {
 
 pub fn parse_attributes(input: ParseStream) -> syn::Result<Vec<Attribute>> {
     let mut attrs = Vec::new();
-    while input.peek(Token![@]) {
-        attrs.push(input.parse()?);
+    loop {
+        if input.peek(Token![@]) {
+            attrs.push(input.parse()?);
+        } else if input.peek(Token![#]) {
+            attrs.push(parse_hash_attribute(input)?);
+        } else {
+            break;
+        }
     }
     Ok(attrs)
+}
+
+/// Parse a Rust-style attribute: hash-bracket form name(args).
+/// Accepted as an alias for the Salt-native @-form so sources written with
+/// familiar repr/string_prefix hash attributes register them instead of
+/// silently dropping them.
+fn parse_hash_attribute(input: ParseStream) -> syn::Result<Attribute> {
+    input.parse::<Token![#]>()?;
+    let content;
+    syn::bracketed!(content in input);
+    Attribute::parse_inner(&content)
 }
 
 /// Check if any attribute matches a given name

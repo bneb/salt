@@ -9,9 +9,17 @@ import std.core.result.Result
 import std.status.Status
 import std.io.reactor.{Reactor, ReactorFilter}
 import std.sys.syscall6
-import std.mem.malloc
-import std.mem.free
 import std.core.ptr.reinterpret_cast
+
+// Local extern declarations (convention across std modules; the C shim
+// provides these symbols at link time).
+extern fn malloc(size: i64) -> Ptr<u8>;
+extern fn salt_sys_free(ptr: u64);
+
+/// Numeric filter discriminants stored in event buffers.
+/// Mirrors the ReactorFilter enum tag order (Read = 0, Write = 1).
+const FILTER_READ: i64 = 0;
+const FILTER_WRITE: i64 = 1;
 
 /// Linux epoll-backed I/O reactor.
 pub struct EpollReactor {
@@ -35,11 +43,12 @@ impl Reactor for EpollReactor {
         // epoll_ctl(self.epfd, EPOLL_CTL_ADD, fd, &ev) -> syscall 233
         // EPOLL_CTL_ADD = 1
         let mut ev: [i32; 3] = [0, 0, 0];
-        if filter as i64 == ReactorFilter::Read as i64 {
-            ev[0] = 1; // EPOLLIN
-        } else {
-            ev[0] = 4; // EPOLLOUT
-        }
+        // Match lowers to tag inspection; equality on imported enums and
+        // enum-to-int casts are not supported by the emitter yet.
+        ev[0] = match filter {
+            ReactorFilter::Read => 1,  // EPOLLIN
+            ReactorFilter::Write => 4  // EPOLLOUT
+        };
         ev[1] = fd;
         ev[2] = 0;
         
@@ -62,13 +71,14 @@ impl Reactor for EpollReactor {
         let ep_events_addr = malloc(ep_events_size);
         let ep_events = reinterpret_cast::<Ptr<i32>>(ep_events_addr);
 
-        let res = syscall6(232, self.epfd as i64, ep_events_addr, max_events as i64, timeout_ms as i64, 0, 0) as i32;
+        // Syscall arguments are i64; coerce the buffer address explicitly.
+        let res = syscall6(232, self.epfd as i64, ep_events_addr as i64, max_events as i64, timeout_ms as i64, 0, 0) as i32;
         
         if res > 0 {
             translate_events(event_buf, ep_events, res);
         }
 
-        std.mem.salt_sys_free(ep_events_addr as u64);
+        salt_sys_free(ep_events_addr as u64);
         return res;
     }
 
@@ -87,10 +97,13 @@ fn translate_events(event_buf: Ptr<i64>, ep_events: Ptr<i32>, res: i32) {
         let out_offset = (i * 2) as i64;
         event_buf.offset(out_offset).write(data_fd as i64);
         
+        // ReactorFilter carries no payload; event buffers hold the raw
+        // discriminants (Read = 0, Write = 1, matching enum tag order).
+        // Enum-to-int casts are not supported by the emitter yet.
         if (events & 1) != 0 {
-            event_buf.offset(out_offset + 1).write(ReactorFilter::Read as i64);
+            event_buf.offset(out_offset + 1).write(FILTER_READ);
         } else {
-            event_buf.offset(out_offset + 1).write(ReactorFilter::Write as i64);
+            event_buf.offset(out_offset + 1).write(FILTER_WRITE);
         }
         
         i = i + 1;

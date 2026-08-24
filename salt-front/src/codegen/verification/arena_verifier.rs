@@ -146,10 +146,13 @@ impl ArenaVerifier {
     /// Returns an error if any UAF was detected.
     pub fn verify_no_use_after_free(&self) -> Result<(), String> {
         if let Some(v) = self.violations.first() {
-            return Err(format!(
-                "USE-AFTER-FREE DETECTED: Pointer '{}' (born at epoch {}) used after reset. \
-                 The pointer was invalidated by arena::reset_to().",
-                v.ptr_id, v.birth_epoch
+            return Err(crate::errors::coded(
+                "E009",
+                format!(
+                    "USE-AFTER-FREE DETECTED: Pointer '{}' (born at epoch {}) used after reset. \
+                     The pointer was invalidated by arena::reset_to().",
+                    v.ptr_id, v.birth_epoch
+                )
             ));
         }
         Ok(())

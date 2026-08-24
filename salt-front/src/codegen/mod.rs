@@ -11,10 +11,13 @@ pub mod collector;
 pub mod seeker;
 pub mod seeker_resolve;
 pub mod tracer;
+pub(crate) mod tracer_binop;
+pub(crate) mod tracer_lowering;  // TypeTracer impl for LoweringContext
 pub mod verification;
 pub mod const_eval;
 pub mod struct_deriver;
 pub mod trait_registry;  // Signature-aware method resolution
+pub mod trait_defaults;  // Trait default-method inheritance for impl blocks
 pub mod types;
 pub mod interleaved_gen;  // FFB: Fused Forward-Backward codegen
 pub mod passes;           // KeuOS: Pulse injection, yield injection, sync verification
@@ -121,7 +124,7 @@ mod tests_sir_ast_extraction;
 mod tests_ring_abi;
 #[cfg(test)]
 mod tests_negative_verification;
-use crate::grammar::{SaltFile, Item, SaltFn, SaltImpl, ExternFnDecl, SaltConcept, SaltTrait};
+use crate::grammar::{SaltFile, Item, SaltFn, SaltImpl, ExternFnDecl, SaltConcept};
 use crate::codegen::context::CodegenContext;
 use crate::codegen::stmt::emit_block;
 use crate::codegen::module_loader::ModuleLoader;
@@ -133,7 +136,14 @@ use std::collections::{HashMap, HashSet};
     // REASON: all 10 parameters are independently meaningful; bundling would obscure intent
     #[allow(unused_mut)]
     pub fn emit_mlir(file: &mut SaltFile, release_mode: bool, _registry: Option<&Registry>, _skip_scan: bool, no_verify: bool, disable_alias_scopes: bool, lib_mode: bool, sip_mode: bool, debug_info: bool, deny_deferred: bool, source_file: &str) -> Result<String, String> {
-        let (mut loader, loader_registry) = load_modules(file)?;
+        let (mut loader, mut loader_registry) = load_modules(file)?;
+        // Inherit trait default methods: rewrite every trait impl — in the
+        // entry file, every loaded module's AST, and the registry's impl
+        // snapshots — so that omitted defaults become concrete impl methods
+        // (overrides win). Runs before the combined clone so registration,
+        // name resolution, seeding and emission all observe the completed
+        // method sets. Single choke point; nothing downstream re-derives it.
+        trait_defaults::expand_trait_defaults(file, &mut loader, &mut loader_registry);
         // Register/scan a resolved copy of the ENTRY file (under its own package)
         // plus each imported module (under its own package, via the loops inside
         // register_all_templates_and_signatures / scan_definitions). The previous
@@ -1144,21 +1154,6 @@ pub fn emit_concept(ctx: &CodegenContext, concept: &SaltConcept) -> Result<Strin
     out.push_str("  }\n");
     
     Ok(out)
-}
-
-/// Emit a trait definition - registers trait in TraitRegistry
-pub fn emit_trait(ctx: &CodegenContext, trait_def: &SaltTrait) -> Result<String, String> {
-    let trait_name = trait_def.name.to_string();
-    
-    // Register the trait definition in TraitRegistry
-    ctx.trait_registry_mut().register_trait_def(
-        trait_name.clone(),
-        trait_def.generics.clone(),
-        trait_def.methods.iter().map(|m| m.name.to_string()).collect(),
-    );
-    
-    // Trait definitions don't emit MLIR directly - they're purely compile-time
-    Ok(String::new())
 }
 
 pub fn emit_extern_fn(ctx: &CodegenContext, decl: &ExternFnDecl) -> Result<String, String> {

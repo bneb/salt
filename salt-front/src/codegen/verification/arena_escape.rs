@@ -140,10 +140,13 @@ impl ArenaEscapeTracker {
         }
         if let Some(depth) = self.taint.get(var_name) {
             if *depth > 1 {
-                return Err(format!(
-                    "Arena escape violation: pointer '{}' (depth {}) cannot be returned. \
-                     It was allocated from a local arena that dies when this function returns.",
-                    var_name, depth
+                return Err(crate::errors::coded(
+                    "E009",
+                    format!(
+                        "Arena escape violation: pointer '{}' (depth {}) cannot be returned. \
+                         It was allocated from a local arena that dies when this function returns.",
+                        var_name, depth
+                    )
                 ));
             }
         }
@@ -166,10 +169,13 @@ impl ArenaEscapeTracker {
             None => return Ok(()), // Not tracked — assume safe
         };
         if rhs_depth > lhs_depth {
-            return Err(format!(
-                "Arena escape violation: pointer '{}' (depth {}) stored into '{}' (depth {}). \
-                 The source has a shorter lifetime than the destination.",
-                rhs_var, rhs_depth, lhs_var, lhs_depth
+            return Err(crate::errors::coded(
+                "E009",
+                format!(
+                    "Arena escape violation: pointer '{}' (depth {}) stored into '{}' (depth {}). \
+                     The source has a shorter lifetime than the destination.",
+                    rhs_var, rhs_depth, lhs_var, lhs_depth
+                )
             ));
         }
         Ok(())

@@ -123,9 +123,12 @@ impl MallocTracker {
         }
 
         let (var, info) = self.active_allocs.iter().next().expect("verify called with non-empty active_allocs");
-        Err(format!(
-            "Memory Leak Detected: Allocation '{}' ({}) was neither freed nor returned.",
-            var, info
+        Err(crate::errors::coded(
+            "E009",
+            format!(
+                "Memory Leak Detected: Allocation '{}' ({}) was neither freed nor returned.",
+                var, info
+            )
         ))
     }
 

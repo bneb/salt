@@ -18,6 +18,7 @@ pub mod codegen;
 pub mod evaluator;
 pub mod cli;
 pub mod cli_build;
+pub mod errors;
 
 mod stdlib_bundle {
     include!(concat!(env!("OUT_DIR"), "/stdlib_bundle.rs"));
@@ -1108,8 +1109,12 @@ pub fn compile_ast(file: &mut SaltFile, release_mode: bool, registry: Option<&cr
     }
 
     // Run Comptime Evaluation Pass
-    passes::comptime::run(file)
-        .map_err(|e| anyhow::anyhow!("Comptime Error: {:?}", e))?;
+    passes::comptime::run(file).map_err(|e| {
+        anyhow::anyhow!(
+            "{}",
+            crate::errors::coded("E003", format!("comptime evaluation failed: {:?}", e))
+        )
+    })?;
 
     let mut mlir = emit_mlir(file, release_mode, registry, skip_scan, no_verify, disable_alias_scopes, lib_mode, sip_mode, debug_info, deny_deferred, source_file).map_err(|e| anyhow::anyhow!(e))?;
     
@@ -1144,8 +1149,14 @@ pub fn compile(source: &str, release_mode: bool, registry: Option<&crate::regist
         let trimmed = line.trim();
         if trimmed.starts_with("import ") {
             anyhow::bail!(
-                "Line {}: `import` is not valid Salt syntax. Use `use` instead:\n  {}\n  → {}",
-                i + 1, trimmed, trimmed.replacen("import", "use", 1)
+                "{}",
+                crate::errors::coded(
+                    "E002",
+                    format!(
+                        "line {}: `import` is not valid Salt syntax. Use `use` instead:\n  {}\n  → {}",
+                        i + 1, trimmed, trimmed.replacen("import", "use", 1)
+                    )
+                )
             );
         }
     }
@@ -1224,15 +1235,21 @@ fn check_turbofish_syntax(source: &str) -> anyhow::Result<()> {
         };
         if let Some((ident, original, fixed)) = find_turbofish_on_line(code) {
             anyhow::bail!(
-                "Line {}: Salt uses `Name<T>` syntax, not Rust-style turbofish `Name::<T>`\n\
-                 \n\
-                 \x1b[31m  {} |\x1b[0m  {}\n\
-                 \x1b[31m     |\x1b[0m  {}  \x1b[31m^^ remove this\x1b[0m\n\
-                 \n\
-                 \x1b[32m  help:\x1b[0m write `{}` instead of `{}`",
-                line_num + 1, line_num + 1, trimmed,
-                " ".repeat(code.find(&original).unwrap_or(0) + ident.len()),
-                fixed, original,
+                "{}",
+                crate::errors::coded(
+                    "E002",
+                    format!(
+                        "line {}: Salt uses `Name<T>` syntax, not Rust-style turbofish `Name::<T>`\n\
+                         \n\
+                         \x1b[31m  {} |\x1b[0m  {}\n\
+                         \x1b[31m     |\x1b[0m  {}  \x1b[31m^^ remove this\x1b[0m\n\
+                         \n\
+                         \x1b[32m  help:\x1b[0m write `{}` instead of `{}`",
+                        line_num + 1, line_num + 1, trimmed,
+                        " ".repeat(code.find(&original).unwrap_or(0) + ident.len()),
+                        fixed, original,
+                    )
+                )
             );
         }
     }

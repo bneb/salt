@@ -11,7 +11,7 @@ requires buf_len >= ITOA_MIN_BUF_SIZE; // The "Ground Truth" for Z3
 requires (buf as i64) != 0;  // Check address directly
 {
     if n == 0 {
-        buf.store(48); // '0'
+        buf.write(48); // '0'
         return 1;
     }
 
@@ -30,13 +30,13 @@ requires (buf as i64) != 0;  // Check address directly
         let digit = (val % 10) as u8;
         // Z3 Proof: Because pos starts at buf_len-1 and only decreases,
         // and itoa_min_buf_size is 24, pos is always >= 0 for i64.
-        buf.offset(pos).store(digit + 48);
+        buf.offset(pos).write(digit + 48);
         val = val / 10;
         pos = pos - 1;
     }
 
     if is_negative {
-        buf.offset(pos).store(45); // '-'
+        buf.offset(pos).write(45); // '-'
         pos = pos - 1;
     }
 
@@ -48,8 +48,8 @@ requires (buf as i64) != 0;  // Check address directly
     let mut i = 0;
     while i < result_len {
         let src_idx = pos + 1 + i;
-        let char = buf.offset(src_idx).load();
-        buf.offset(i).store(char);
+        let char = buf.offset(src_idx).read();
+        buf.offset(i).write(char);
         i = i + 1;
     }
 

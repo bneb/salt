@@ -179,7 +179,7 @@ pub(crate) fn prove_for_loop_concrete(
                     ctx.z3_solver.push(); ctx.z3_solver.assert(&z.not());
                     if ctx.z3_solver.check() == crate::z3_shim::SatResult::Sat {
                         ctx.z3_solver.pop(1); ctx.z3_solver.pop(1);
-                        return Err(format!("Z3: invariant fails at i={}", i_val));
+                        return Err(crate::errors::coded("E009", format!("Z3: invariant fails at i={}", i_val)));
                     }
                     ctx.z3_solver.pop(1);
                     *ctx.elided_checks += 1;
@@ -204,7 +204,10 @@ pub(crate) fn prove_for_loop_concrete(
                         ctx.z3_solver.push(); ctx.z3_solver.assert(&z3_next.not());
                         if ctx.z3_solver.check() == crate::z3_shim::SatResult::Sat {
                             ctx.z3_solver.pop(1); ctx.z3_solver.pop(1);
-                            return Err(format!("Z3: invariant not preserved at i={}", i_val + 1));
+                            return Err(crate::errors::coded(
+                                "E009",
+                                format!("Z3: invariant not preserved at i={}", i_val + 1)
+                            ));
                         }
                         ctx.z3_solver.pop(1);
                         *ctx.elided_checks += 1;
@@ -229,7 +232,10 @@ pub(crate) fn prove_for_loop_concrete(
                                 ctx.z3_solver.pop(1);
                                 if !case_a_proven || !case_b_proven {
                                     ctx.z3_solver.pop(1);
-                                    return Err(format!("Z3: invariant not preserved at i={} (case-split on {})", i_val + 1, var_name));
+                                    return Err(crate::errors::coded(
+                                        "E009",
+                                        format!("Z3: invariant not preserved at i={} (case-split on {})", i_val + 1, var_name)
+                                    ));
                                 }
                                 *ctx.elided_checks += 2;
                             }

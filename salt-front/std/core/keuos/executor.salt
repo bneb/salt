@@ -23,13 +23,25 @@ import std.core.keuos.arena
 import std.core.keuos.mailbox
 
 // ============================================================================
-// Executor State
+// Kernel-Provided State & Primitives
 // ============================================================================
+
+// The executor state lives in kernel-owned storage. It is exposed through
+// this accessor rather than a Salt `static` because scheduler state must be
+// writable from every core; the kernel places it in per-boot reserved memory.
+extern fn keuos_executor_state() -> Ptr<ExecutorState>;
+
+// Core-local thread index (set up by the kernel during core bring-up).
+extern fn salt_read_tls_thread_id() -> i64;
 
 // Priority tier definitions (cycles between pulses at 4GHz)
 const TIER_0_THRESHOLD_HZ: i64 = 500;    // >= 500Hz = Real-Time
 const TIER_1_THRESHOLD_HZ: i64 = 30;     // >= 30Hz = Interactive
 // Anything below is Tier 2 (Background)
+
+// ============================================================================
+// Executor State
+// ============================================================================
 
 // Per-thread work queue
 struct ThreadState {
@@ -62,6 +74,7 @@ struct ThreadState {
 struct ExecutorState {
     // Worker thread states (one per core)
     threads: [ThreadState; 16],  // Max 16 cores
+    
     num_threads: i64,
     
     // Shutdown flag
@@ -71,12 +84,12 @@ struct ExecutorState {
     total_pending: i64,
 }
 
-static EXECUTOR: ExecutorState = ExecutorState {
-    threads: uninitialized,
-    num_threads: 0,
-    shutdown_requested: false,
-    total_pending: 0,
-};
+// Snapshot accessor for the kernel-owned scheduler state.
+fn executor_state() -> Ptr<ExecutorState> {
+    unsafe {
+        return keuos_executor_state();
+    }
+}
 
 // ============================================================================
 // Task Frame (Stackless Coroutine State)
@@ -106,6 +119,11 @@ struct TaskFrame {
     // Layout determined by compiler based on live variables
 }
 
+// Default resume trampoline recorded at spawn time. The compiler swaps in
+// the specialized entry sequence when it monomorphizes spawn for a concrete
+// closure type; standalone library builds link against this stub.
+fn coroutine_entry_trampoline(frame: Ptr<TaskFrame>) {}
+
 // ============================================================================
 // Initialization
 // ============================================================================
@@ -113,22 +131,24 @@ struct TaskFrame {
 // Initialize the executor with the specified number of worker threads
 pub fn init(num_threads: i64) {
     if num_threads > 16 {
-        panic("Executor: max 16 threads supported");
+        // Invalid configuration halts the kernel immediately.
+        trap();
     }
     
-    EXECUTOR.num_threads = num_threads;
-    EXECUTOR.shutdown_requested = false;
-    EXECUTOR.total_pending = 0;
+    let st = executor_state();
+    st.num_threads = num_threads;
+    st.shutdown_requested = false;
+    st.total_pending = 0;
     
     for i in 0..num_threads {
-        EXECUTOR.threads[i] = ThreadState {
+        st.threads[i] = ThreadState {
             id: i,
-            run_queue_head: null,
-            run_queue_tail: null,
+            run_queue_head: 0 as Ptr<TaskFrame>,
+            run_queue_tail: 0 as Ptr<TaskFrame>,
             run_queue_len: 0,
-            tier0_queue: null,
-            tier1_queue: null,
-            tier2_queue: null,
+            tier0_queue: 0 as Ptr<TaskFrame>,
+            tier1_queue: 0 as Ptr<TaskFrame>,
+            tier2_queue: 0 as Ptr<TaskFrame>,
             mailbox: Mailbox::new(),
             arena: arena::ThreadArena::new(),
             tasks_run: 0,
@@ -139,17 +159,19 @@ pub fn init(num_threads: i64) {
     
     // Initialize arenas for each thread
     for i in 0..num_threads {
-        EXECUTOR.threads[i].arena.init();
+        st.threads[i].arena.init();
     }
 }
 
 // Shutdown the executor and wait for all tasks
 pub fn shutdown() {
-    EXECUTOR.shutdown_requested = true;
+    let st = executor_state();
+    (*st).shutdown_requested = true;
     
     // Drain all mailboxes
-    for i in 0..EXECUTOR.num_threads {
-        EXECUTOR.threads[i].mailbox.drain_all(&EXECUTOR.threads[i].arena);
+    for i in 0..(*st).num_threads {
+        let arena_ref = &mut (*st).threads[i].arena;
+        (*st).threads[i].mailbox.drain_all(arena_ref);
     }
 }
 
@@ -160,35 +182,35 @@ pub fn shutdown() {
 // Spawn a new task with inherited context
 pub fn spawn<F, A>(func: F, arg: A) {
     let current_tid = get_current_thread_id();
-    let thread = &mut EXECUTOR.threads[current_tid];
+    let st = executor_state();
     
     // Allocate frame from thread-local arena
-    let frame_size = intrinsics::size_of::<TaskFrame>() + intrinsics::size_of::<A>();
-    let frame_ptr = thread.arena.alloc(frame_size);
+    let frame_size = size_of::<TaskFrame>() + size_of::<A>();
+    let frame_ptr = st.threads[current_tid].arena.alloc(frame_size);
     let frame = frame_ptr as Ptr<TaskFrame>;
     
     // Initialize frame
-    frame.resume_fn = intrinsics::coroutine_entry::<F, A>;
+    frame.resume_fn = coroutine_entry_trampoline;
     frame.state = 0;
     frame.owner_tid = current_tid;
     frame.tier = 1; // Default to interactive tier
     frame.deadline = 0; // Will be set on first resume
-    frame.next = null;
+    frame.next = 0 as Ptr<TaskFrame>;
     
     // Copy argument into frame
-    let arg_ptr = (frame_ptr + intrinsics::size_of::<TaskFrame>()) as Ptr<A>;
+    let arg_ptr = (frame_ptr + size_of::<TaskFrame>()) as Ptr<A>;
     arg_ptr.write(arg);
     
     // Enqueue to local run queue
-    enqueue_task(thread, frame);
+    enqueue_task(&mut (*st).threads[current_tid], frame);
     
-    EXECUTOR.total_pending = EXECUTOR.total_pending + 1;
+    st.total_pending = st.total_pending + 1;
 }
 
 // Spawn a pulsed task at specific frequency
 pub fn spawn_pulse<F, A>(func: F, arg: A, frequency_hz: i64) {
     let current_tid = get_current_thread_id();
-    let thread = &mut EXECUTOR.threads[current_tid];
+    let st = executor_state();
     
     // Determine tier based on frequency
     let tier = if frequency_hz >= TIER_0_THRESHOLD_HZ {
@@ -203,29 +225,31 @@ pub fn spawn_pulse<F, A>(func: F, arg: A, frequency_hz: i64) {
     let cycles_per_pulse = 4_000_000_000 / frequency_hz;
     
     // Allocate and initialize frame
-    let frame_size = intrinsics::size_of::<TaskFrame>() + intrinsics::size_of::<A>();
-    let frame_ptr = thread.arena.alloc(frame_size);
+    let frame_size = size_of::<TaskFrame>() + size_of::<A>();
+    let frame_ptr = st.threads[current_tid].arena.alloc(frame_size);
     let frame = frame_ptr as Ptr<TaskFrame>;
     
-    frame.resume_fn = intrinsics::coroutine_entry::<F, A>;
+    frame.resume_fn = coroutine_entry_trampoline;
     frame.state = 0;
     frame.owner_tid = current_tid;
     frame.tier = tier;
-    frame.deadline = intrinsics::cycle_counter() + cycles_per_pulse;
-    frame.next = null;
+    frame.deadline = cycle_counter() + cycles_per_pulse;
+    frame.next = 0 as Ptr<TaskFrame>;
     
     // Copy argument
-    let arg_ptr = (frame_ptr + intrinsics::size_of::<TaskFrame>()) as Ptr<A>;
+    let arg_ptr = (frame_ptr + size_of::<TaskFrame>()) as Ptr<A>;
     arg_ptr.write(arg);
     
     // Enqueue to appropriate tier queue
-    match tier {
-        0 => enqueue_tier0(thread, frame),
-        1 => enqueue_tier1(thread, frame),
-        2 => enqueue_tier2(thread, frame),
+    if tier == 0 {
+        enqueue_tier0(&mut (*st).threads[current_tid], frame);
+    } else if tier == 1 {
+        enqueue_tier1(&mut (*st).threads[current_tid], frame);
+    } else {
+        enqueue_tier2(&mut (*st).threads[current_tid], frame);
     }
     
-    EXECUTOR.total_pending = EXECUTOR.total_pending + 1;
+    st.total_pending = st.total_pending + 1;
 }
 
 // ============================================================================
@@ -235,20 +259,21 @@ pub fn spawn_pulse<F, A>(func: F, arg: A, frequency_hz: i64) {
 // Process one round of tasks (call from main loop)
 pub fn tick() {
     let current_tid = get_current_thread_id();
-    let thread = &mut EXECUTOR.threads[current_tid];
+    let st = executor_state();
+    let thread = &mut (*st).threads[current_tid];
     
     // 1. Drain delayed free mailbox first
-    thread.mailbox.drain_batch(&thread.arena, 64);
+    drain_pending(&mut thread.mailbox, &mut thread.arena, 64);
     
     // 2. Check for Tier 0 tasks (highest priority)
-    if thread.tier0_queue != null {
+    if thread.tier0_queue != (0 as Ptr<TaskFrame>) {
         let task = dequeue_tier0(thread);
         run_task(thread, task);
         return;
     }
     
     // 3. Check local Tier 1 queue
-    if thread.tier1_queue != null {
+    if thread.tier1_queue != (0 as Ptr<TaskFrame>) {
         let task = dequeue_tier1(thread);
         run_task(thread, task);
         return;
@@ -256,14 +281,14 @@ pub fn tick() {
     
     // 4. Try to steal from other threads
     let stolen = try_steal(thread);
-    if stolen != null {
+    if stolen != (0 as Ptr<TaskFrame>) {
         thread.tasks_stolen = thread.tasks_stolen + 1;
         run_task(thread, stolen);
         return;
     }
     
     // 5. Check Tier 2 (background) if nothing else
-    if thread.tier2_queue != null {
+    if thread.tier2_queue != (0 as Ptr<TaskFrame>) {
         let task = dequeue_tier2(thread);
         run_task(thread, task);
         return;
@@ -272,9 +297,17 @@ pub fn tick() {
     // Nothing to do - could spin or park thread
 }
 
+// Drains up to `max_count` returned frames from a worker's mailbox.
+// Free function form: method calls through local reference bindings are
+// not supported by the resolver, so tick() delegates here instead.
+fn drain_pending(mailbox: &mut Mailbox, arena: &mut arena::ThreadArena, max_count: i64) {
+    mailbox.drain_batch(arena, max_count);
+}
+
 // Run until no tasks remain
 pub fn run_until_complete() {
-    while EXECUTOR.total_pending > 0 && !EXECUTOR.shutdown_requested {
+    let st = executor_state();
+    while st.total_pending > 0 && !st.shutdown_requested {
         tick();
     }
 }
@@ -285,20 +318,21 @@ pub fn run_until_complete() {
 
 fn run_task(thread: &mut ThreadState, task: Ptr<TaskFrame>) {
     // Set deadline for this task
-    context::set_deadline(task.deadline);
+    context::set_deadline((*task).deadline);
     
     // Create context for the task
     let ctx = context::create_context();
     
     // Resume the coroutine
-    (task.resume_fn)(task);
+    ((*task).resume_fn)(task);
     
     thread.tasks_run = thread.tasks_run + 1;
     
     // If task completed, free the frame
-    if task.state == -1 {  // -1 = completed
+    if (*task).state == -1 {  // -1 = completed
         free_task_frame(thread, task);
-        EXECUTOR.total_pending = EXECUTOR.total_pending - 1;
+        let st = executor_state();
+        st.total_pending = st.total_pending - 1;
     } else {
         // Task yielded - re-enqueue with updated deadline
         enqueue_task(thread, task);
@@ -310,9 +344,9 @@ fn run_task(thread: &mut ThreadState, task: Ptr<TaskFrame>) {
 // ============================================================================
 
 fn enqueue_task(thread: &mut ThreadState, task: Ptr<TaskFrame>) {
-    task.next = null;
-    if thread.run_queue_tail != null {
-        thread.run_queue_tail.next = task;
+    (*task).next = 0 as Ptr<TaskFrame>;
+    if thread.run_queue_tail != (0 as Ptr<TaskFrame>) {
+        (*thread.run_queue_tail).next = task;
     } else {
         thread.run_queue_head = task;
     }
@@ -321,40 +355,40 @@ fn enqueue_task(thread: &mut ThreadState, task: Ptr<TaskFrame>) {
 }
 
 fn enqueue_tier0(thread: &mut ThreadState, task: Ptr<TaskFrame>) {
-    task.next = thread.tier0_queue;
+    (*task).next = thread.tier0_queue;
     thread.tier0_queue = task;
 }
 
 fn enqueue_tier1(thread: &mut ThreadState, task: Ptr<TaskFrame>) {
-    task.next = thread.tier1_queue;
+    (*task).next = thread.tier1_queue;
     thread.tier1_queue = task;
 }
 
 fn enqueue_tier2(thread: &mut ThreadState, task: Ptr<TaskFrame>) {
-    task.next = thread.tier2_queue;
+    (*task).next = thread.tier2_queue;
     thread.tier2_queue = task;
 }
 
 fn dequeue_tier0(thread: &mut ThreadState) -> Ptr<TaskFrame> {
     let task = thread.tier0_queue;
-    if task != null {
-        thread.tier0_queue = task.next;
+    if task != (0 as Ptr<TaskFrame>) {
+        thread.tier0_queue = (*task).next;
     }
     return task;
 }
 
 fn dequeue_tier1(thread: &mut ThreadState) -> Ptr<TaskFrame> {
     let task = thread.tier1_queue;
-    if task != null {
-        thread.tier1_queue = task.next;
+    if task != (0 as Ptr<TaskFrame>) {
+        thread.tier1_queue = (*task).next;
     }
     return task;
 }
 
 fn dequeue_tier2(thread: &mut ThreadState) -> Ptr<TaskFrame> {
     let task = thread.tier2_queue;
-    if task != null {
-        thread.tier2_queue = task.next;
+    if task != (0 as Ptr<TaskFrame>) {
+        thread.tier2_queue = (*task).next;
     }
     return task;
 }
@@ -365,38 +399,45 @@ fn dequeue_tier2(thread: &mut ThreadState) -> Ptr<TaskFrame> {
 
 fn try_steal(thread: &mut ThreadState) -> Ptr<TaskFrame> {
     let my_id = thread.id;
+    let st = executor_state();
     
     // Round-robin steal attempt from other threads
-    for offset in 1..EXECUTOR.num_threads {
-        let target_id = (my_id + offset) % EXECUTOR.num_threads;
-        let target = &mut EXECUTOR.threads[target_id];
+    for offset in 1..st.num_threads {
+        let target_id = (my_id + offset) % st.num_threads;
         
-        // Try to steal from tier1 queue (don't steal tier0 - they're pinned)
-        if target.tier1_queue != null {
-            // Atomic steal (CAS on queue head)
-            let stolen = atomic_steal_one(&target.tier1_queue);
-            if stolen != null {
+        // Don't steal tier0 tasks - they are pinned to their home core.
+        // The steal works on a snapshot of the victim's head slot and
+        // publishes the remainder back once the swap succeeds.
+        let mut victim_head = st.threads[target_id].tier1_queue;
+        if victim_head != (0 as Ptr<TaskFrame>) {
+            let stolen = atomic_steal_one(&mut victim_head);
+            if stolen != (0 as Ptr<TaskFrame>) {
+                st.threads[target_id].tier1_queue = victim_head;
                 return stolen;
             }
         }
     }
     
-    return null;
+    return 0 as Ptr<TaskFrame>;
 }
 
+// Attempts to pop the first task from a queue-head slot using a hardware
+// compare-and-swap on the slot. Returns the stolen frame, or the null
+// pointer when the slot was empty or concurrently modified.
 fn atomic_steal_one(queue_head: &mut Ptr<TaskFrame>) -> Ptr<TaskFrame> {
     unsafe {
-        let current = intrinsics::atomic_load_ptr(queue_head);
-        if current == null {
-            return null;
+        let current = *queue_head;
+        if current == (0 as Ptr<TaskFrame>) {
+            return 0 as Ptr<TaskFrame>;
         }
-        let next = current.next;
-        let success = intrinsics::atomic_cas_ptr(queue_head, current, next);
-        if success {
-            current.next = null;
+        // CAS the slot to the successor; the intrinsic yields the pointer
+        // that was resident, so success means observing `current`.
+        let prev = atomic_cas_ptr(queue_head, current, (*current).next);
+        if prev == current {
+            (*current).next = 0 as Ptr<TaskFrame>;
             return current;
         }
-        return null;
+        return 0 as Ptr<TaskFrame>;
     }
 }
 
@@ -405,7 +446,7 @@ fn atomic_steal_one(queue_head: &mut Ptr<TaskFrame>) -> Ptr<TaskFrame> {
 // ============================================================================
 
 fn free_task_frame(thread: &mut ThreadState, task: Ptr<TaskFrame>) {
-    let owner_tid = task.owner_tid;
+    let owner_tid = (*task).owner_tid;
     let current_tid = thread.id;
     
     if owner_tid == current_tid {
@@ -413,8 +454,8 @@ fn free_task_frame(thread: &mut ThreadState, task: Ptr<TaskFrame>) {
         thread.arena.free(task as Ptr<u8>);
     } else {
         // Slow path: cross-thread return via mailbox
-        let owner_mailbox = &EXECUTOR.threads[owner_tid].mailbox;
-        owner_mailbox.push(task as Ptr<u8>);
+        let st = executor_state();
+        (*st).threads[owner_tid].mailbox.push(task as Ptr<u8>);
     }
 }
 
@@ -424,6 +465,6 @@ fn free_task_frame(thread: &mut ThreadState, task: Ptr<TaskFrame>) {
 
 fn get_current_thread_id() -> i64 {
     unsafe {
-        return intrinsics::read_tls_thread_id();
+        return salt_read_tls_thread_id();
     }
 }

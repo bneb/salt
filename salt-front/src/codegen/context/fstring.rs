@@ -739,7 +739,7 @@ mod tests {
 
     #[test]
     fn test_hex_expand_invalid_skipped() {
-        let result = native_hex_expand_impl("0xgg");
+        let _result = native_hex_expand_impl("0xgg");
         // "0x" is valid, "gg" is not - both get processed but "gg" fails from_str_radix
         // Let's test a case we know works:
         let result2 = native_hex_expand_impl("ffzz");

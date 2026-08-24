@@ -12,7 +12,7 @@ mod tests {
     #[test]
     fn test_unify_generic_binds_name() {
         let mut map = BTreeMap::new();
-        unify_types(&Type::Generic("T".into()), &Type::I64, &mut map);
+        let _ = unify_types(&Type::Generic("T".into()), &Type::I64, &mut map);
         assert_eq!(map.get("T"), Some(&Type::I64));
     }
 
@@ -20,14 +20,14 @@ mod tests {
     fn test_unify_struct_single_char_uppercase_does_not_bind() {
         // After hack removal: Struct("T") is NOT treated as generic
         let mut map = BTreeMap::new();
-        unify_types(&Type::Struct("T".into()), &Type::I64, &mut map);
+        let _ = unify_types(&Type::Struct("T".into()), &Type::I64, &mut map);
         assert!(map.is_empty(), "Struct('T') should NOT bind — use Generic('T')");
     }
 
     #[test]
     fn test_unify_struct_multi_char_does_not_bind() {
         let mut map = BTreeMap::new();
-        unify_types(&Type::Struct("Range".into()), &Type::I64, &mut map);
+        let _ = unify_types(&Type::Struct("Range".into()), &Type::I64, &mut map);
         assert!(map.is_empty(), "Multi-char Struct name should not be treated as generic");
     }
 
@@ -35,7 +35,7 @@ mod tests {
     fn test_unify_struct_single_char_does_not_bind() {
         // Hack removed: even Struct("T") is NOT treated as generic
         let mut map = BTreeMap::new();
-        unify_types(&Type::Struct("T".into()), &Type::I64, &mut map);
+        let _ = unify_types(&Type::Struct("T".into()), &Type::I64, &mut map);
         assert!(map.is_empty(), "Single-char Struct('T') should NOT be treated as generic — use Generic('T')");
     }
 
@@ -44,7 +44,7 @@ mod tests {
         let mut map = BTreeMap::new();
         let template = Type::Concrete("Vec".into(), vec![Type::Generic("T".into())]);
         let concrete = Type::Concrete("Vec".into(), vec![Type::I64]);
-        unify_types(&template, &concrete, &mut map);
+        let _ = unify_types(&template, &concrete, &mut map);
         assert_eq!(map.get("T"), Some(&Type::I64));
     }
 
@@ -56,7 +56,7 @@ mod tests {
             Box::new(Type::Generic("B".into())),
         );
         let concrete = Type::Fn(vec![Type::I64], Box::new(Type::F64));
-        unify_types(&template, &concrete, &mut map);
+        let _ = unify_types(&template, &concrete, &mut map);
         assert_eq!(map.get("A"), Some(&Type::I64));
         assert_eq!(map.get("B"), Some(&Type::F64));
     }
@@ -74,7 +74,7 @@ mod tests {
             provenance: Provenance::Naked,
             is_mutable: false,
         };
-        unify_types(&template, &concrete, &mut map);
+        let _ = unify_types(&template, &concrete, &mut map);
         assert_eq!(map.get("T"), Some(&Type::I32));
     }
 
@@ -87,7 +87,7 @@ mod tests {
             is_mutable: false,
         };
         let concrete = Type::Concrete("Ptr".into(), vec![Type::F32]);
-        unify_types(&template, &concrete, &mut map);
+        let _ = unify_types(&template, &concrete, &mut map);
         assert_eq!(map.get("T"), Some(&Type::F32));
     }
 
@@ -96,7 +96,7 @@ mod tests {
         let mut map = BTreeMap::new();
         let template = Type::Generic("T".into());
         let concrete = Type::Reference(Box::new(Type::I64), false);
-        unify_types(&template, &concrete, &mut map);
+        let _ = unify_types(&template, &concrete, &mut map);
         // When pattern is Generic, it binds to the full Reference type
         assert_eq!(map.get("T"), Some(&Type::Reference(Box::new(Type::I64), false)));
     }
@@ -105,7 +105,7 @@ mod tests {
     fn test_unify_does_not_overwrite() {
         let mut map = BTreeMap::new();
         map.insert("T".into(), Type::I64);
-        unify_types(&Type::Generic("T".into()), &Type::F64, &mut map);
+        let _ = unify_types(&Type::Generic("T".into()), &Type::F64, &mut map);
         assert_eq!(map.get("T"), Some(&Type::I64), "Should not overwrite existing binding");
     }
 
@@ -126,7 +126,7 @@ mod tests {
                 Type::Struct("IOError".into()),
             ],
         );
-        unify_types(&template, &concrete, &mut map);
+        let _ = unify_types(&template, &concrete, &mut map);
         assert_eq!(map.get("T"), Some(&Type::F32));
     }
 
@@ -136,7 +136,7 @@ mod tests {
         let template = Type::Concrete("Result".into(), vec![Type::Generic("T".into())]);
         let concrete = Type::Concrete("std__core__result__Result".into(), vec![Type::I32]);
         // Should match because "std__core__result__Result" ends with "__Result"
-        unify_types(&template, &concrete, &mut map);
+        let _ = unify_types(&template, &concrete, &mut map);
         assert_eq!(map.get("T"), Some(&Type::I32));
     }
 

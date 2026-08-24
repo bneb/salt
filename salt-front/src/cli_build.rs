@@ -14,7 +14,7 @@ pub(crate) fn emit_sir_file(file: &crate::grammar::SaltFile, module_name: &str, 
         .unwrap_or_else(|| format!("{}.sir.json", module_name));
 
     if let Err(e) = std::fs::write(&sir_path, &sir_json) {
-        eprintln!("[E008] SIR emission failed: {}", e);
+        eprintln!("{}", crate::errors::coded("E001", format!("SIR emission failed: {}", e)));
     } else {
         eprintln!("SIR emitted: {} ({} structs, {} functions, v{})",
             sir_path, sir_module.structs.len(), sir_module.functions.len(), SIR_VERSION);
@@ -27,7 +27,7 @@ pub(crate) fn handle_binary_synthesis(mlir: &str, basename: &str, config: &CliCo
     if let Some(ref t) = config.target_name {
         let t_parsed = crate::driver::DriverTarget::from_str(t)
             .unwrap_or_else(|e| {
-                eprintln!("[E005] {}", e);
+                eprintln!("{}", crate::errors::coded("E010", e));
                 std::process::exit(1);
             });
         driver = driver.with_target(t_parsed);
@@ -131,7 +131,7 @@ pub(crate) fn handle_object_synthesis(mlir: &str, basename: &str, config: &CliCo
     if let Some(ref t) = config.target_name {
         let t_parsed = crate::driver::DriverTarget::from_str(t)
             .unwrap_or_else(|e| {
-                eprintln!("[E006] {}", e);
+                eprintln!("{}", crate::errors::coded("E010", e));
                 std::process::exit(1);
             });
         driver = driver.with_target(t_parsed);
@@ -156,71 +156,34 @@ pub(crate) fn handle_object_synthesis(mlir: &str, basename: &str, config: &CliCo
     }
 }
 
+/// Print the detailed explanation for a diagnostic code (--explain <code>).
+/// The authoritative table lives in [`crate::errors::EXPLANATIONS`].
 pub fn explain_error_code(code: &str) {
-    match code {
-        "E001" => println!("\
-[E001] File I/O Error
-  The compiler could not read or write a file. This usually means:
-  - The source file does not exist at the specified path
-  - The output directory is not writable
-  - The file is not valid UTF-8 text
+    println!("{}", explanation_text(code));
+}
 
-  Example: `saltc nonexistent.salt -o out.mlir`"),
-        "E002" => println!("\
-[E002] Syntax Error
-  The source code could not be parsed. Check for:
-  - Missing semicolons, braces, or parentheses
-  - Invalid Salt syntax
+/// Render the explanation for code, or an unknown-code hint.
+fn explanation_text(code: &str) -> String {
+    match crate::errors::explanation(code) {
+        Some(text) => text.to_string(),
+        None => format!("unknown error code: {}\n\nrun saltc --explain E001 through saltc --explain E011 for known codes.", code),
+    }
+}
 
-  Example: a missing closing brace or an unclosed string literal."),
-        "E003" => println!("\
-[E003] Compilation Error
-  The compiler could not generate valid MLIR from the source code.
-  This can be caused by type errors, unresolved symbols, or verification failures.
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-  Example: Z3 contract violation like calling safe_div(100, 0) with requires(b != 0)."),
-        "E004" => println!("\
-[E004] CLI Usage Error
-  An invalid flag or argument was provided on the command line.
-  Run `saltc --help` for a full list of options.
+    #[test]
+    fn known_codes_render_their_explanation() {
+        assert!(explanation_text("E001").starts_with("[E001] File I/O Error"));
+        assert!(explanation_text("E011").contains("--deny-deferred"));
+    }
 
-  Example: `saltc --invalid-flag source.salt` or missing output path."),
-        "E005" => println!("\
-[E005] Binary Synthesis Error
-  The MLIR-to-native-binary pipeline failed. This usually means:
-  - LLVM tools (mlir-opt, mlir-translate, llc) are not installed
-  - The target triple is not supported
-  - A linker or runtime object is missing
-
-  Example: running `saltc --target keuos` without the KeuOS runtime toolchain."),
-        "E006" => println!("\
-[E006] Object Compilation Error
-  The MLIR-to-object-file pipeline failed.
-  Check that LLVM toolchain is correctly installed.
-
-  Example: missing LLVM tools (llc, mlir-translate) in PATH."),
-        "E007" => println!("\
-[E007] Internal Compiler Error
-  This is a bug in the Salt compiler. Please report it at:
-  https://github.com/kevin/salt/issues
-
-  Please report this bug with the source file and the exact saltc command."),
-        "E008" => println!("\
-[E008] Import / Module Error
-  An imported module could not be found or parsed.
-
-  Example: importing a module that does not exist or has a misspelled type name."),
-        "E009" => println!("\
-[E009] Verification Error
-  A Z3 contract or ownership verification check failed.
-
-  Example: a Z3 contract violation such as dividing by zero without a precondition."),
-        "E010" => println!("\
-[E010] Target Triple Error
-  The specified target triple is not recognized or supported.
-  Supported targets: macos, linux-arm64, keuos, keuos-x86_64
-
-  Example: `saltc --target unsupported-target source.salt`."),
-        _ => println!("Unknown error code: {}\n\nUse `saltc --explain E001` through `saltc --explain E010` for known codes.", code),
+    #[test]
+    fn unknown_code_gets_hint_with_valid_range() {
+        let text = explanation_text("E999");
+        assert!(text.contains("unknown error code: E999"));
+        assert!(text.contains("E001") && text.contains("E011"));
     }
 }

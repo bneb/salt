@@ -3,7 +3,8 @@
 > **Audience**: Engineers working on the Salt compiler, KeuOS kernel, or standard library.
 > For the 2 AM reader: every acronym is defined, every command is copy-pasteable, every data flow has a diagram.
 >
-> **Prerequisites**: Rust 1.75+, Z3 4.12+ (`brew install z3`), LLVM 21+ (`brew install llvm@21`), QEMU (`brew install qemu`)
+> **Prerequisites**: Rust 1.75+, Z3 4.12+ (`brew install z3`), LLVM 21+ (`brew install llvm@21`), QEMU (`brew install qemu`).
+> Known inconsistency (being fixed): the in-tree Iron Driver (`salt-front/src/driver.rs`) currently hardcodes `llvm@18` paths, while `scripts/run_test.sh` uses `llvm@21`. See [mlir-lowering-notes.md](deep-dives/mlir-lowering-notes.md) for the audited toolchain matrix.
 
 ---
 

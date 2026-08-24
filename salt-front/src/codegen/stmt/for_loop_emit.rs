@@ -468,9 +468,12 @@ pub(crate) fn check_inductive_step(
             ctx.z3_solver.assert(&z3_next.not());
             if ctx.z3_solver.check() == crate::z3_shim::SatResult::Sat {
                 ctx.z3_solver.pop(1);
-                return Err(format!(
-                    "Z3 verification failed: for-loop invariant does not hold after iteration.\n  The solver found a counterexample proving the invariant is not preserved by the loop body.\n  Invariant: {:?}\n  hint: check that the loop body establishes the invariant for the next iteration.",
-                    inv
+                return Err(crate::errors::coded(
+                    "E009",
+                    format!(
+                        "Z3 verification failed: for-loop invariant does not hold after iteration.\n  The solver found a counterexample proving the invariant is not preserved by the loop body.\n  Invariant: {:?}\n  hint: check that the loop body establishes the invariant for the next iteration.",
+                        inv
+                    )
                 ));
             }
             ctx.z3_solver.pop(1);
@@ -509,7 +512,10 @@ pub(crate) fn prove_for_loop_invariants(
                     ctx.z3_solver.push(); ctx.z3_solver.assert(&z.not());
                     if ctx.z3_solver.check() == crate::z3_shim::SatResult::Sat {
                         ctx.z3_solver.pop(1); ctx.z3_solver.pop(1);
-                        return Err("Z3 verification failed: loop invariant does not hold at entry (i == start). The solver found a counterexample proving the invariant is false with current variable values.".to_string());
+                        return Err(crate::errors::coded(
+                            "E009",
+                            "Z3 verification failed: loop invariant does not hold at entry (i == start). The solver found a counterexample proving the invariant is false with current variable values."
+                        ));
                     }
                     ctx.z3_solver.pop(1);
                     *ctx.elided_checks += 1;

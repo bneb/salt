@@ -11,6 +11,7 @@ use crate::common::mangling::Mangler;
 pub mod aggregate_eq;
 pub mod while_loop;
 pub mod resolver;
+pub mod enum_ctor;
 pub mod tensor_ops;
 use while_loop::emit_while;
 pub(crate) mod call_helpers;
@@ -183,7 +184,7 @@ pub fn emit_expr(ctx: &mut LoweringContext, out: &mut String, expr: &syn::Expr, 
         syn::Expr::Block(b) => emit_block_expr(ctx, out, &b.block, local_vars, expected_ty),
         syn::Expr::Binary(b) => emit_binary(ctx, out, b, local_vars, expected_ty),
         syn::Expr::Field(f) => emit_field(ctx, out, f, local_vars),
-        syn::Expr::Struct(s) => emit_struct(ctx, out, s, local_vars),
+        syn::Expr::Struct(s) => emit_struct(ctx, out, s, local_vars, expected_ty),
         syn::Expr::Call(c) => emit_call(ctx, out, c, local_vars, expected_ty),
         syn::Expr::If(i) => emit_if_expr(ctx, out, i, local_vars, expected_ty),
         syn::Expr::Unary(u) => emit_unary(ctx, out, u, local_vars, expected_ty),

@@ -202,7 +202,7 @@ mod tests {
 
     #[test] fn test_int_literal() { assert_eq!(eval("42"), Ok(ConstValue::Integer(42))); }
     #[test] fn test_hex_literal() { assert_eq!(eval("0xFF"), Ok(ConstValue::Integer(255))); }
-    #[test] fn test_float_literal() { assert_eq!(eval("3.14"), Ok(ConstValue::Float(3.14))); }
+    #[test] fn test_float_literal() { assert_eq!(eval("3.15"), Ok(ConstValue::Float(3.15))); }
     #[test] fn test_bool_true() { assert_eq!(eval("true"), Ok(ConstValue::Bool(true))); }
     #[test] fn test_bool_false() { assert_eq!(eval("false"), Ok(ConstValue::Bool(false))); }
     #[test] fn test_neg_int() { assert_eq!(eval("-5"), Ok(ConstValue::Integer(-5))); }
@@ -229,9 +229,9 @@ mod tests {
 
     #[test] fn test_constant_table() {
         let mut e = Evaluator::new();
-        e.constant_table.insert("PI".into(), ConstValue::Float(3.14));
+        e.constant_table.insert("PI".into(), ConstValue::Float(3.15));
         let expr: Expr = syn::parse_str("PI").expect("valid");
-        assert_eq!(e.eval_expr(&expr), Ok(ConstValue::Float(3.14)));
+        assert_eq!(e.eval_expr(&expr), Ok(ConstValue::Float(3.15)));
     }
 
     #[test] fn test_unknown_constant() {

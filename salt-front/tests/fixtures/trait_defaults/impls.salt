@@ -1,0 +1,35 @@
+// Fixture for tests/trait_default_methods_cross_module_test.rs.
+// Implementors of greet::Greet defined in a separate module: Dog omits
+// both defaults, Cat overrides hello, and dog_hello exercises a call to
+// an omitted-default method made from INSIDE module code.
+package tests.fixtures.trait_defaults.impls
+
+use tests.fixtures.trait_defaults.greet.Greet;
+
+struct Dog {
+    n: i64,
+}
+
+impl Greet for Dog {
+    fn hi(&self) -> i64 {
+        return self.n;
+    }
+}
+
+struct Cat {
+    n: i64,
+}
+
+impl Greet for Cat {
+    fn hi(&self) -> i64 {
+        return self.n;
+    }
+    fn hello(&self) -> i64 {
+        return 9999999;
+    }
+}
+
+pub fn dog_hello() -> i64 {
+    let d = Dog { n: 1 };
+    return d.hello();
+}

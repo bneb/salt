@@ -23,8 +23,8 @@ mod tests {
         let mut ctx = CodegenContext::new(&file, false, None, &z3_ctx);
         ctx.no_verify = true;
         ctx.register_builtins();
-        crate::codegen::register_templates(&ctx, &file);
-        crate::codegen::register_signatures(&ctx, &file);
+        let _ = crate::codegen::register_templates(&ctx, &file);
+        let _ = crate::codegen::register_signatures(&ctx, &file);
         ctx.init_registry_definitions();
         ctx.scan_defs_from_file(&file, true).unwrap();
         ctx.drive_codegen()

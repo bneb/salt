@@ -11,6 +11,13 @@
 
 package std.core.keuos.context
 
+// Platform primitives — the executor owns these thread-local slots.
+// cycle_counter() and read_tls_deadline() are compiler intrinsics;
+// these two are kernel-provided symbols declared here for standalone
+// library compilation.
+extern fn write_tls_deadline(deadline_cycles: i64);
+extern fn yield_to_executor();
+
 // ============================================================================
 // Context Type (Zero-Sized)
 // ============================================================================
@@ -23,9 +30,11 @@ package std.core.keuos.context
 //
 // At MLIR->LLVM lowering, Context parameters are erased.
 pub struct Context {
-    // Phantom field to prevent direct construction
+    // Phantom field to prevent direct construction.
+    // NOTE: spelled as i64 (not the unit type) because zero-sized tuple
+    // fields are not supported by the struct emitter.
     // Only the executor can create Contexts
-    _phantom: (),
+    _phantom: i64,
 }
 
 impl Context {
@@ -44,15 +53,15 @@ impl Context {
     pub fn check_deadline(self: &Context) {
         unsafe {
             // Read cycle counter (M4: single cycle via CNTVCT_EL0)
-            let now = intrinsics::cycle_counter();
+            let now = cycle_counter();
             
             // Read deadline from Thread-Local Storage
             // This is set by the executor when the task starts
-            let deadline = intrinsics::read_tls_deadline();
+            let deadline = read_tls_deadline();
             
             if now > deadline {
                 // We've exceeded our time budget - yield to executor
-                intrinsics::yield_to_executor();
+                yield_to_executor();
             }
         }
     }
@@ -65,8 +74,8 @@ impl Context {
     @inline(always)
     pub fn remaining_budget(self: &Context) -> i64 {
         unsafe {
-            let now = intrinsics::cycle_counter();
-            let deadline = intrinsics::read_tls_deadline();
+            let now = cycle_counter();
+            let deadline = read_tls_deadline();
             if deadline > now {
                 return deadline - now;
             } else {
@@ -89,7 +98,7 @@ impl Context {
     // Use sparingly - the compiler inserts automatic yields.
     pub fn yield_now(self: &Context) {
         unsafe {
-            intrinsics::yield_to_executor();
+            yield_to_executor();
         }
     }
 }
@@ -101,7 +110,7 @@ impl Context {
 // This is only callable from the executor module.
 // User code cannot create Contexts directly.
 pub(crate) fn create_context() -> Context {
-    return Context { _phantom: () };
+    return Context { _phantom: 0 };
 }
 
 // ============================================================================
@@ -111,13 +120,13 @@ pub(crate) fn create_context() -> Context {
 // Set the deadline for the current thread (called by executor)
 pub(crate) fn set_deadline(deadline_cycles: i64) {
     unsafe {
-        intrinsics::write_tls_deadline(deadline_cycles);
+        write_tls_deadline(deadline_cycles);
     }
 }
 
 // Get the deadline for the current thread
 pub(crate) fn get_deadline() -> i64 {
     unsafe {
-        return intrinsics::read_tls_deadline();
+        return read_tls_deadline();
     }
 }

@@ -3,6 +3,11 @@
 
 package std.hash
 
+import std.simd.u64x2
+import std.simd.load_u64x2
+import std.string.String
+import std.core.ptr.Ptr
+
 // =============================================================================
 // Hash Trait
 // =============================================================================
@@ -121,14 +126,18 @@ impl Hash for bool {
 impl Hash for f64 {
     @inline
     fn hash(&self) -> u64 {
-        return wyhash_mix(reinterpret_cast::<f64, u64>(*self));
+        // Annotated let gives reinterpret_cast its target-type context;
+        // turbofish generics on this intrinsic do not resolve here.
+        let bits: u64 = reinterpret_cast(*self);
+        return wyhash_mix(bits);
     }
 }
 
 impl Hash for f32 {
     @inline
     fn hash(&self) -> u64 {
-        return wyhash_mix(reinterpret_cast::<f32, u32>(*self) as u64);
+        let bits: u32 = reinterpret_cast(*self);
+        return wyhash_mix(bits as u64);
     }
 }
 
@@ -175,8 +184,6 @@ pub fn hash_bytes(ptr: Ptr<u8>, len: i64) -> u64 {
 // Each lane runs independent FNV-1a, merged at end via XOR reduction.
 // Achieves ~3.2 bytes/cycle on M4 vs 1.4 for scalar unrolled.
 
-import std.simd.u64x2
-import std.simd.load_u64x2
 
 @inline
 fn hash_bytes_simd(ptr: Ptr<u8>, len: usize) -> u64 {
@@ -229,18 +236,12 @@ fn hash_bytes_simd(ptr: Ptr<u8>, len: usize) -> u64 {
 
 @inline
 pub fn hash_bytes_fast(ptr: Ptr<u8>, len: usize) -> u64 {
-    // Tier 1: SVE (compile-time check, currently false on M4)
-    if target::has_feature("sve") {
-        if len >= 32 {
-            // SVE path placeholder - falls through to Neon for now
-        }
-    }
-    
-    // Tier 2: Neon SIMD (compile-time check - true on aarch64)
-    if target::has_feature("neon") {
-        if len >= 16 {
-            return hash_bytes_simd(ptr, len);
-        }
+    // Tier 2: Neon SIMD path for inputs of 16+ bytes. This build targets
+    // aarch64 (neon available, per the compiler feature table), so the
+    // length check alone selects the SIMD tier; scalar handles the tail.
+    // (target::has_feature is not yet callable from package modules.)
+    if len >= 16 {
+        return hash_bytes_simd(ptr, len);
     }
     
     // Tier 3: Scalar Unrolled - Universal fallback
@@ -273,8 +274,6 @@ pub fn hash_bytes_fast(ptr: Ptr<u8>, len: usize) -> u64 {
 // String Hash Implementation
 // =============================================================================
 
-import std.string.String
-import std.core.ptr.Ptr
 
 impl Hash for String {
     @inline
@@ -313,4 +312,3 @@ impl Hash for String {
 //             return h;
 //         }
 //     }
-

@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::collections::{HashMap, HashSet};
-use crate::grammar::{SaltFile, SaltFn, Item, ImportDecl};
+use crate::grammar::{GenericParam, SaltFile, SaltFn, Item, ImportDecl};
 use crate::registry::{Registry, EnumInfo};
 use crate::types::{Type, TypeKey};
 use crate::evaluator::Evaluator;
@@ -1953,9 +1953,15 @@ pub fn hydrate_specialization(&self, task: MonomorphizationTask) -> Result<(), S
         let prev_ensures = self.current_ensures().clone();
 
         let canonical_type_map = self.canonicalize_type_map(&task.type_map);
-        *self.current_type_map_mut() = canonical_type_map;
+        let (effective_self, inferred_bindings) =
+            self.concretize_erased_self_ty(task.self_ty.clone());
+        let mut effective_map = canonical_type_map;
+        for (param, arg) in inferred_bindings {
+            effective_map.entry(param).or_insert(arg);
+        }
+        *self.current_type_map_mut() = effective_map;
         *self.current_generic_args_mut() = task.concrete_tys.clone();
-        *self.current_self_ty_mut() = task.self_ty.clone();
+        *self.current_self_ty_mut() = effective_self;
         *self.imports_mut() = task.imports.clone();
 
         let package_path: Vec<syn::Ident> = task.identity.path.iter()
@@ -1998,6 +2004,56 @@ pub fn hydrate_specialization(&self, task: MonomorphizationTask) -> Result<(), S
                 Err(e)
             }
         }
+    }
+
+    /// D1: an impl-method task whose self type is an erased generic struct
+    /// (`Struct("main__Slot")`) cannot lower field access — the registry only
+    /// holds specialized instances (`main__Slot_i32`). When the template is
+    /// generic and exactly one concrete instance exists, adopt its arguments
+    /// so the body lowers against real field types. With zero or several
+    /// distinct instances the erased type is kept and compilation fails loudly
+    /// rather than guessing an instance.
+    fn concretize_erased_self_ty(
+        &self,
+        self_ty: Option<Type>,
+    ) -> (Option<Type>, std::collections::BTreeMap<String, Type>) {
+        let Some(Type::Struct(name)) = &self_ty else { return (self_ty, Default::default()); };
+        let template = self.struct_templates().get(name).cloned();
+        let Some(generics) = template.and_then(|t| t.generics) else {
+            return (self_ty, Default::default());
+        };
+        if generics.params.is_empty() { return (self_ty, Default::default()); }
+        let Some(args) = self.unique_instance_args(name) else {
+            return (self_ty, Default::default());
+        };
+        let mut bindings = std::collections::BTreeMap::new();
+        for (i, param) in generics.params.iter().enumerate() {
+            let pname = match param {
+                GenericParam::Type { name, .. } => name.to_string(),
+                GenericParam::Const { name, .. } => name.to_string(),
+            };
+            if let Some(arg) = args.get(i) {
+                bindings.insert(pname, arg.clone());
+            }
+        }
+        (Some(Type::Concrete(name.clone(), args)), bindings)
+    }
+
+    /// Type arguments of the single concrete specialization of `template`, if
+    /// exactly one exists in the struct registry.
+    fn unique_instance_args(&self, template: &str) -> Option<Vec<Type>> {
+        let mut by_signature: std::collections::BTreeMap<String, Vec<Type>> =
+            Default::default();
+        for info in self.struct_registry().values() {
+            if info.template_name.as_deref() != Some(template) { continue; }
+            if info.specialization_args.is_empty() || info.fields.is_empty() { continue; }
+            let sig = info.specialization_args.iter()
+                .map(|t| t.mangle_suffix())
+                .collect::<Vec<_>>()
+                .join("_");
+            by_signature.entry(sig).or_insert_with(|| info.specialization_args.clone());
+        }
+        if by_signature.len() == 1 { by_signature.into_values().next() } else { None }
     }
 
     fn canonicalize_type_map(&self, type_map: &std::collections::BTreeMap<String, Type>) -> std::collections::BTreeMap<String, Type> {

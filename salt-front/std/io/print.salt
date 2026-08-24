@@ -19,16 +19,19 @@ pub fn print<T: Display>(value: &T) {
 // Print followed by newline
 pub fn println<T: Display>(value: &T) {
     let s = format(value);
+    let nl: [u8; 2] = [10, 0];
     sys_write(1, s.as_bytes().as_ptr() as i64, s.len());
-    sys_write(1, "\n\0", 1);
+    sys_write(1, &nl[0], 1);
 }
 
 // Print a literal string (no formatting)
 pub fn print_str(s: &u8) {
     // Find null terminator
     let mut len: i64 = 0;
-    while s[len] != 0 {
-        len += 1;
+    unsafe {
+        while s[len] != 0 {
+            len += 1;
+        }
     }
     sys_write(1, s, len);
 }
@@ -36,7 +39,8 @@ pub fn print_str(s: &u8) {
 // Print string with newline
 pub fn println_str(s: &u8) {
     print_str(s);
-    sys_write(1, "\n\0", 1);
+    let nl: [u8; 2] = [10, 0];
+    sys_write(1, &nl[0], 1);
 }
 
 // Print an integer directly (convenience)
@@ -84,11 +88,13 @@ pub fn print_usize(n: usize) {
 // Print usize with newline
 pub fn println_usize(n: usize) {
     print_usize(n);
-    sys_write(1, "\n\0", 1);
+    let nl: [u8; 2] = [10, 0];
+    sys_write(1, &nl[0], 1);
 }
 
 // Print i64 with newline
 pub fn println_int(n: i64) {
     print_int(n);
-    sys_write(1, "\n\0", 1);
+    let nl: [u8; 2] = [10, 0];
+    sys_write(1, &nl[0], 1);
 }

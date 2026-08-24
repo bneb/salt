@@ -1,0 +1,80 @@
+// Two Sum -- LeetCode 1: Two Sum (two-pointer scan over sorted input)
+package basalt.two_sum
+
+import std.core.ptr.Ptr
+import std.core.arena
+
+const EXPECTED: i64 = 2675186061907;
+
+fn lcg(x: i64) -> i64 {
+    return (1103515245 * x + 12345) % 2147483648;
+}
+
+// Non-decreasing values built from small deltas: valid two-pointer input
+fn fill_sorted(arr: Ptr<i32>, n: i64)
+    requires n > 0
+{
+    let mut s: i64 = 42;
+    let mut prev: i32 = 0;
+    for i in 0..n {
+        invariant i >= 0;
+        unsafe {
+            arr[i] = prev + (s % 8) as i32;
+        }
+        prev = prev + (s % 8) as i32;
+        s = lcg(s);
+    }
+}
+
+// Two-pointer search: returns lo*n+hi for a valid pair, -1 if absent
+fn two_sum_search(arr: Ptr<i32>, n: i64, target: i64) -> i64
+    requires n > 1
+{
+    let mut lo: i64 = 0;
+    let mut hi: i64 = n - 1;
+    let mut found: i64 = -1;
+    while lo < hi && found < 0 {
+        invariant lo >= 0;
+        invariant hi < n;
+        unsafe {
+            let sum2 = arr[lo] as i64 + arr[hi] as i64;
+            if sum2 == target {
+                found = lo * n + hi;
+            } else {
+                if sum2 < target { lo += 1; } else { hi -= 1; }
+            }
+        }
+    }
+    return found;
+}
+
+fn run_queries(arr: Ptr<i32>, n: i64, qcount: i64) -> i64
+    requires n > 1 && qcount > 0
+{
+    let mut s: i64 = 7777;
+    let mut checksum: i64 = 0;
+    for q in 0..qcount {
+        invariant q >= 0;
+        let mut t: i64 = 0;
+        unsafe {
+            s = lcg(s);
+            let i1 = s % n;
+            s = lcg(s);
+            let i2 = s % n;
+            s = lcg(s);
+            t = arr[i1] as i64 + arr[i2] as i64 + (s % 3);
+        }
+        checksum += two_sum_search(arr, n, t);
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    let n = 200000 as i64;
+    let qcount = 500 as i64;
+    let arr = arena::alloc(n * 4) as Ptr<i32>;
+    fill_sorted(arr, n);
+    let checksum = run_queries(arr, n, qcount);
+    if checksum == EXPECTED { return 0; }
+    return 1;
+}

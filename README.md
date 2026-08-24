@@ -105,10 +105,16 @@ for the full capability reference.
 
 ## Performance
 
-Salt compiles through MLIR to LLVM IR, matching `clang -O3` on
-compute workloads. Benchmarks across 22 algorithm problems compare
-C, Rust, and Salt. See [salt-benchmarks](https://github.com/bneb/salt-benchmarks)
-for source, methodology, and raw data.
+Salt compiles through MLIR to LLVM IR and links to native binaries via the
+LLVM toolchain (`mlir-opt` → `mlir-translate` → `clang`). C and Rust baselines
+are compared across the benchmark suite; native Salt timing is not yet wired
+into that harness, so treat performance parity as a goal, not a claim.
+
+The suite covers 36 problems upstream plus local additions — see
+[docs/benchmarks/ANALYSIS.md](docs/benchmarks/ANALYSIS.md) for measured
+results, methodology, and per-number provenance, and
+[scripts/verify_lowering.sh](scripts/verify_lowering.sh) for a structural gate
+on the emitted MLIR.
 
 ## License
 

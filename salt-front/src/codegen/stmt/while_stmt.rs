@@ -22,7 +22,10 @@ pub(crate) fn prove_while_loop_base_case(
             ctx.z3_solver.push(); ctx.z3_solver.assert(&z.not());
             let ck = ctx.z3_solver.check(); ctx.z3_solver.pop(1);
             if ck == crate::z3_shim::SatResult::Sat {
-                return Err("Z3 verification failed: loop invariant does not hold at entry.                      The solver found a counterexample proving the invariant is false                      with current variable values.".to_string());
+                return Err(crate::errors::coded(
+                    "E009",
+                    "Z3 verification failed: loop invariant does not hold at entry.                      The solver found a counterexample proving the invariant is false                      with current variable values."
+                ));
             }
             ctx.z3_solver.assert(&z);
         }

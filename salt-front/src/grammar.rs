@@ -9,6 +9,7 @@ use crate::keywords::*;
 pub mod attr;
 pub mod pattern;
 pub(crate) mod expr_utils;
+pub(crate) mod local;
 use attr::Attribute;
 use pattern::Pattern;
 
@@ -22,6 +23,31 @@ fn parse_contract_expr(input: ParseStream) -> syn::Result<Expr> {
     } else {
         input.parse()
     }
+}
+
+/// Parse repeated 'requires expr;' / 'ensures expr;' clauses preceding a
+/// function body. Shared by free functions and defaulted trait methods.
+fn parse_fn_contracts(input: ParseStream) -> syn::Result<(Vec<Expr>, Vec<Expr>)> {
+    let mut requires = Vec::new();
+    while input.peek(crate::keywords::requires) {
+        input.parse::<crate::keywords::requires>()?;
+        let e: Expr = parse_contract_expr(input)?;
+         if input.peek(Token![;]) {
+             input.parse::<Token![;]>()?;
+         }
+        requires.push(e);
+    }
+
+    let mut ensures = Vec::new();
+    while input.peek(crate::keywords::ensures) {
+        input.parse::<crate::keywords::ensures>()?;
+        let e: Expr = parse_contract_expr(input)?;
+        if input.peek(Token![;]) {
+            input.parse::<Token![;]>()?;
+        }
+        ensures.push(e);
+    }
+    Ok((requires, ensures))
 }
 
 /// Represents the entire source file
@@ -517,6 +543,12 @@ pub struct SaltTrait {
     pub name: Ident,
     pub generics: Option<Generics>,
     pub methods: Vec<TraitMethodSig>,
+    /// Methods declared with a default body. Parsed into the trait AST and
+    /// inherited by every implementor via the trait-defaults expansion pass
+    /// (`codegen::trait_defaults::expand_trait_defaults`), which rewrites
+    /// each trait impl before registration so an omitted default becomes a
+    /// concrete impl method; an explicit override always wins.
+    pub default_methods: Vec<SaltFn>,
 }
 
 /// A method signature in a trait (no body)
@@ -582,13 +614,38 @@ pub struct Arg {
 }
 
 
-fn parse_user_ident(input: ParseStream) -> syn::Result<Ident> {
+pub(crate) fn parse_user_ident(input: ParseStream) -> syn::Result<Ident> {
     let id: Ident = input.parse()?;
     let s = id.to_string();
     if s.contains("__") {
         return Err(syn::Error::new(id.span(), "Identifiers cannot contain double underscores '__' as it is reserved for symbol mangling."));
     }
     Ok(id)
+}
+
+/// Consume optional marker keywords that may appear directly before 'fn'.
+///
+/// - 'static' marks an associated function inside an impl block (no self arg).
+///   Current lowering treats self-less methods as plain associated functions
+///   already, so the marker is consumed without changing the AST.
+/// - 'comptime' marks a compile-time helper function; consumed the same way.
+pub(crate) fn parse_fn_markers(input: ParseStream) -> syn::Result<()> {
+    loop {
+        if input.peek(Token![static]) {
+            input.parse::<Token![static]>()?;
+        } else if input.peek(Ident) && !input.peek(Token![fn]) {
+            let ahead = input.fork();
+            let id: Ident = ahead.parse()?;
+            if id == "comptime" {
+                input.parse::<Ident>()?;
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    Ok(())
 }
 
 impl Parse for SaltFile {
@@ -614,7 +671,27 @@ impl Parse for SaltFile {
                  }
              }
 
+             // Rust-style hash-bracket attributes are also valid item prefixes
+             while fork.peek(Token![#]) {
+                 fork.parse::<Token![#]>()?;
+                 let content;
+                 syn::bracketed!(content in fork);
+                 while !content.is_empty() {
+                     content.parse::<TokenTree>()?;
+                 }
+             }
+
              if fork.peek(Token![pub]) { let _ = fork.parse::<Token![pub]>()?; }
+
+             // Optional comptime marker directly before an item keyword
+             if !fork.peek(Token![fn]) && fork.peek(Ident) {
+                 let ahead = fork.fork();
+                 if let Ok(id) = ahead.parse::<Ident>() {
+                     if id == "comptime" && ahead.peek(Token![fn]) {
+                         fork.parse::<Ident>()?;
+                     }
+                 }
+             }
              
              if fork.peek(Token![extern]) || fork.peek(Token![fn]) {
                  if fork.peek(Token![extern]) {
@@ -622,7 +699,9 @@ impl Parse for SaltFile {
                  } else {
                      items.push(Item::Fn(input.parse()?));
                  }
-             } else if input.peek(Token![struct]) || (input.peek(Token![@]) && fork.peek(Token![struct])) {
+             // Fork-based peek: the fork has already skipped attr/pub prefixes
+             // (including hash-bracket attributes), so prefixed structs dispatch here.
+             } else if fork.peek(Token![struct]) {
                  items.push(Item::Struct(input.parse()?));
              } else if fork.peek(global) || fork.peek(var) {
                  items.push(Item::Global(input.parse()?));
@@ -924,62 +1003,136 @@ impl Parse for SaltConcept {
     }
 }
 
-/// Parse trait method signature: `fn name(&self) -> RetType;`
-impl Parse for TraitMethodSig {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        input.parse::<Token![fn]>()?;
-        let name: Ident = parse_user_ident(input)?;
-        
-        // Parse generics <T>
-        let generics = if input.peek(Token![<]) {
-            Some(input.parse()?)
-        } else {
-            None
-        };
-        
-        // Parse (args)
-        let content;
-        parenthesized!(content in input);
-        let args: Punctuated<Arg, Token![,]> = Punctuated::parse_terminated(&content)?;
-        
-        // Parse -> RetType
-        let ret_type = if input.peek(Token![->]) {
-            input.parse::<Token![->]>()?;
-            Some(input.parse()?)
-        } else {
-            None
-        };
-        
-        // Consume semicolon
-        input.parse::<Token![;]>()?;
-        
-        Ok(TraitMethodSig { name, generics, args, ret_type })
+/// Parsed pieces of a trait method signature between 'fn' and body/semicolon.
+struct TraitFnHeader {
+    name: Ident,
+    generics: Option<Generics>,
+    args: Punctuated<Arg, Token![,]>,
+    ret_type: Option<SynType>,
+}
+
+impl TraitFnHeader {
+    fn into_sig(self) -> TraitMethodSig {
+        TraitMethodSig {
+            name: self.name,
+            generics: self.generics,
+            args: self.args,
+            ret_type: self.ret_type,
+        }
     }
 }
 
-/// Parse trait definition: `trait Foo<T> { fn bar(&self) -> T; }`
+fn parse_trait_fn_header(input: ParseStream) -> syn::Result<TraitFnHeader> {
+    input.parse::<Token![fn]>()?;
+    let name: Ident = parse_user_ident(input)?;
+
+    // Parse generics <T>
+    let generics = if input.peek(Token![<]) {
+        Some(input.parse()?)
+    } else {
+        None
+    };
+
+    // Parse (args)
+    let content;
+    parenthesized!(content in input);
+    let args: Punctuated<Arg, Token![,]> = Punctuated::parse_terminated(&content)?;
+
+    // Parse -> RetType
+    let ret_type = if input.peek(Token![->]) {
+        input.parse::<Token![->]>()?;
+        Some(input.parse()?)
+    } else {
+        None
+    };
+
+    Ok(TraitFnHeader { name, generics, args, ret_type })
+}
+
+/// One parsed member of a trait body.
+enum TraitMember {
+    Required(TraitMethodSig),
+    Defaulted(SaltFn),
+}
+
+/// Parse a single trait member: a bodyless signature ending in ';' or a
+/// method with a default body (optionally preceded by requires/ensures).
+fn parse_trait_member(content: ParseStream) -> syn::Result<TraitMember> {
+    let header = parse_trait_fn_header(content)?;
+    let has_contracts = content.peek(crate::keywords::requires)
+        || content.peek(crate::keywords::ensures);
+    if content.peek(syn::token::Brace) || has_contracts {
+        Ok(TraitMember::Defaulted(finish_defaulted_method(header, content)?))
+    } else {
+        content.parse::<Token![;]>()?;
+        Ok(TraitMember::Required(header.into_sig()))
+    }
+}
+
+/// Build the SaltFn backing a defaulted trait method (contracts + body).
+fn finish_defaulted_method(
+    header: TraitFnHeader,
+    content: ParseStream,
+) -> syn::Result<SaltFn> {
+    let (requires, ensures) = parse_fn_contracts(content)?;
+    let body: SaltBlock = content.parse()?;
+    Ok(SaltFn {
+        attributes: Vec::new(),
+        is_pub: true,
+        name: header.name,
+        generics: header.generics,
+        args: header.args,
+        ret_type: header.ret_type,
+        requires,
+        ensures,
+        body,
+    })
+}
+
+/// Parse trait method signature: `fn name(&self) -> RetType;`
+impl Parse for TraitMethodSig {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let header = parse_trait_fn_header(input)?;
+        // Consume semicolon
+        input.parse::<Token![;]>()?;
+        Ok(header.into_sig())
+    }
+}
+
+/// Parse trait definition: `trait Foo<T> { fn bar(&self) -> T; ... }`.
+/// Members may be bodyless signatures or methods with default bodies.
 impl Parse for SaltTrait {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.peek(Token![pub]) {
+            input.parse::<Token![pub]>()?;
+        }
         input.parse::<Token![trait]>()?;
         let name: Ident = parse_user_ident(input)?;
-        
+
         // Parse generics <T>
         let generics = if input.peek(Token![<]) {
             Some(input.parse()?)
         } else {
             None
         };
-        
-        // Parse { method signatures }
+
+        // Parse { members }
         let content;
         syn::braced!(content in input);
-        
+
         let mut methods = Vec::new();
+        let mut default_methods = Vec::new();
         while !content.is_empty() {
-            methods.push(content.parse()?);
+            if !content.peek(Token![fn]) {
+                return Err(content.error("Expected 'fn' in trait body"));
+            }
+            match parse_trait_member(&content)? {
+                TraitMember::Required(sig) => methods.push(sig),
+                TraitMember::Defaulted(method) => default_methods.push(method),
+            }
         }
-        
-        Ok(SaltTrait { name, generics, methods })
+
+        Ok(SaltTrait { name, generics, methods, default_methods })
     }
 }
 
@@ -1141,6 +1294,8 @@ impl Parse for SaltFn {
             false
         };
 
+        parse_fn_markers(input)?;
+
         input.parse::<Token![fn]>()?;
         let name: Ident = parse_user_ident(input)?;
 
@@ -1162,27 +1317,8 @@ impl Parse for SaltFn {
             None
         };
 
-        // Parse Contract: requires expr
-        let mut requires = Vec::new();
-        while input.peek(crate::keywords::requires) {
-            input.parse::<crate::keywords::requires>()?;
-            let e: Expr = parse_contract_expr(input)?;
-             if input.peek(Token![;]) {
-                 input.parse::<Token![;]>()?;
-             }
-            requires.push(e);
-        }
-
-        // Parse ensures clause (postconditions)
-        let mut ensures = Vec::new();
-        while input.peek(crate::keywords::ensures) {
-            input.parse::<crate::keywords::ensures>()?;
-            let e: Expr = parse_contract_expr(input)?;
-            if input.peek(Token![;]) {
-                input.parse::<Token![;]>()?;
-            }
-            ensures.push(e);
-        }
+        // Parse Contract: repeated `requires expr;` / `ensures expr;` clauses
+        let (requires, ensures) = parse_fn_contracts(input)?;
 
         let body: SaltBlock = input.parse()?;
         Ok(SaltFn { attributes, is_pub, name, generics, args, ret_type, requires, ensures, body })
@@ -1284,6 +1420,12 @@ fn parse(input: ParseStream) -> syn::Result<Self> {
          if input.peek(crate::keywords::map_window) {
              return parse_map_window_stmt(input);
         }
+
+         if input.peek(crate::keywords::var) {
+             // Mutable local declaration written with the 'var' keyword:
+             //   var total = a + b;   or   var pos: i64 = 0;
+             return local::parse_var_stmt(input);
+         }
 
          if input.peek(Token![let]) {
               return parse_let_stmt(input);

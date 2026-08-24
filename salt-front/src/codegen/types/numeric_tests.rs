@@ -182,19 +182,19 @@ mod tests {
     #[test]
     fn test_promotion_ops_table_some() {
         let entries = [
-            ((0,1,"arith.extsi","i8","i16")),((0,5,"arith.extsi","i8","i16")),
-            ((0,2,"arith.extsi","i8","i32")),((0,6,"arith.extsi","i8","i32")),
-            ((0,3,"arith.extsi","i8","i64")),((0,7,"arith.extsi","i8","i64")),((0,8,"arith.extsi","i8","i64")),
-            ((1,2,"arith.extsi","i16","i32")),((1,6,"arith.extsi","i16","i32")),
-            ((1,3,"arith.extsi","i16","i64")),((1,7,"arith.extsi","i16","i64")),((1,8,"arith.extsi","i16","i64")),
-            ((2,3,"arith.extsi","i32","i64")),((2,7,"arith.extsi","i32","i64")),((2,8,"arith.extsi","i32","i64")),
-            ((4,1,"arith.extui","i8","i16")),((4,5,"arith.extui","i8","i16")),
-            ((4,2,"arith.extui","i8","i32")),((4,6,"arith.extui","i8","i32")),
-            ((4,3,"arith.extui","i8","i64")),((4,7,"arith.extui","i8","i64")),((4,8,"arith.extui","i8","i64")),
-            ((5,2,"arith.extui","i16","i32")),((5,6,"arith.extui","i16","i32")),
-            ((5,3,"arith.extui","i16","i64")),((5,7,"arith.extui","i16","i64")),((5,8,"arith.extui","i16","i64")),
-            ((6,3,"arith.extui","i32","i64")),((6,7,"arith.extui","i32","i64")),((6,8,"arith.extui","i32","i64")),
-            ((9,10,"arith.extf","f32","f64")),
+            (0,1,"arith.extsi","i8","i16"),(0,5,"arith.extsi","i8","i16"),
+            (0,2,"arith.extsi","i8","i32"),(0,6,"arith.extsi","i8","i32"),
+            (0,3,"arith.extsi","i8","i64"),(0,7,"arith.extsi","i8","i64"),(0,8,"arith.extsi","i8","i64"),
+            (1,2,"arith.extsi","i16","i32"),(1,6,"arith.extsi","i16","i32"),
+            (1,3,"arith.extsi","i16","i64"),(1,7,"arith.extsi","i16","i64"),(1,8,"arith.extsi","i16","i64"),
+            (2,3,"arith.extsi","i32","i64"),(2,7,"arith.extsi","i32","i64"),(2,8,"arith.extsi","i32","i64"),
+            (4,1,"arith.extui","i8","i16"),(4,5,"arith.extui","i8","i16"),
+            (4,2,"arith.extui","i8","i32"),(4,6,"arith.extui","i8","i32"),
+            (4,3,"arith.extui","i8","i64"),(4,7,"arith.extui","i8","i64"),(4,8,"arith.extui","i8","i64"),
+            (5,2,"arith.extui","i16","i32"),(5,6,"arith.extui","i16","i32"),
+            (5,3,"arith.extui","i16","i64"),(5,7,"arith.extui","i16","i64"),(5,8,"arith.extui","i16","i64"),
+            (6,3,"arith.extui","i32","i64"),(6,7,"arith.extui","i32","i64"),(6,8,"arith.extui","i32","i64"),
+            (9,10,"arith.extf","f32","f64"),
         ];
         for &(from, to, op, src, dst) in &entries {
             assert_eq!(PROMOTION_OPS[from][to], Some((op, src, dst)),

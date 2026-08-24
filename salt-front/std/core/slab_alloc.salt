@@ -49,7 +49,8 @@ impl<const SIZE: i64> SlabCache<SIZE> {
         (*self).next_free += 1;
         
         let ptr = &(*self).data[offset as i32];
-        return Result::<Ptr<u8>>::Ok(Ptr::<u8>::from_ref(ptr, SIZE));
+        // Ptr::from_ref does not exist; take the element address and coerce.
+        return Result::<Ptr<u8>>::Ok(ref_to_addr(ptr) as Ptr<u8>);
     }
 
     pub fn free(&mut self, _ptr: Ptr<u8>) {
@@ -83,7 +84,8 @@ impl BumpAlloc {
         let ptr = &(*self).heap[aligned_offset as i32];
         (*self).offset = new_offset;
         
-        return Result::<Ptr<u8>>::Ok(Ptr::<u8>::from_ref(ptr, layout.size));
+        // Ptr::from_ref does not exist; take the element address and coerce.
+        return Result::<Ptr<u8>>::Ok(ref_to_addr(ptr) as Ptr<u8>);
     }
 }
 
@@ -97,10 +99,13 @@ pub struct GlobalSlabAlloc {
 
 impl GlobalSlabAlloc {
     pub fn new() -> GlobalSlabAlloc {
+        // Cache fields are constructed via direct struct literals: building a
+        // const-generic struct through its constructor method from inside
+        // another constructor recurses unboundedly in the monomorphizer.
         return GlobalSlabAlloc {
-            cache_64: SlabCache::<64>::new(),
-            cache_512: SlabCache::<512>::new(),
-            cache_4096: SlabCache::<4096>::new(),
+            cache_64: SlabCache::<64> { data: zeroed::<[u8; 1024]>(), next_free: 0 },
+            cache_512: SlabCache::<512> { data: zeroed::<[u8; 1024]>(), next_free: 0 },
+            cache_4096: SlabCache::<4096> { data: zeroed::<[u8; 1024]>(), next_free: 0 },
             fallback: BumpAlloc::new()
         };
     }

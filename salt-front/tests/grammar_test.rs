@@ -242,3 +242,102 @@ fn test_parse_binary_literal() {
     let result = compile(code, false, None, true);
     assert!(result.is_ok(), "Binary literal failed: {:?}", result.err());
 }
+
+// ============================================================================
+// Grammar extensions: static/comptime fn markers, var locals,
+// hash-bracket attributes, and defaulted trait methods.
+// ============================================================================
+
+#[test]
+fn test_parse_static_fn_in_impl() {
+    let code = r#"
+        struct Rng { state0: u64, state1: u64 }
+        impl Rng {
+            static fn new(seed: u64) -> Rng {
+                return Rng { state0: seed, state1: seed ^ 1 };
+            }
+            fn mix(&mut self) -> u64 {
+                return self.state0;
+            }
+        }
+        fn main() -> i32 { return 0; }
+    "#;
+    let result = compile(code, false, None, true);
+    assert!(result.is_ok(), "static fn in impl failed: {:?}", result.err());
+}
+
+#[test]
+fn test_parse_comptime_fn_marker() {
+    let code = r#"
+        pub comptime fn hex_handler(x: i64) -> i64 {
+            return x + 1;
+        }
+        fn main() -> i32 { return 0; }
+    "#;
+    let result = compile(code, false, None, true);
+    assert!(result.is_ok(), "comptime fn marker failed: {:?}", result.err());
+}
+
+#[test]
+fn test_parse_var_local_typed_and_untyped() {
+    let code = r#"
+        fn main() -> i64 {
+            var total: i64 = 0;
+            var step = 3;
+            total = total + step;
+            return total;
+        }
+    "#;
+    let result = compile(code, false, None, true);
+    assert!(result.is_ok(), "var locals failed: {:?}", result.err());
+}
+
+#[test]
+fn test_parse_hash_bracket_attribute() {
+    let code = r#"
+        #[string_prefix("zz")]
+        fn handler(x: i64) -> i64 {
+            return x;
+        }
+        fn main() -> i32 { return 0; }
+    "#;
+    let result = compile(code, false, None, true);
+    assert!(result.is_ok(), "hash-bracket attribute failed: {:?}", result.err());
+}
+
+#[test]
+fn test_parse_trait_default_method_body() {
+    let code = r#"
+        trait Shape {
+            fn area(&self) -> f64;
+            fn describe(&self) -> f64 {
+                return self.area() * 2.0;
+            }
+        }
+        fn main() -> i32 { return 0; }
+    "#;
+    let result = compile(code, false, None, true);
+    assert!(result.is_ok(), "trait default body failed: {:?}", result.err());
+}
+
+#[test]
+fn test_trait_method_needs_semicolon_or_body() {
+    // Bodyless method without trailing semicolon must be rejected.
+    let code = "trait Bad { fn oops(&self) -> i64 }";
+    let result = compile(code, false, None, true);
+    assert!(result.is_err(), "trait member without ; or body must fail");
+}
+
+#[test]
+fn test_var_without_initializer_rejected() {
+    let code = "fn f() { var x; }";
+    let result = compile(code, false, None, true);
+    assert!(result.is_err(), "var requires an initializer");
+}
+
+#[test]
+fn test_static_marker_requires_fn() {
+    let code = "struct S { v: i64 } impl S { static }";
+    let result = compile(code, false, None, true);
+    assert!(result.is_err(), "stray 'static' inside impl must fail");
+}

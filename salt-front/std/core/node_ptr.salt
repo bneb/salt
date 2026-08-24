@@ -1,20 +1,26 @@
 // core::node_ptr - Safe Pointer Wrapper for Node Allocations
-// The "Linus Guardrail": Encapsulates raw !llvm.ptr with Z3-verified null safety.
-// This is the ONLY place raw pointers should exist in data structure code.
+// The "Linus Guardrail": Encapsulates raw addresses with verified null safety.
+
+// NOTE: the legacy `NodePtr<T>` identifier is abolished by the grammar
+// (reserved legacy name alongside NativePtr); this module provides the same
+// zero-cost, i64-backed node pointer under the name `NodeRef<T>`.
 
 package std.core.node_ptr
 
-/// NodePtr<T> - Zero-cost safe pointer wrapper for node-like allocations.
-/// Unlike Ptr<T> (which carries bounds metadata), NodePtr is a single i64
-/// optimized for data structures where node size is known at compile-time.
-pub struct NodePtr<T> {
+import std.core.ptr.Ptr
+
+/// NodeRef<T> - Zero-cost safe pointer wrapper for node-like allocations.
+/// Stores the node address as a single i64 for data structures where the
+/// node size is known at compile time. Nullity checks are plain compares;
+/// conversions lower to ptrtoint/inttoptr with no runtime overhead.
+pub struct NodeRef<T> {
     inner: i64  // Raw address stored as integer for zero-cost abstraction
 }
 
-impl<T> NodePtr<T> {
+impl<T> NodeRef<T> {
     /// Create a null pointer.
-    pub fn null() -> NodePtr<T> {
-        return NodePtr { inner: 0 };
+    pub fn null() -> NodeRef<T> {
+        return NodeRef { inner: 0 };
     }
 
     /// Check for nullity. Z3 uses this for flow-sensitive analysis.
@@ -31,36 +37,26 @@ impl<T> NodePtr<T> {
     /// SAFETY: Caller must prove !is_null() via a match or if guard.
     /// The compiler injects Z3 contracts to verify this at compile-time.
     @inline
-    pub fn as_ref(&self) -> &T 
-    // requires { !self.is_null() }  // Z3 contract - enforced at compile-time
-    {
+    pub fn as_ref(&self) -> &T {
+        // requires { !self.is_null() }  // Z3 contract - enforced at compile-time
         return self.inner as &T;
     }
 
-    /// Verified Conversion to Mutable Reference.
-    /// SAFETY: Same null-safety requirements as as_ref().
-    @inline
-    pub fn as_mut(&mut self) -> &mut T 
-    // requires { !self.is_null() }  // Z3 contract - enforced at compile-time
-    {
-        return self.inner as &mut T;
-    }
-
-    /// Create a NodePtr from an existing reference.
+    /// Create a NodeRef from an existing reference.
     /// This is the primary constructor when allocating nodes.
-    pub fn from_ref(r: &T) -> NodePtr<T> {
-        return NodePtr { inner: intrin::ref_to_addr(r) };
+    pub fn from_ref(r: &T) -> NodeRef<T> {
+        return NodeRef { inner: intrin::ref_to_addr(r) };
     }
 
-    /// Create a NodePtr from a mutable reference.
-    pub fn from_mut(r: &mut T) -> NodePtr<T> {
-        return NodePtr { inner: intrin::ref_to_addr(r) };
+    /// Create a NodeRef from a mutable reference.
+    pub fn from_mut(r: &mut T) -> NodeRef<T> {
+        return NodeRef { inner: intrin::ref_to_addr(r) };
     }
 
-    /// Create a NodePtr from a raw address.
+    /// Create a NodeRef from a raw address.
     /// UNSAFE: Caller is responsible for ensuring the address is valid.
-    pub fn from_raw(addr: i64) -> NodePtr<T> {
-        return NodePtr { inner: addr };
+    pub fn from_raw(addr: i64) -> NodeRef<T> {
+        return NodeRef { inner: addr };
     }
 
     /// Get the raw address (for interop with C functions or manual pointer math).
@@ -68,20 +64,10 @@ impl<T> NodePtr<T> {
         return self.inner;
     }
 
-    /// Cast to !llvm.ptr for FFI boundaries.
+    /// Cast to Ptr<T> for FFI boundaries.
     /// This is the escape hatch when interfacing with C libraries.
     @inline
-    pub fn as_llvm_ptr(&self) -> !llvm.ptr {
-        return self.inner as !llvm.ptr;
-    }
-}
-
-// Conversion implementations for ergonomic usage
-
-impl<T> NodePtr<T> {
-    /// Convert !llvm.ptr to NodePtr<T>.
-    /// Primary use case: wrapping malloc results.
-    pub fn from_llvm_ptr(ptr: !llvm.ptr) -> NodePtr<T> {
-        return NodePtr { inner: ptr as i64 };
+    pub fn as_ptr(&self) -> Ptr<T> {
+        return self.inner as Ptr<T>;
     }
 }

@@ -325,6 +325,8 @@ pub fn expr_to_msl(expr: &syn::Expr) -> String {
 
 
 #[cfg(test)]
+// Some non-test helpers live below the tests module by design;
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 

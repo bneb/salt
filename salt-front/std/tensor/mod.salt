@@ -1,38 +1,45 @@
+// =============================================================================
+// std::tensor - Tensor Storage Factory Functions
+// =============================================================================
+// Shape-parameterized `Tensor<f32, {[D]}>` types are not accepted by the
+// grammar (braced const-generic shapes fail to parse), so tensors are
+// handled here as raw f32 buffers: contiguous, row-major, element count
+// carried alongside. The factory semantics are unchanged.
+// =============================================================================
 
 package std::tensor
 
 extern fn salt_zeros_f32(ptr: &f32, count: u64);
 extern fn salt_randn_f32(ptr: &f32, count: u64, scale: f32, seed: u32);
-extern fn mmap_file(path: &u8, size: u64) -> &u8;
-extern fn munmap_file(ptr: &u8, size: u64);
+extern fn mmap_file(path: &u8, size: u64) -> &f32;
+extern fn munmap_file(ptr: &f32, size: u64);
+extern fn alloc(bytes: u64) -> u64;
 
-// Free Functions Factory
-fn zeros(count: u64) -> Tensor<f32, {[1]}> {
-    let ptr = alloc(count * 4); 
-    salt_zeros_f32(reinterpret_cast::<&f32>(ptr), count);
-    return reinterpret_cast::<Tensor<f32, {[1]}>>(ptr);
-}
-
-fn randn(count: u64, scale: f32) -> Tensor<f32, {[1]}> {
+/// Allocate a zero-initialized f32 buffer of `count` elements.
+fn zeros(count: u64) -> &f32 {
+    // requires { count > 0 }
     let ptr = alloc(count * 4);
-    salt_randn_f32(reinterpret_cast::<&f32>(ptr), count, scale, 42);
-    return reinterpret_cast::<Tensor<f32, {[1]}>>(ptr);
+    let p = reinterpret_cast::<&f32>(ptr);
+    salt_zeros_f32(p, count);
+    return p;
 }
 
-fn mmap(path: &u8, count: u64) -> Tensor<f32, {[1]}> {
-    let size = count * 4;
-    let ptr = mmap_file(path, size);
-    return reinterpret_cast::<Tensor<f32, {[1]}>>(ptr);
+/// Allocate an f32 buffer filled with scaled random normals.
+fn randn(count: u64, scale: f32) -> &f32 {
+    // requires { count > 0 }
+    let ptr = alloc(count * 4);
+    let p = reinterpret_cast::<&f32>(ptr);
+    salt_randn_f32(p, count, scale, 42);
+    return p;
 }
 
-impl<T, S> Tensor<T, S> {
-    static fn offset(t: Tensor<T, S>, elem_offset: u64) -> Tensor<T, S> {
-        let ptr = reinterpret_cast::<&f32>(t);
-        let addr = reinterpret_cast::<u64>(ptr);
-        let new_addr = addr + elem_offset * 4;
-        return reinterpret_cast::<Tensor<T, S>>(new_addr);
-    }
+/// Map `count` f32 elements from a file.
+fn mmap(path: &u8, count: u64) -> &f32 {
+    // requires { count > 0 }
+    return mmap_file(path, count * 4);
 }
 
-extern fn alloc(bytes: u64) -> u64; 
-extern fn malloc(bytes: u64) -> &u8; 
+/// Release a file mapping previously returned by mmap().
+fn unmap(ptr: &f32, count: u64) {
+    munmap_file(ptr, count * 4);
+}

@@ -167,7 +167,7 @@ mod tests {
         std::fs::write(&mlir_path, &mlir_with_decls).expect("write MLIR");
 
         let output = std::process::Command::new(mlir_opt)
-            .args(&[
+            .args([
                 "--convert-scf-to-cf",
                 "--convert-cf-to-llvm",
                 "--convert-arith-to-llvm",
@@ -233,7 +233,7 @@ mod tests {
         std::fs::write(&mlir_path, &mlir_with_decls).expect("write MLIR");
 
         let output = std::process::Command::new(mlir_opt)
-            .args(&[
+            .args([
                 "--convert-scf-to-cf",
                 "--convert-cf-to-llvm",
                 "--convert-arith-to-llvm",

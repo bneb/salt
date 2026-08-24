@@ -149,6 +149,9 @@ salt-front/src/phase22_full.salt
 *.bin
 mnist_*.bin
 
+# ─── Agent round staging (never committed) ────────────────────────────────
+.round1-staging/
+
 # ─── Root-level stale files ─────────────────────────────────────────────────
 /pipeline.sh
 /lattice_status.h

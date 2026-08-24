@@ -114,8 +114,9 @@ impl Display for f64 {
         
         // Append int part
         let len = temp_buf.len();
+        let bytes = temp_buf.as_ptr();
         for i in 0..len {
-            buf.push_byte(temp_buf.as_bytes().get(i));
+            buf.push_byte(bytes.offset(i).read());
         }
         temp_buf.drop();
         

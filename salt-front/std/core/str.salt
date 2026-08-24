@@ -49,6 +49,12 @@ impl StringView {
         return self.ptr.offset(idx).read();
     }
 
+    /// Raw byte pointer of the view (for FFI boundaries).
+    @inline
+    pub fn data(&self) -> Ptr<u8> {
+        return self.ptr;
+    }
+
     // =========================================================================
     // Zero-Copy Slicing
     // =========================================================================

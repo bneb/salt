@@ -98,7 +98,10 @@ impl VerificationFailure {
     
     /// Format as a compiler error message
     pub fn format_error(&self) -> String {
-        let mut msg = format!("VERIFICATION ERROR: could not prove '{}'\n", self.constraint);
+        let mut msg = crate::errors::coded(
+            "E009",
+            format!("VERIFICATION ERROR: could not prove '{}'\n", self.constraint)
+        );
         msg.push_str(&format!("  context: {}\n", self.context));
         
         if let Some(ref ce) = self.counterexample {

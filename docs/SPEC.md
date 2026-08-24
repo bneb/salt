@@ -825,11 +825,23 @@ saltc <file.salt> [-o <path>] [flags]
 
 ## Appendix D: Error Codes
 
-| Code | Description |
-|------|-------------|
-| E001 | Failed to read source file |
-| E002 | Parse error |
-| E003 | Compilation failed (verification error, type error, etc.) |
-| E004 | Unknown argument or invalid flag |
-| E005 | Linker error |
-| E006 | Verification error |
+The canonical registry is `salt-front/src/errors.rs`; `saltc --explain <code>`
+renders its explanations. Compile-stage failures print an `[E003]` banner
+followed by the root cause, which may carry its own refinement code (`[E002]`,
+`[E009]`, `[E011]`). Warnings reuse the domain number with a `W` prefix and
+never abort compilation.
+
+| Code | Category | Emitted when |
+|------|----------|--------------|
+| E001 | File I/O | a source/output/SIR file cannot be read or written |
+| E002 | Syntax | source fails to parse or uses invalid syntax |
+| E003 | Compilation | comptime evaluation or MLIR lowering fails (banner) |
+| E004 | CLI usage | missing or unknown flags/arguments |
+| E005 | Binary synthesis | MLIR-to-native-binary pipeline fails |
+| E006 | Object compilation | MLIR-to-object pipeline fails |
+| E007 | Internal compiler error | compiler bug or disabled safety flag |
+| E008 | Imports/modules | imported module cannot be resolved (fatal path) |
+| E009 | Verification | a Z3 contract/invariant/ownership proof fails |
+| E010 | Target triple | unknown `--target` value |
+| E011 | Deferred policy | `--deny-deferred` sees deferred checks |
+| W008 | Imports/modules (warning) | unresolvable import; compilation continues |

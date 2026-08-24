@@ -33,6 +33,9 @@ pub struct TraitDef {
     pub name: String,
     /// Required method signatures that any implementor must provide.
     pub required_methods: HashMap<String, FnSig>,
+    /// Default method signatures an implementor may omit; the default is
+    /// then inherited. An explicit impl method overrides the default.
+    pub default_methods: HashMap<String, FnSig>,
 }
 
 /// Type-checking context.
@@ -115,6 +118,7 @@ impl TypeckContext {
                 }
                 ItemKind::Trait(t) => {
                     let mut required_methods = HashMap::new();
+                    let mut default_methods = HashMap::new();
                     for trait_item in &t.items {
                         let crate::hir::items::TraitItem::Fn { name, func } = trait_item; {
                             let param_count = func.inputs.len();
@@ -123,12 +127,17 @@ impl TypeckContext {
                                 return_type: func.output.clone(),
                                 linear_params: vec![false; param_count],
                             };
-                            required_methods.insert(name.clone(), sig);
+                            if func.body.is_some() {
+                                default_methods.insert(name.clone(), sig);
+                            } else {
+                                required_methods.insert(name.clone(), sig);
+                            }
                         }
                     }
                     traits.insert(item.name.clone(), TraitDef {
                         name: item.name.clone(),
                         required_methods,
+                        default_methods,
                     });
                 }
                 _ => {}
@@ -172,6 +181,12 @@ impl TypeckContext {
                             };
                             provided.insert(name.clone(), sig);
                         }
+                    }
+
+                    // Inheritance: an omitted default method is inherited;
+                    // an explicit impl method keeps overriding its default.
+                    for (def_name, def_sig) in &trait_def.default_methods {
+                        provided.entry(def_name.clone()).or_insert_with(|| def_sig.clone());
                     }
 
                     // Compliance: every required method must be present with matching signature
@@ -844,7 +859,7 @@ mod tests {
     #[test]
     fn test_typeck_float_literal() {
         let mut ctx = TypeckContext::new();
-        let mut expr = mk_expr(ExprKind::Literal(Literal::Float(3.14)));
+        let mut expr = mk_expr(ExprKind::Literal(Literal::Float(3.15)));
         let ty = ctx.typeck_expr(&mut expr).unwrap();
         assert_eq!(ty, Type::F64);
         assert_eq!(expr.ty, Type::F64);

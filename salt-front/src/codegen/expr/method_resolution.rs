@@ -459,32 +459,50 @@ fn get_receiver_lvalue(
     cached_receiver_ty: &Type,
     method_name: &str,
 ) -> Result<(String, Type), String> {
-    if let Ok((addr, raw_ty, _kind)) = emit_lvalue(ctx, out, receiver_expr, local_vars) {
-        let ty = raw_ty.substitute(ctx.current_type_map());
-
-        fn is_aggregate_type(ty: &Type) -> bool {
-            match ty {
-                Type::Struct(_) | Type::Concrete(_, _) | Type::Array(_, _, _) => true,
-                Type::Owned(inner) => is_aggregate_type(inner),
-                _ => false,
-            }
+    // A chained-call receiver (x.m()) was already emitted exactly once by
+    // emit_method_call into the cached SSA value. Re-running emit_lvalue on it
+    // would emit the call a second time before failing on its non-reference
+    // return type - duplicating side effects - so use the cached value directly.
+    let receiver_already_emitted = cached_receiver_val.is_some()
+        && matches!(receiver_expr, syn::Expr::MethodCall(_) | syn::Expr::Call(_));
+    if !receiver_already_emitted {
+        if let Ok((addr, raw_ty, kind)) = emit_lvalue(ctx, out, receiver_expr, local_vars) {
+            return materialize_lvalue_receiver(ctx, out, addr, raw_ty, kind);
         }
-        let is_aggregate = is_aggregate_type(&ty);
-        let is_ref_ssa = matches!(ty, Type::Reference(_, _)) && matches!(_kind, crate::codegen::expr::LValueKind::SSA);
-        if is_aggregate {
-            Ok((addr, Type::Reference(Box::new(ty), false)))
-        } else if is_ref_ssa {
-            Ok((addr, ty))
-        } else {
-            let val = format!("%recv_load_{}", ctx.next_id());
-            let mlir_ty = ty.to_mlir_storage_type(ctx)?;
-            ctx.emit_load(out, &val, &addr, &mlir_ty);
-            Ok((val, ty))
-        }
-    } else if let Some(ref val) = cached_receiver_val {
+    }
+    if let Some(ref val) = cached_receiver_val {
         Ok((val.clone(), cached_receiver_ty.substitute(ctx.current_type_map())))
     } else {
         Err(format!("Method call '{}' requires a receiver value", method_name))
+    }
+}
+
+fn materialize_lvalue_receiver(
+    ctx: &mut LoweringContext,
+    out: &mut String,
+    addr: String,
+    raw_ty: Type,
+    kind: crate::codegen::expr::LValueKind,
+) -> Result<(String, Type), String> {
+    let ty = raw_ty.substitute(ctx.current_type_map());
+    fn is_aggregate_type(ty: &Type) -> bool {
+        match ty {
+            Type::Struct(_) | Type::Concrete(_, _) | Type::Array(_, _, _) => true,
+            Type::Owned(inner) => is_aggregate_type(inner),
+            _ => false,
+        }
+    }
+    let is_aggregate = is_aggregate_type(&ty);
+    let is_ref_ssa = matches!(ty, Type::Reference(_, _)) && matches!(kind, crate::codegen::expr::LValueKind::SSA);
+    if is_aggregate {
+        Ok((addr, Type::Reference(Box::new(ty), false)))
+    } else if is_ref_ssa {
+        Ok((addr, ty))
+    } else {
+        let val = format!("%recv_load_{}", ctx.next_id());
+        let mlir_ty = ty.to_mlir_storage_type(ctx)?;
+        ctx.emit_load(out, &val, &addr, &mlir_ty);
+        Ok((val, ty))
     }
 }
 

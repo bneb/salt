@@ -107,15 +107,7 @@ impl LoweringContext {
 
         // Body lowering: set up scopes and lower the function body
         self.current_generic_names = generic_names.clone();
-        self.scopes = ScopeStack::new();
-        self.next_var_id = 0;
-
-        // Bind function arguments into the root scope
-        for input in &inputs {
-            let var_id = self.alloc_var_id();
-            self.scopes.insert(input.name.clone(), var_id);
-            self.var_name_map.insert(input.name.clone(), var_id);
-        }
+        self.enter_fn_scope(&inputs);
 
         let body = self.lower_salt_block(&f.body);
 
@@ -200,50 +192,21 @@ impl LoweringContext {
     }
 
     /// Lower a SaltTrait to an HIR Item::Trait.
+    ///
+    /// Required methods lower with `body: None`; defaulted methods keep
+    /// their lowered bodies so an impl that omits them can inherit the
+    /// default implementation instead of failing conformance.
     fn lower_trait_item(&mut self, t: &grammar::SaltTrait) -> Option<Item> {
         let id = self.alloc_def_id();
         let name = t.name.to_string();
         let generic_names = self.collect_generic_names(&t.generics);
 
-        let items: Vec<TraitItem> = t.methods.iter().map(|m| {
-            let method_generic_names = {
-                let mut names = generic_names.clone();
-                if let Some(g) = &m.generics {
-                    for p in &g.params {
-                        match p {
-                            grammar::GenericParam::Type { name, .. } => { names.insert(name.to_string()); }
-                            grammar::GenericParam::Const { name, .. } => { names.insert(name.to_string()); }
-                        }
-                    }
-                }
-                names
-            };
-
-            let inputs: Vec<Param> = m.args.iter().map(|arg| {
-                let arg_name = arg.name.to_string();
-                let ty = arg.ty.as_ref()
-                    .and_then(|t| Type::from_syn_with_generics(t, &method_generic_names))
-                    .unwrap_or(Type::SelfType);
-                Param { name: arg_name, ty }
-            }).collect();
-
-            let output = m.ret_type.as_ref()
-                .and_then(|t| Type::from_syn_with_generics(t, &method_generic_names))
-                .unwrap_or(Type::Unit);
-
-            let method_generics = self.lower_generics(&m.generics, &method_generic_names);
-
-            TraitItem::Fn {
-                name: m.name.to_string(),
-                func: Fn {
-                    inputs,
-                    output,
-                    body: None,
-                    generics: method_generics,
-                    is_async: false,
-                },
-            }
-        }).collect();
+        let mut items: Vec<TraitItem> = t.methods.iter()
+            .map(|m| self.lower_trait_method(m.name.to_string(), &m.generics, m.args.iter(), &m.ret_type, None, &generic_names))
+            .collect();
+        for m in &t.default_methods {
+            items.push(self.lower_trait_method(m.name.to_string(), &m.generics, m.args.iter(), &m.ret_type, Some(&m.body), &generic_names));
+        }
 
         let generics = self.lower_generics(&t.generics, &generic_names);
 
@@ -254,6 +217,42 @@ impl LoweringContext {
             kind: ItemKind::Trait(Trait { generics, items }),
             span: t.name.span(),
         })
+    }
+
+    /// Lower a single trait method signature plus its optional default body.
+    fn lower_trait_method<'a>(
+        &mut self, name: String, generics: &Option<grammar::Generics>,
+        args: impl Iterator<Item = &'a grammar::Arg>, ret_type: &Option<SynType>,
+        body: Option<&'a grammar::SaltBlock>, trait_generic_names: &HashSet<String>,
+    ) -> TraitItem {
+        let method_generic_names = self.merge_generic_names(trait_generic_names, generics);
+
+        let inputs: Vec<Param> = args.map(|arg| {
+            let arg_name = arg.name.to_string();
+            let ty = arg.ty.as_ref()
+                .and_then(|t| Type::from_syn_with_generics(t, &method_generic_names))
+                .unwrap_or(Type::SelfType);
+            Param { name: arg_name, ty }
+        }).collect();
+
+        let output = ret_type.as_ref()
+            .and_then(|t| Type::from_syn_with_generics(t, &method_generic_names))
+            .unwrap_or(Type::Unit);
+
+        // Bind parameters so a default body can reference them by name.
+        self.enter_fn_scope(&inputs);
+        let lowered_body = body.map(|b| self.lower_salt_block(b));
+
+        TraitItem::Fn {
+            name,
+            func: Fn {
+                inputs,
+                output,
+                body: lowered_body,
+                generics: self.lower_generics(generics, &method_generic_names),
+                is_async: false,
+            },
+        }
     }
 
     /// Lower a SaltImpl to an HIR Item::Impl.
@@ -442,6 +441,24 @@ impl LoweringContext {
             }
         }
         names
+    }
+
+    /// Union outer (trait) and method-level generic parameter names.
+    fn merge_generic_names(&self, outer: &HashSet<String>, generics: &Option<grammar::Generics>) -> HashSet<String> {
+        let mut names = outer.clone();
+        names.extend(self.collect_generic_names(generics));
+        names
+    }
+
+    /// Start a fresh function-body scope with `inputs` bound as parameters.
+    fn enter_fn_scope(&mut self, inputs: &[Param]) {
+        self.scopes = ScopeStack::new();
+        self.next_var_id = 0;
+        for input in inputs {
+            let var_id = self.alloc_var_id();
+            self.scopes.insert(input.name.clone(), var_id);
+            self.var_name_map.insert(input.name.clone(), var_id);
+        }
     }
 
     /// Lower an optional Generics AST node into the HIR Generics representation.

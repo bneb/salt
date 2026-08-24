@@ -24,9 +24,12 @@ The compiler extracts `requires` and `ensures` expressions from the AST during t
 
 - **UNSAT**: no counterexample exists. The condition always holds. The compiler emits nothing — the check evaporates.
 - **SAT**: Z3 found a violating input. The compiler reports the specific values and stops.
-- **TIMEOUT**: Z3 couldn't decide within 100ms. The compiler counts the timeout and continues. No runtime check is emitted (this is a known gap).
+- **TIMEOUT / UNKNOWN**: Z3 couldn't decide within 100ms. The obligation is
+  deferred to a runtime assertion — your program still compiles and runs, and
+  every build prints how many checks were proven vs deferred (`Z3: n/m checks
+  proven`). Pass `--deny-deferred` to turn any deferral into a hard error for CI.
 
-The timeout is per obligation, not per compilation. A function with three `requires` clauses gets up to 300ms total (3 × 100ms). In practice, most contracts resolve in under 10ms. The runtime-assertion fallback for timeouts is planned but not yet implemented.
+The timeout is per obligation, not per compilation. A function with three `requires` clauses gets up to 300ms total (3 × 100ms). In practice, most contracts resolve in under 10ms.
 
 ## What can't Z3 prove?
 
@@ -41,7 +44,7 @@ When Z3 can't prove something, the contract becomes a runtime check. This is saf
 
 ## What's the unsafe story?
 
-Salt has `unsafe` blocks for FFI, raw pointer manipulation, and inline assembly. These are restricted to the standard library by convention — application code should never need them.
+Salt has `unsafe` blocks for FFI, raw pointer manipulation, and inline assembly. The compiler enforces where they may appear: packages outside the allowlist (the standard library, `kernel.*`, `basalt.*`) get a compile error on any `unsafe` block. Application code should never need them.
 
 Every `unsafe` function is expected to carry a `requires` contract documenting its safety preconditions. The compiler verifies these contracts at call sites. An `unsafe` function without a contract is a code review finding.
 
@@ -57,7 +60,11 @@ A Rust proc macro can't do this because it runs before monomorphization and cons
 
 ## How does performance compare to C and Rust?
 
-[Full benchmark data →](https://github.com/bneb/salt-benchmarks)
+C and Rust baselines are measured across the suite; native Salt timing is not
+yet part of that harness, so treat parity claims as goals. Salt's column today
+is compile-time Z3 verification status.
+
+[Full benchmark data →](https://github.com/bneb/salt-benchmarks) · [analysis & provenance →](../benchmarks/ANALYSIS.md)
 
 On pure compute (fib, matmul, sieve): within 20% of C, sometimes faster when LLVM auto-vectorization kicks in on Salt's strongly-typed buffers.
 

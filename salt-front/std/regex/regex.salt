@@ -60,8 +60,10 @@ impl Regex {
         }
         let start_buf: i64 = 0;
         let end_buf: i64 = 0;
-        let start_ptr = Ptr::<i64>::from_ref(&start_buf);
-        let end_ptr = Ptr::<i64>::from_ref(&end_buf);
+        // Address-of-local as out-pointers. Ptr::from_ref does not exist in
+        // std.core.ptr; ref_to_addr + explicit cast lowers to ptrtoint/inttoptr.
+        let start_ptr = ref_to_addr(&start_buf) as Ptr<i64>;
+        let end_ptr = ref_to_addr(&end_buf) as Ptr<i64>;
         let found = salt_regex_find(self.handle, text, start_ptr, end_ptr);
         if found == 1 {
             return Match { start: start_buf, end: end_buf };

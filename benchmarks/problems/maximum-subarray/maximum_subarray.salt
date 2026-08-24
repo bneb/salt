@@ -1,0 +1,65 @@
+// Maximum Subarray -- LeetCode 53: Maximum Subarray (Kadane's algorithm)
+package basalt.maximum_subarray
+
+// Expected checksum verified against the C/Rust implementations
+const EXPECTED: i64 = 8754000;
+
+import std.core.ptr.Ptr
+import std.core.arena
+
+fn lcg(x: i64) -> i64 {
+    return (1103515245 * x + 12345) % 2147483648;
+}
+
+// Fill with deterministic values in [-50, 50]
+fn fill(arr: Ptr<i32>, n: i64)
+    requires n > 0
+{
+    let mut s: i64 = 42;
+    for i in 0..n {
+        invariant i >= 0;
+        unsafe {
+            arr[i] = ((s % 101) - 50) as i32;
+        }
+        s = lcg(s);
+    }
+}
+
+// Kadane's algorithm: maximum contiguous subarray sum
+fn kadane(arr: Ptr<i32>, n: i64) -> i64
+    requires n > 0
+{
+    let mut best: i64 = -1000000000;
+    let mut cur: i64 = 0;
+    for i in 0..n {
+        invariant i >= 0;
+        unsafe {
+            let v = arr[i];
+            let cand = if cur > 0 { cur + v as i64 } else { v as i64 };
+            cur = cand;
+            if cand > best { best = cand; }
+        }
+    }
+    return best;
+}
+
+fn solve(arr: Ptr<i32>, n: i64, rounds: i64) -> i64
+    requires n > 0 && rounds > 0
+{
+    let mut checksum: i64 = 0;
+    for r in 0..rounds {
+        invariant r >= 0;
+        checksum += kadane(arr, n);
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    let n = 1000000 as i64;
+    let rounds = 200 as i64;
+    let arr = arena::alloc(n * 4) as Ptr<i32>;
+    fill(arr, n);
+    let checksum = solve(arr, n, rounds);
+    if checksum == EXPECTED { return 0; }
+    return 1;
+}

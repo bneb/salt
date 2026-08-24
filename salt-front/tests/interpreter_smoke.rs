@@ -2,7 +2,6 @@
 // control flow, and variable binding.
 use saltc::grammar::SaltFile;
 use saltc::interpreter::{Interpreter, Value};
-use syn::parse::Parse;
 
 fn run_salt(source: &str) -> Result<Value, String> {
     let file = syn::parse_str::<SaltFile>(source)

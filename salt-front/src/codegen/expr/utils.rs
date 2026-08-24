@@ -270,132 +270,18 @@ pub fn get_name_from_expr(expr: &syn::Expr) -> Option<String> {
     None
 }
 
-#[derive(Debug, Clone)]
-pub struct EnumVariantResolution {
-    pub enum_name: String,
-    pub variant_name: String,
-    pub payload_ty: Option<Type>,
-    pub discriminant: i32,
-    pub generic_args: Vec<Type>, 
-}
-
-pub fn resolve_path_to_enum(
-    ctx: &mut LoweringContext, 
-    path_str: &str, 
-    generic_args: &[Type],
-    expected_ty: Option<&Type>
-) -> Option<EnumVariantResolution> {
-    let parts: Vec<&str> = path_str.split("__").collect();
-    if parts.len() < 2 { return None; }
-    
-    let enum_name_candidate = Mangler::mangle(&parts[..parts.len()-1]);
-    let variant_name = parts.last()?;
-    
-
-    
-    // 2. Check strict Registry (already specialized)
-    if let Some(info) = ctx.enum_registry().values().find(|i| i.name == enum_name_candidate) {
-         if let Some((_, payload, disc)) = info.variants.iter().find(|(n, _, _)| n == variant_name) {
-             return Some(EnumVariantResolution {
-                 enum_name: enum_name_candidate.clone(),
-                 variant_name: variant_name.to_string(),
-                 payload_ty: payload.clone(),
-                 discriminant: *disc,
-                 generic_args: vec![],
-             });
-         }
-    }
-    
-    // 3. Check Templates (Generic)
-    let template_match = if ctx.enum_templates().contains_key(&enum_name_candidate) {
-        Some(enum_name_candidate.clone())
-    } else {
-        ctx.find_enum_template_by_name(&enum_name_candidate)
-    };
-    
-    
-    if let Some(base_template) = template_match {
-        let def = ctx.enum_templates().get(&base_template)?.clone();
-        
-        let mut _target_variant = None;
-        for v in def.variants.iter() {
-            if v.name == *variant_name {
-                _target_variant = Some(v.clone());
-                break;
-            }
-        }
-        
-
-            let mut final_generics = generic_args.to_vec();
-            
-            if let Some(exp) = expected_ty {
-                let (exp_name, exp_args) = if let Type::Enum(name) = exp {
-                    (name, vec![])
-                } else if let Type::Concrete(name, args) = exp {
-                    (name, args.clone())
-                } else {
-                    // Not an enum or concrete type, skip structural check
-                    return None;
-                };
-            
-
-
-                    
-                    // Structural Identity via Registry
-                    // Instead of string matching, check if the expected type's template_name 
-                    // matches the base_template we're resolving. This is the "Salt Way".
-                    let matches = if exp_name == &base_template {
-                        // Direct match: Result == Result
-                        true
-                    } else {
-                        // Check Registry: Is exp_name a specialization of base_template?
-                        // Look up the EnumInfo for exp_name and check its template_name field
-                        ctx.enum_registry().values()
-                            .find(|info| info.name == *exp_name)
-                            .and_then(|info| info.template_name.as_ref())
-                            .map(|template| template == &base_template)
-                            .unwrap_or(false)
-                    };
-                    
-
-                    if matches {
-                        final_generics = exp_args.clone();
-                    }
-
-                    }
-
-            
-            if !final_generics.is_empty() {
-                 // Substitute any remaining generics using the current type map
-
-                 let substituted_generics: Vec<Type> = final_generics.to_vec();
-
-                 
-
-                 
-                 let specialized_name = ctx.specialize_template(&base_template, &substituted_generics, true).ok()?.mangle();
-                 if let Some(info) = ctx.enum_registry().values().find(|i| i.name == specialized_name) {
-                     if let Some((_, payload, disc)) = info.variants.iter().find(|(n, _, _)| n == variant_name) {
-                         return Some(EnumVariantResolution {
-                             enum_name: base_template.clone(),
-                             variant_name: variant_name.to_string(),
-                             payload_ty: payload.clone(),
-                             discriminant: *disc,
-                             generic_args: substituted_generics,
-                         });
-                     }
-                 }
-            }
-    }
-
-    
-    None
-}
+pub use crate::codegen::expr::enum_ctor::{resolve_path_to_enum, EnumVariantResolution};
 
 #[cfg(test)]
 mod tests {
     #[allow(unused_imports)]
     use super::*;
+    #[allow(unused_imports)]
+    use crate::codegen::expr::enum_ctor::{ordered_complete_generics, unify_payload_pattern};
+    #[allow(unused_imports)]
+    use std::collections::BTreeMap as TestBTreeMap;
+    #[allow(unused_imports)]
+    type SynType = crate::grammar::SynType;
     
     /// Test that wildcard detection correctly identifies different import types
     #[test]
@@ -480,5 +366,37 @@ mod tests {
         
         // This should NOT match any module in registry (modules are "std.collections.vec")
         // The wildcard fix should only activate if registry.modules.get(&import_path) returns Some
+    }
+
+    #[test]
+    fn test_unify_payload_binds_generic_from_arg_type() {
+        let payload: SynType = syn::parse_str("T").expect("payload type must parse");
+        let declared = vec!["T".to_string()];
+        let mut map = TestBTreeMap::new();
+        unify_payload_pattern(&declared, &payload, &Type::I64, &mut map);
+        assert_eq!(map.get("T"), Some(&Type::I64),
+            "Payload pattern T must bind to the traced argument type I64");
+    }
+
+    #[test]
+    fn test_unify_payload_concrete_pattern_binds_nothing() {
+        let payload: SynType = syn::parse_str("i32").expect("payload type must parse");
+        let declared: Vec<String> = vec![];
+        let mut map = TestBTreeMap::new();
+        unify_payload_pattern(&declared, &payload, &Type::I64, &mut map);
+        assert!(map.is_empty(),
+            "Concrete payload patterns must not inject generic bindings");
+    }
+
+    #[test]
+    fn test_ordered_complete_generics_requires_full_coverage() {
+        let declared = vec!["A".to_string(), "B".to_string()];
+        let mut partial = TestBTreeMap::new();
+        partial.insert("A".to_string(), Type::I64);
+        assert!(ordered_complete_generics(&declared, &partial).is_empty(),
+            "Partially bound templates must yield no generics (no guessing)");
+        partial.insert("B".to_string(), Type::Bool);
+        assert_eq!(ordered_complete_generics(&declared, &partial), vec![Type::I64, Type::Bool],
+            "Fully bound templates must be projected in declaration order");
     }
 }

@@ -559,13 +559,14 @@ mod tests {
         for (from_name, from_ty) in &types {
             for (to_name, to_ty) in &types {
                 let result = try_promote(from_ty, to_ty);
-                if result.is_ok() {
-                    supported += 1;
-                } else {
-                    unsupported += 1;
-                    if from_name != to_name {
-                        failures.push(format!("{:>16} -> {:<16}: {}", 
-                            from_name, to_name, result.unwrap_err()));
+                match &result {
+                    Ok(_) => supported += 1,
+                    Err(err) => {
+                        unsupported += 1;
+                        if from_name != to_name {
+                            failures.push(format!("{:>16} -> {:<16}: {}",
+                                from_name, to_name, err));
+                        }
                     }
                 }
             }

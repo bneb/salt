@@ -10,18 +10,18 @@
         content="Salt is a systems language with an embedded Z3 theorem prover that checks preconditions and postconditions at compile time. Arena memory, MLIR codegen, and C-level performance without the usual tradeoffs.">
     <meta property="og:title" content="Salt: Systems programming, mathematically verified">
     <meta property="og:description"
-        content="A language where safety contracts are checked by Z3 at compile time. Arena memory, MLIR codegen, and matching clang -O3 on compute workloads.">
+        content="A language where safety contracts are checked by Z3 at compile time. Arena memory, MLIR codegen to native binaries.">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://salt-lang.dev">
     <meta property="og:image" content="https://salt-lang.dev/og_image.png">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Salt: Systems programming, mathematically verified">
     <meta name="twitter:description"
-        content="Preconditions and postconditions checked at compile time by Z3. Arena memory. MLIR codegen. Matching clang -O3 on compute workloads.">
+        content="Preconditions and postconditions checked at compile time by Z3. Arena memory. MLIR codegen to native binaries.">
     <meta name="twitter:image" content="https://salt-lang.dev/og_image.png">
     <meta name="twitter:title" content="Salt: Systems programming, mathematically verified">
     <meta name="twitter:description"
-        content="Preconditions and postconditions checked at compile time by Z3. Arena memory. MLIR codegen. Matching clang -O3 on compute workloads.">
+        content="Preconditions and postconditions checked at compile time by Z3. Arena memory. MLIR codegen to native binaries.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
@@ -1419,7 +1419,7 @@
         <div class="container">
             <div class="hero-badge">
                 <span class="dot"></span>
-                Salt delivers matching clang -O3 on compute workloads
+                Z3-proven contracts at compile time &middot; MLIR codegen to native binaries
             </div>
             <h1>
                 Systems programming,<br>
@@ -1926,8 +1926,10 @@
             <h2>Performance, measured honestly.</h2>
             <p class="section-sub">
                 Every benchmark uses dynamic inputs and prints results to prevent dead-code elimination.
-                Same hardware, same optimization flags, no tricks. Salt competes with
-                with <code>clang -O3</code> across functionally equivalent benchmarks (28 total).
+                Same hardware, same optimization flags, no tricks. C and Rust are timed
+                head-to-head across functionally equivalent benchmarks (23 comparable rows);
+                native Salt timing is not yet wired into the harness — Salt's column tracks
+                compile-time Z3 verification status.
             </p>
 
             <div class="bench-grid" id="benchGrid"></div>

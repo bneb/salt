@@ -13,11 +13,11 @@ import std.status.Status
 // deallocation only on previously allocated pointers
 trait Allocator {
     // Allocate a block of memory matching the layout
-    fn alloc(&self, layout: Layout) -> Result<Ptr<u8>>
+    fn alloc(&self, layout: Layout) -> Result<Ptr<u8>>;
         // requires layout.size > 0 && layout.align > 0;
 
     // Deallocate a previously allocated block
-    fn dealloc(&self, ptr: Ptr<u8>, layout: Layout)
+    fn dealloc(&self, ptr: Ptr<u8>, layout: Layout);
         // requires ptr.size >= layout.size;
 
     // Reallocate a block to a new size

@@ -112,10 +112,13 @@ impl VerificationEngine {
                 // Hard error on translation failure.
                 // If we can't translate an argument, we cannot verify the precondition.
                 // Silently substituting zero would create false positive verification.
-                return Err(format!(
-                    "FORMAL SOUNDNESS ERROR: Cannot translate argument {:?} to Z3. \
-                     Verification requires all arguments be expressible in the solver domain.",
-                    arg_expr
+                return Err(crate::errors::coded(
+                    "E009",
+                    format!(
+                        "FORMAL SOUNDNESS ERROR: Cannot translate argument {:?} to Z3. \
+                         Verification requires all arguments be expressible in the solver domain.",
+                        arg_expr
+                    )
                 ));
             }
         }
@@ -211,7 +214,7 @@ impl VerificationEngine {
                 if let Some(syn::Stmt::Expr(inner, _)) = block.block.stmts.first() {
                     inner
                 } else {
-                    return Err("Empty requires block".to_string());
+                    return Err(crate::errors::coded("E009", "Empty requires block"));
                 }
             } else {
                 req
@@ -221,9 +224,10 @@ impl VerificationEngine {
             // If the expression resolves to a concrete boolean, skip Z3 entirely.
             if let Some(value) = fold_constants::try_eval(actual_req, &known_lengths, params, arg_exprs) {
                 if let crate::evaluator::ConstValue::Bool(false) = value {
-                    return Err(
-                        "VERIFICATION ERROR: contract evaluates to false with the given arguments".to_string()
-                    );
+                    return Err(crate::errors::coded(
+                        "E009",
+                        "VERIFICATION ERROR: contract evaluates to false with the given arguments"
+                    ));
                 }
                 // Bool(true): proven at compile time, skip Z3
                 if matches!(value, crate::evaluator::ConstValue::Bool(true)) {
@@ -419,7 +423,10 @@ impl VerificationEngine {
                  }
             } else {
                 // Failed to translate requirement.
-                return Err(format!("Verification Logic Error: Could not translate requirement expression: {:?}", req));
+                return Err(crate::errors::coded(
+                    "E009",
+                    format!("Verification Logic Error: Could not translate requirement expression: {:?}", req)
+                ));
             }
         }
 
@@ -737,10 +744,13 @@ impl VerificationEngine {
                                 };
 
                                 solver.pop(1);
-                                return Err(format!(
-                                    "Postcondition violation in '{}': ensures({:?}) is not satisfied \
-                                     for all return paths.{}",
-                                    fn_name, actual_ens, ce_str
+                                return Err(crate::errors::coded(
+                                    "E009",
+                                    format!(
+                                        "Postcondition violation in '{}': ensures({:?}) is not satisfied \
+                                         for all return paths.{}",
+                                        fn_name, actual_ens, ce_str
+                                    )
                                 ));
                             }
                         }

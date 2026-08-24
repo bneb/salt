@@ -248,9 +248,9 @@ fn clamp_to_power_of_2(value: u64, max: u64) -> u64 {
 // MLIR GENERATION
 // =============================================================================
 
-/// Generate register-pinned yield check MLIR
-/// Uses llvm.read_register for x19 instead of TLS pointer chase
-/// Cost: 1 cycle (CMP against register) vs ~12 cycles (TLS load)
+// Generate register-pinned yield check MLIR
+// Uses llvm.read_register for x19 instead of TLS pointer chase
+// Cost: 1 cycle (CMP against register) vs ~12 cycles (TLS load)
 
 // =============================================================================
 // TESTS

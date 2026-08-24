@@ -102,6 +102,7 @@ fn eval_struct_fields(
 use crate::types::Type;
 use crate::codegen::context::{LoweringContext, LocalKind};
 use crate::codegen::type_bridge::*;
+use crate::codegen::types::numeric::promote_numeric;
 use crate::common::mangling::Mangler;
 use std::collections::HashMap;
 use super::{emit_expr, infer_phantom_generics};
@@ -452,6 +453,60 @@ fn resolve_enum_variant_suffix(
     Ok(None)
 }
 
+/// Imported generic enums live in registry ModuleInfos, keyed by the
+/// UNMANGLED enum name; reconstruct the fully-mangled template name,
+/// specialize it from turbofish args or the expected type, and register it.
+fn try_imported_enum_template(
+    ctx: &mut LoweringContext,
+    resolved_enum_name: &str,
+    generic_args: &[Type],
+    expected_ty: Option<&Type>,
+) -> Option<Type> {
+    let mut imported: Option<(String, crate::grammar::EnumDef)> = None;
+    if let Some(reg) = ctx.config.registry {
+        for mi in reg.modules.values() {
+            let pkg_m = mi.package.replace('.', "__");
+            for (k, def) in &mi.enum_templates {
+                let fqn = format!("{}__{}", pkg_m, k);
+                if fqn == resolved_enum_name {
+                    imported = Some((fqn, def.clone()));
+                    break;  // deterministic: first matching module wins
+                }
+            }
+        }
+    }
+    let (fqn, def) = imported?;
+    let args: Vec<Type> = if !generic_args.is_empty() {
+        generic_args.to_vec()
+    } else if let Some(Type::Concrete(_, a)) = expected_ty {
+        a.clone()
+    } else {
+        return None;  // no turbofish and no expected type: T is unbindable
+    };
+    ctx.enum_templates_mut().insert(fqn.clone(), def);
+    ctx.specialize_template(&fqn, &args, true).ok()?;
+    Some(Type::Concrete(fqn, args))
+}
+
+/// Extract explicit turbofish generic arguments (`Option::<i64>::None`).
+fn turbofish_generic_args(
+    ctx: &mut LoweringContext,
+    p: &syn::ExprPath,
+) -> Result<Vec<Type>, String> {
+    let mut generic_args = Vec::new();
+    if let Some(seg) = p.path.segments.first() {
+        if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+            for arg in &args.args {
+                if let syn::GenericArgument::Type(ty) = arg {
+                    let syn_ty = crate::grammar::SynType::from_std(ty.clone()).map_err(|e| e.to_string())?;
+                    generic_args.push(crate::codegen::type_bridge::resolve_type(ctx, &syn_ty));
+                }
+            }
+        }
+    }
+    Ok(generic_args)
+}
+
 fn resolve_enum_variant_full(
     ctx: &mut LoweringContext,
     out: &mut String,
@@ -488,27 +543,24 @@ fn resolve_enum_variant_full(
              }
          }
     }
-    let mut generic_args = Vec::new();
-    if let Some(seg) = p.path.segments.first() {
-        if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
-            for arg in &args.args {
-                if let syn::GenericArgument::Type(ty) = arg {
-                    let syn_ty = crate::grammar::SynType::from_std(ty.clone()).map_err(|e| e.to_string())?;
-                    generic_args.push(crate::codegen::type_bridge::resolve_type(ctx, &syn_ty));
-                }
-            }
-        }
-    }
-    let found_enum = if ctx.enum_registry().values().any(|i| i.name == resolved_enum_name) {
+    let generic_args: Vec<Type> = turbofish_generic_args(ctx, p)?;
+    let mut found_enum = if ctx.enum_registry().values().any(|i| i.name == resolved_enum_name) {
          Some(Type::Enum(resolved_enum_name.clone()))
     } else if ctx.enum_templates().get(&resolved_enum_name).is_some() {
          if !generic_args.is_empty() {
-             Some(Type::Concrete(resolved_enum_name.clone(), generic_args))
+             Some(Type::Concrete(resolved_enum_name.clone(), generic_args.clone()))
          } else {
              let inferred = if let Some(exp) = expected_ty {
                  if let Type::Concrete(exp_name, exp_args) = exp {
                      if exp_name == &resolved_enum_name {
                          Some(Type::Concrete(resolved_enum_name.clone(), exp_args.clone()))
+                     } else if let Some(rest) = exp_name.strip_prefix(resolved_enum_name.as_str()) {
+                         // Known mangling quirk: expected names may carry an extra
+                         // enum segment (pkg__Option__Option). The structural
+                         // prefix still identifies this template.
+                         if rest.starts_with("__") {
+                             Some(Type::Concrete(exp_name.clone(), exp_args.clone()))
+                         } else { None }
                      } else { None }
                  } else if let Type::Enum(exp_name) = exp {
                       if exp_name.starts_with(&resolved_enum_name) {
@@ -520,7 +572,16 @@ fn resolve_enum_variant_full(
              inferred.or(Some(Type::Enum(resolved_enum_name.clone())))
          }
     } else { None };
-
+    // Imported generic enums are invisible to the local template map;
+    // consult the imported-template
+    // registry and specialize from turbofish args or the expected type.
+    if found_enum.is_none() {
+        if let Some(t) =
+            try_imported_enum_template(ctx, &resolved_enum_name, generic_args.as_slice(), expected_ty)
+        {
+            found_enum = Some(t);
+        }
+    }
     if let Some(base_ty) = found_enum {
         let resolved = crate::codegen::type_bridge::resolve_codegen_type(ctx, &base_ty);
         
@@ -856,7 +917,13 @@ pub fn emit_repeat(ctx: &mut LoweringContext, out: &mut String, r: &syn::ExprRep
     Ok((current_array, array_ty))
 }
 
-pub fn emit_struct(ctx: &mut LoweringContext, out: &mut String, s: &syn::ExprStruct, local_vars: &mut HashMap<String, (Type, LocalKind)>) -> Result<(String, Type), String> {
+pub fn emit_struct(
+    ctx: &mut LoweringContext,
+    out: &mut String,
+    s: &syn::ExprStruct,
+    local_vars: &mut HashMap<String, (Type, LocalKind)>,
+    expected_ty: Option<&Type>,
+) -> Result<(String, Type), String> {
     // Convert path to Type for resolution
     let path_ty = syn::Type::Path(syn::TypePath { qself: None, path: s.path.clone() });
     let syn_ty = crate::grammar::SynType::from_std(path_ty).map_err(|e| e.to_string())?;
@@ -864,6 +931,13 @@ pub fn emit_struct(ctx: &mut LoweringContext, out: &mut String, s: &syn::ExprStr
     // Apply generic substitution for struct literals in specialized method contexts
     // This ensures RawVec in RawVec<T>::new() resolves to RawVec_u8 when T=u8
     let resolved_ty = raw_resolved_ty.substitute(ctx.current_type_map());
+
+    // An explicit expected type (e.g. from `let c: Container<i64> = ...`)
+    // is authoritative: its concrete arguments override field inference.
+    let annotated_args: Option<Vec<Type>> = expected_ty.and_then(|t| match t {
+        Type::Concrete(_, args) if !args.is_empty() => Some(args.clone()),
+        _ => None,
+    });
     
     // Check if this struct literal matches the current impl context
     // If inside RawVec<T>::new() and the struct literal is RawVec { ... },
@@ -873,15 +947,36 @@ pub fn emit_struct(ctx: &mut LoweringContext, out: &mut String, s: &syn::ExprStr
             // Check if this struct has a template in the registry
             // Use find_struct_template_by_name to get the fully-qualified name
             let template_name = ctx.find_struct_template_by_name(name);
-            if template_name.is_some() && !ctx.current_type_map().is_empty() {
-                let full_name = template_name.clone().expect("Template name must exist");
-                let _has_template = ctx.struct_templates().contains_key(&full_name);
+            if let Some(full_name) = template_name {
+                // Annotated literals take their arguments straight from the
+                // expected type; un-annotated ones infer from field expressions.
                 // Build args in template's declared generic parameter order,
                 // NOT HashMap::values() order which is non-deterministic.
                 // Without this, Vec<T, A> with {T: I64, A: HeapAllocator} could produce
                 // [HeapAllocator, I64] instead of [I64, HeapAllocator].
-                let args: Vec<Type> = infer_struct_generics(ctx, s, &full_name, local_vars);
-                if !args.is_empty() {
+                //
+                // Inference also runs with an EMPTY context type map (top-level
+                // literals like `let s = Slot { v: 7 };` in main): args come
+                // purely from field-expression types. There we require the FULL
+                // parameter set before specializing so an ambiguous literal can
+                // never be half-specialized against the wrong arity.
+                let args: Vec<Type> = match &annotated_args {
+                    Some(a) => a.clone(),
+                    None => infer_struct_generics(ctx, s, &full_name, local_vars),
+                };
+                let accepted = match &annotated_args {
+                    Some(_) => true,
+                    None => if ctx.current_type_map().is_empty() {
+                        let param_count = ctx.struct_templates().get(&full_name)
+                            .and_then(|t| t.generics.as_ref())
+                            .map(|g| g.params.len())
+                            .unwrap_or(0);
+                        !args.is_empty() && args.len() == param_count
+                    } else {
+                        !args.is_empty()
+                    },
+                };
+                if accepted {
                     Type::Concrete(full_name, args)
                 } else {
                     resolved_ty.clone()
@@ -892,11 +987,34 @@ pub fn emit_struct(ctx: &mut LoweringContext, out: &mut String, s: &syn::ExprStr
         }
         // Handle Concrete types with empty args in specialized method context
         // If we have Concrete(RawVec, []) inside RawVec<T>::new() with T=u8, produce Concrete(RawVec, [u8])
-        Type::Concrete(base, args) if args.is_empty() && !ctx.current_type_map().is_empty() => {
+        // With an EMPTY context map (top-level literal like `Slot { v: 7 };`),
+        // infer from field expressions instead — requiring the FULL parameter
+        // set so ambiguous literals can never be half-specialized.
+        Type::Concrete(base, args) if args.is_empty() => {
             // Build args in template's declared generic parameter order,
             // NOT HashMap::values() order which is non-deterministic.
-            let type_map_args: Vec<Type> = infer_struct_generics(ctx, s, base, local_vars);
-            Type::Concrete(base.clone(), type_map_args)
+            let annotated = annotated_args.clone();
+            let type_map_args: Vec<Type> = match &annotated {
+                Some(a) => a.clone(),
+                None => infer_struct_generics(ctx, s, base, local_vars),
+            };
+            if annotated.is_some() {
+                Type::Concrete(base.clone(), type_map_args)
+            } else if ctx.current_type_map().is_empty() {
+                let param_count = ctx.struct_templates().get(base)
+                    .and_then(|t| t.generics.as_ref())
+                    .map(|g| g.params.len())
+                    .unwrap_or(0);
+                if type_map_args.len() == param_count {
+                    Type::Concrete(base.clone(), type_map_args)
+                } else {
+                    resolved_ty.clone()
+                }
+            } else if !type_map_args.is_empty() {
+                Type::Concrete(base.clone(), type_map_args)
+            } else {
+                resolved_ty.clone()
+            }
         }
         _ => resolved_ty.clone(),
     };
@@ -1043,7 +1161,8 @@ pub(crate) fn emit_enum_constructor(
                  let tuple_types: Vec<Type> = if let Type::Tuple(tys) = target_payload_ty { tys.clone() } else { vec![target_payload_ty.clone()] };
                  for (i, arg) in args.iter().enumerate() {
                      let expected = tuple_types.get(i).unwrap_or(target_payload_ty);
-                     let (v, _) = emit_expr(ctx, out, arg, local_vars, Some(expected))?;
+                     let (v, v_ty) = emit_expr(ctx, out, arg, local_vars, Some(expected))?;
+                     let v = if v_ty == *expected { v } else { promote_numeric(ctx, out, &v, &v_ty, expected)? };
                      field_vals.push(v);
                  }
                  // Build the tuple value
@@ -1057,8 +1176,13 @@ pub(crate) fn emit_enum_constructor(
                  }
                  current
              } else if let Some(arg_expr) = args.first() {
-                 let (val, _ty) = emit_expr(ctx, out, arg_expr, local_vars, Some(target_payload_ty))?;
-                 val
+                 let (val, val_ty) = emit_expr(ctx, out, arg_expr, local_vars, Some(target_payload_ty))?;
+                 // Int->int widening/narrowing and int->float (sitofp)
+                 // convert here via promote_numeric; float values into
+                 // integer slots never reach this point (rejected up front
+                 // by verify_ctor_arg_types), matching promote_numeric's
+                 // fail-closed 'Numeric promotion not supported' behavior.
+                 promote_numeric(ctx, out, &val, &val_ty, target_payload_ty)?
              } else {
                  let zero_array = format!("%zero_payload_{}", ctx.next_id());
                  out.push_str(&format!("    {} = llvm.mlir.zero : {}\n", zero_array, array_mlir_ty));

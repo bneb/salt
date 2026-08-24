@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::types::{Type, TypeKey};
+    use crate::types::Type;
     use crate::codegen::types::resolution::{type_to_type_key, pick_canonical_key};
     use crate::registry::{Registry, ModuleInfo};
 

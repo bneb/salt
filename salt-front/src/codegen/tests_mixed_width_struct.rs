@@ -31,13 +31,6 @@ mod tests {
         fields_with_idx.into_iter().map(|(n, _, t)| (n, t)).collect()
     }
 
-    /// The OLD (broken) logic — iterates HashMap directly without sorting.
-    fn fields_from_struct_info_broken(fields: &HashMap<String, (usize, Type)>) -> Vec<(String, Type)> {
-        fields.iter()
-            .map(|(name, (_offset, ty))| (name.clone(), ty.clone()))
-            .collect()
-    }
-
     // =========================================================================
     // Test 1: ELF64 ElfInfo struct — exact reproduction of the kernel bug
     // =========================================================================

@@ -96,6 +96,12 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
                      return Ok((segments[1].clone(), generics));
                  }
 
+             // Qualified enum-ctor identity: canonicalize Enum::Variant to
+             // the enum's true home module (see helper doc).
+             if let Some(fqn) = self.canonicalize_enum_ctor_path(&segments) {
+                 return Ok((fqn, generics));
+             }
+
              // Package Resolution (Imports)
              if let Some((pkg, item)) = resolve_package_prefix_ctx(self.ctx, &segments) {
                  let full_name = if item.is_empty() { pkg } else { format!("{}__{}", pkg, item) };
@@ -139,6 +145,30 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
         }
     }
     
+    /// Canonicalize a two-segment `Enum::Variant` call path to the enum's
+    /// fully-qualified home (`pkg__mod__Enum__Variant`).
+    ///
+    /// Method bodies hydrated from monomorphization tasks can carry an
+    /// incomplete import set (the defining module's own wildcard imports are
+    /// not always threaded through registration), so the generic
+    /// current-package fallback mis-prefixes foreign enums with the
+    /// *calling* module. When the leading segment names a known enum
+    /// template that is neither exact-local nor defined under the current
+    /// package, resolve to its real home so dispatch uses the qualified
+    /// identity rather than a caller-local guess.
+    fn canonicalize_enum_ctor_path(&mut self, segments: &[String]) -> Option<String> {
+        if segments.len() != 2 { return None; }
+        let enum_name = &segments[0];
+        if self.ctx.enum_templates().contains_key(enum_name) { return None; }
+        let local_pkg = (*self.ctx.current_package).as_ref()?.name.iter()
+            .map(|i| i.to_string()).collect::<Vec<_>>();
+        let prefix = Mangler::mangle(&local_pkg);
+        let local_base = format!("{}__{}", prefix, enum_name);
+        if self.ctx.enum_templates().contains_key(&local_base) { return None; }
+        let home = self.ctx.find_enum_template_by_name(enum_name)?;
+        Some(format!("{}__{}", home, segments[1]))
+    }
+
     fn is_intrinsic(&mut self, name: &str) -> bool {
         name == "size_of" || name == "align_of" || name == "zeroed" || name == "unreachable" ||
         name == "popcount" || name == "ctpop" || name == "println" || name == "print" ||
@@ -163,8 +193,13 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
         name == "alloc_tensor" ||
         // Vector Intrinsics
         name == "vector_load" || name == "vector_store" || name == "vector_fma" || name == "vector_reduce_add" || name == "vector_splat" ||
-        // Target Feature Detection
-        name.starts_with("target__") ||
+        // Target Feature Detection: only the real target-pseudo-module
+        // intrinsics bypass package mangling. A prefix match would hijack
+        // every legitimately qualified symbol whose package path starts
+        // with "target." (the standard multi-module test root), sending
+        // resolved calls like target__app__mod__helper to the intrinsic
+        // dispatcher where they fail as "Intrinsic not found".
+        name == "target__has_feature" ||
         // Neural network building blocks
         name == "add_bias" ||
         // std.math → LLVM intrinsics
@@ -1039,7 +1074,12 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
              return Ok(CallKind::Intrinsic(func_name, explicit_generics));
         }
         
-        if let Some(res) = resolve_path_to_enum(self.ctx, &func_name, &explicit_generics, expected_ty) {
+        // Built once so enum-constructor inference and generic unification
+        // consume the same argument expressions without re-cloning.
+        let call_args: Vec<syn::Expr> = call.args.iter().cloned().collect();
+
+        let enum_res = resolve_path_to_enum(self.ctx, &func_name, &explicit_generics, expected_ty, &call_args, local_vars)?;
+        if let Some(res) = enum_res {
             return Ok(CallKind::EnumConstructor(res));
         }
 
@@ -1060,8 +1100,7 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
                 format!("Undefined function or symbol: '{}'", func_name)
             })?;
 
-        let args_vec: Vec<syn::Expr> = call.args.iter().cloned().collect();
-        let spec_map = self.unify_generics(&target, &explicit_generics, &args_vec, local_vars, expected_ty)?;
+        let spec_map = self.unify_generics(&target, &explicit_generics, &call_args, local_vars, expected_ty)?;
 
         let mangled_name = self.mangle_specialization(&target.base_name, &spec_map, &target.template);
 

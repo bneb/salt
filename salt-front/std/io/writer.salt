@@ -17,7 +17,7 @@ import std.core.ptr::Ptr;
 // direct write_* calls, enabling zero intermediate allocation.
 // =============================================================================
 
-pub concept Writer {
+pub trait Writer {
     // =========================================================================
     // Core Primitives (Required)
     // =========================================================================

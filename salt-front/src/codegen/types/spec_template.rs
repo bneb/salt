@@ -341,8 +341,18 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
         } else {
              let res = self.expand_template_structure(base_name, concrete_tys);
              match res {
-                 Ok(info) => { 
-                     self.struct_registry_mut().insert(key.clone(), info); 
+                 Ok(info) => {
+                     if is_deferred_struct_expansion(base_name, &info, self) {
+                         // Deferred expansion (arg-count mismatch): the template has
+                         // fields but none were resolved. Caching this stub under the
+                         // bare template name poisons every later lookup of the erased
+                         // type name (D1: field access on erased generic self-types),
+                         // so leave the registry entry absent instead.
+                         self.struct_registry_mut().remove(&key);
+                         self.monomorphizer_mut().pending_set.remove(&mangled);
+                         return Ok(key);
+                     }
+                     self.struct_registry_mut().insert(key.clone(), info);
                  }
                  Err(e) => {
                      self.struct_registry_mut().remove(&key);
@@ -370,4 +380,20 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
         Ok(key)
     }
 
+}
+
+/// True when `expand_template_structure` deferred expansion because the
+/// requested argument count did not match the template's parameter count.
+/// Such results carry no resolved fields even though the template defines
+/// some, and must never be cached as a concrete registry entry.
+fn is_deferred_struct_expansion(
+    base_name: &str,
+    info: &StructInfo,
+    ctx: &LoweringContext<'_, '_>,
+) -> bool {
+    if !info.fields.is_empty() { return false; }
+    ctx.struct_templates()
+        .get(base_name)
+        .map(|t| !t.fields.is_empty())
+        .unwrap_or(false)
 }

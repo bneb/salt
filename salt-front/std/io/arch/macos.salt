@@ -4,7 +4,6 @@
 package std.io.arch.macos
 
 import std.core.ptr::Ptr;
-import std.core.mem;
 
 // macOS Darwin syscall constants
 const SYSCALL_WRITE: i64 = 4;
@@ -28,8 +27,16 @@ impl MacWriter {
     // Write bytes to buffer, flush if full
     pub fn write_bytes(&mut self, data: Ptr<u8>, data_len: usize) {
         if self.len + data_len < BUFFER_SIZE {
-            // Fast path: copy to buffer (zero syscall overhead)
-            mem::copy(self.buf.ptr().offset(self.len as i64), data, data_len);
+            // Fast path: copy to buffer (zero syscall overhead).
+            // Byte-wise copy through array indexing: core.mem exposes no
+            // copy helper and chained pointer arithmetic into a temporary
+            // array view is not supported by the emitter.
+            let start = self.len;
+            let mut i: usize = 0;
+            while i < data_len {
+                self.buf[start + i] = data.index(i as i64);
+                i += 1;
+            }
             self.len += data_len;
         } else {
             // Buffer full: flush existing and write remaining
@@ -38,7 +45,11 @@ impl MacWriter {
                 // Large write: bypass buffer
                 self.direct_syscall(data, data_len);
             } else {
-                mem::copy(self.buf.ptr(), data, data_len);
+                let mut i: usize = 0;
+                while i < data_len {
+                    self.buf[i] = data.index(i as i64);
+                    i += 1;
+                }
                 self.len = data_len;
             }
         }
@@ -47,7 +58,10 @@ impl MacWriter {
     // Flush buffer to stdout via Darwin syscall
     pub fn flush(&mut self) {
         if self.len > 0 {
-            self.direct_syscall(self.buf.ptr(), self.len);
+            // Array fields expose no .ptr() method; take the address of the
+            // first element instead.
+            let base = ref_to_addr(&self.buf[0]) as Ptr<u8>;
+            self.direct_syscall(base, self.len);
             self.len = 0;
         }
     }

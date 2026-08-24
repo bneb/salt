@@ -133,7 +133,8 @@ impl VfsConnection {
         let id = self.push_command(OP_MKDIR, 0, 0, path as u64);
         let comp = self.wait_completion(id);
         if comp.status < 0 {
-            return Result::Err(map_status(comp.status));
+            let mapped = map_status(comp.status);
+            return Result::Err(mapped);
         }
         return Result::Ok(0);
     }

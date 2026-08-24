@@ -2,7 +2,7 @@ use crate::types::Type;
 use crate::codegen::context::{LoweringContext, LocalKind};
 use crate::codegen::expr::emit_expr;
 use std::collections::HashMap;
-use crate::codegen::intrinsics::memory_ops::{emit_ptr_write, emit_from_ref};
+use crate::codegen::intrinsics::memory_ops::{emit_ptr_write, emit_ptr_write_at, emit_from_ref};
 
 pub fn emit_memory_intrinsic(
     ctx: &mut LoweringContext,
@@ -25,6 +25,7 @@ pub fn emit_memory_intrinsic(
         n if n.contains("ptr_is_null") || n == "is_null" => emit_ptr_is_null(ctx, out, args, local_vars),
         n if n.contains("ptr_offset") => emit_ptr_offset(ctx, out, args, local_vars),
         n if n.contains("ptr_read") => emit_ptr_read(ctx, out, args, local_vars),
+        n if n.contains("ptr_write_at") => emit_ptr_write_at(ctx, out, args, local_vars),
         n if n.contains("ptr_write") => emit_ptr_write(ctx, out, args, local_vars),
         n if n.contains("from_ref") => emit_from_ref(ctx, out, args, local_vars, expected_ty),
         _ => Ok(None),

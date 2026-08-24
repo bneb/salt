@@ -181,7 +181,6 @@ impl TraitRegistry {
     }
     
     /// Register a trait definition from parsed grammar.
-    /// Convenience method that takes simpler arguments from emit_trait.
     pub fn register_trait_def(
         &mut self, 
         name: String, 
@@ -395,20 +394,45 @@ impl TraitRegistry {
     
     /// Find a method by matching receiver type name/mangle and method name.
     /// Used for hydration where the exact TypeKey is unavailable.
+    ///
+    /// Qualified identity first: when `type_name` is a fully-qualified
+    /// receiver mangle (`pkg__mod__Type`), only receivers whose mangled
+    /// name equals it qualify, so two same-named types in different
+    /// modules never cross-resolve. Bare-name matching remains as the
+    /// fallback for callers that genuinely lack path context.
     pub fn find_method_by_name(
         &self,
         type_name: &str,
         method_name: &str,
         self_ty: &Type,
     ) -> Option<(SaltFn, Option<Type>, Vec<ImportDecl>)> {
-        for (key, method) in &self.method_index {
-            let matches_type = key.receiver_type.mangle() == type_name 
-                || key.receiver_type.name == type_name;
-            if matches_type && key.method_name == method_name {
-                return Some((method.func.clone(), Some(self_ty.clone()), method.imports.clone()));
-            }
-        }
-        None
+        self.pick_method_by_identity(type_name, method_name)
+            .map(|method| (method.func.clone(), Some(self_ty.clone()), method.imports.clone()))
+    }
+
+    /// Qualified identity resolution over receiver + method name.
+    ///
+    /// Every candidate matching either identity arm is collected and ranked
+    /// so the choice stays deterministic where several modules register
+    /// same-named types: an exact fully-qualified receiver match (mangled
+    /// pkg__mod__Type) always outranks a bare-name match, and equal ranks
+    /// are broken by receiver mangle. Callers without any path context
+    /// keep working through the bare-name rank.
+    fn pick_method_by_identity(&self, type_name: &str, method_name: &str) -> Option<&ResolvedMethod> {
+        let mut ranked: Vec<(u8, String, &ResolvedMethod)> = self.method_index.iter()
+            .filter_map(|(key, method)| {
+                if key.method_name != method_name { return None; }
+                if key.receiver_type.mangle() == type_name {
+                    Some((0u8, key.receiver_type.mangle(), method))
+                } else if key.receiver_type.name == type_name {
+                    Some((1u8, key.receiver_type.mangle(), method))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        ranked.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        ranked.first().map(|(_, _, method)| *method)
     }
 }
 
@@ -595,5 +619,77 @@ mod tests {
         
         assert!(result.is_some(), 
             "find_method_by_name for 'hash' on 'i64' should succeed");
+    }
+    
+    // =========================================================================
+    // Qualified Trait Identity: same-named types across modules
+    // =========================================================================
+
+    /// Register greet() under (path, name) and return the registry.
+    fn registry_with_greet(path: &[&str], type_name: &str, body_name: &str) -> TraitRegistry {
+        let mut registry = TraitRegistry::new();
+        let key = TypeKey {
+            path: path.iter().map(|s| s.to_string()).collect(),
+            name: type_name.to_string(),
+            specialization: None,
+        };
+        registry.register_method(
+            MethodKey::new(key, "greet".into(), &[]),
+            ResolvedMethod {
+                func: mock_salt_fn(body_name),
+                self_ty: Some(Type::Struct(type_name.to_string())),
+                imports: vec![],
+            },
+        );
+        registry
+    }
+
+    #[test]
+    fn qualified_type_name_resolves_to_its_own_module_impl() {
+        let registry = registry_with_greet(&["alpha"], "Config", "greet_alpha");
+
+        let result = registry.find_method_by_name("alpha__Config", "greet", &Type::Unit);
+
+        assert!(result.is_some(), "qualified lookup must find the alpha impl");
+        assert_eq!(result.unwrap().0.name.to_string(), "greet_alpha",
+            "qualified identity must resolve to the alpha module impl");
+    }
+
+    #[test]
+    fn same_named_types_in_different_modules_never_cross_resolve() {
+        let mut registry = registry_with_greet(&["alpha", "cfg"], "Config", "greet_alpha");
+        let beta_key = TypeKey {
+            path: vec!["beta".to_string(), "cfg".to_string()],
+            name: "Config".to_string(),
+            specialization: None,
+        };
+        registry.register_method(
+            MethodKey::new(beta_key, "greet".into(), &[]),
+            ResolvedMethod {
+                func: mock_salt_fn("greet_beta"),
+                self_ty: Some(Type::Struct("Config".to_string())),
+                imports: vec![],
+            },
+        );
+
+        let alpha = registry.find_method_by_name("alpha__cfg__Config", "greet", &Type::Unit)
+            .expect("alpha lookup must succeed");
+        let beta = registry.find_method_by_name("beta__cfg__Config", "greet", &Type::Unit)
+            .expect("beta lookup must succeed");
+
+        assert_eq!(alpha.0.name.to_string(), "greet_alpha",
+            "fully-qualified alpha name must not resolve into beta's impl");
+        assert_eq!(beta.0.name.to_string(), "greet_beta",
+            "fully-qualified beta name must not resolve into alpha's impl");
+    }
+
+    #[test]
+    fn bare_name_fallback_still_resolves_for_pathless_callers() {
+        let registry = registry_with_greet(&["alpha"], "Config", "greet_alpha");
+
+        let result = registry.find_method_by_name("Config", "greet", &Type::Unit);
+
+        assert!(result.is_some(),
+            "callers without path context keep the bare-name fallback");
     }
 }

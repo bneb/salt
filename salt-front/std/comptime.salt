@@ -1,6 +1,15 @@
 // Salt Standard Library: Comptime Module
 // Provides compile-time token manipulation for string prefixes (f"...", sql"...", etc.)
 
+package std.comptime
+
+import std.string.String;
+import std.collections.vec.Vec;
+import std.mem.allocator.HeapAllocator;
+
+// Fatal-error protocol: matches std.core.option / std.core.result convention.
+extern fn exit(code: i32);
+
 /// Span represents a source location for error reporting
 struct Span {
     start: i64,
@@ -69,7 +78,7 @@ impl Token {
 
 /// TokenStream holds a sequence of tokens from a prefixed string
 struct TokenStream {
-    tokens: Vec<Token>,
+    tokens: Vec<Token, HeapAllocator>,
     prefix: String,  // e.g., "f", "sql", "regex"
 }
 
@@ -77,7 +86,7 @@ impl TokenStream {
     /// Create a new empty token stream
     pub fn new(prefix: String) -> TokenStream {
         return TokenStream {
-            tokens: Vec::new(),
+            tokens: Vec::<Token, HeapAllocator>::new(HeapAllocator { _pad: 0 }, 16),
             prefix: prefix,
         };
     }
@@ -89,12 +98,14 @@ impl TokenStream {
     
     /// Get the number of tokens
     pub fn len(&self) -> i64 {
-        return self.tokens.len();
+        let t = self.tokens;
+        return t.len;
     }
     
     /// Check if empty
     pub fn is_empty(&self) -> bool {
-        return self.tokens.len() == 0;
+        let t = self.tokens;
+        return t.len == 0;
     }
 }
 
@@ -119,7 +130,7 @@ impl FormatSpec {
     pub fn float_precision(p: i64) -> FormatSpec {
         return FormatSpec {
             precision: p,
-            format_type: String::from("f"),
+            format_type: String::from_literal("f", 1),
             is_default: false,
         };
     }
@@ -128,7 +139,7 @@ impl FormatSpec {
     pub fn hex() -> FormatSpec {
         return FormatSpec {
             precision: 0,
-            format_type: String::from("x"),
+            format_type: String::from_literal("x", 1),
             is_default: false,
         };
     }
@@ -137,7 +148,7 @@ impl FormatSpec {
     pub fn binary() -> FormatSpec {
         return FormatSpec {
             precision: 0,
-            format_type: String::from("b"),
+            format_type: String::from_literal("b", 1),
             is_default: false,
         };
     }
@@ -147,9 +158,21 @@ impl FormatSpec {
 // TOKENIZER
 // ============================================================================
 
+/// Byte-for-byte copy of a String. Salt Strings have no Clone impl, so
+/// tokenizer flush points duplicate their accumulator explicitly.
+fn copy_string(src: String) -> String {
+    var out = String::new();
+    var i: i64 = 0;
+    while i < src.len {
+        out.push_byte(src.as_ptr().offset(i).read());
+        i = i + 1;
+    }
+    return out;
+}
+
 /// Tokenize a string literal content for comptime processing.
 /// Input: "Hello {name}! Value: {x:.2f}"
-/// Output: TokenStream with [Literal("Hello "), Expr("name"), Literal("! Value: "), Expr("x:.2f")]
+/// Output: TokenStream with [Literal("Hello "), Expr("name"), ...]
 pub fn tokenize(prefix: String, content: String) -> TokenStream {
     var stream = TokenStream::new(prefix);
     var current_text = String::new();
@@ -157,28 +180,21 @@ pub fn tokenize(prefix: String, content: String) -> TokenStream {
     var in_expr = false;
     var expr_start: i64 = 0;
     var brace_depth: i64 = 0;
-    
-    // Simple character-by-character tokenization
-    // Full implementation would use actual iterator, but for now we use indices
-    let len = content.len();
-    
-    while pos < len {
-        let c = content.char_at(pos);
+    while pos < content.len() {
+        let c = content.as_ptr().offset(pos).read();
         
-        if c == '{' && !in_expr {
+        if c == 123 && !in_expr {  // '{'
             // Check for escaped brace {{
-            if pos + 1 < len && content.char_at(pos + 1) == '{' {
-                current_text.push('{');
+            if pos + 1 < content.len() && content.as_ptr().offset(pos + 1).read() == 123 {
+                current_text.push_byte(123);
                 pos = pos + 2;
                 continue;
             }
-            
             // Flush current literal
             if current_text.len() > 0 {
-                stream.push(Token::literal(current_text.clone(), pos - current_text.len(), pos));
+                stream.push(Token::literal(copy_string(current_text), pos - current_text.len(), pos));
                 current_text = String::new();
             }
-            
             in_expr = true;
             expr_start = pos + 1;
             brace_depth = 1;
@@ -186,11 +202,16 @@ pub fn tokenize(prefix: String, content: String) -> TokenStream {
             continue;
         }
         
-        if c == '}' && in_expr {
+        if c == 125 && in_expr {  // '}'
             brace_depth = brace_depth - 1;
             if brace_depth == 0 {
-                // End of expression
-                let expr_text = content.substring(expr_start, pos);
+                // End of expression: copy expr_start..pos into a fresh String
+                var expr_text = String::new();
+                var k = expr_start;
+                while k < pos {
+                    expr_text.push_byte(content.as_ptr().offset(k).read());
+                    k = k + 1;
+                }
                 stream.push(Token::expr(expr_text, expr_start, pos));
                 in_expr = false;
                 pos = pos + 1;
@@ -198,23 +219,20 @@ pub fn tokenize(prefix: String, content: String) -> TokenStream {
             }
         }
         
-        if c == '{' && in_expr {
+        if c == 123 && in_expr {  // nested '{'
             brace_depth = brace_depth + 1;
         }
         
-        if c == '}' && !in_expr {
-            // Check for escaped brace }}
-            if pos + 1 < len && content.char_at(pos + 1) == '}' {
-                current_text.push('}');
+        if c == 125 && !in_expr {  // escaped brace }}
+            if pos + 1 < content.len() && content.as_ptr().offset(pos + 1).read() == 125 {
+                current_text.push_byte(125);
                 pos = pos + 2;
                 continue;
             }
         }
         
-        if in_expr {
-            // Part of expression, handled when we see closing brace
-        } else {
-            current_text.push(c);
+        if !in_expr {
+            current_text.push_byte(c);
         }
         
         pos = pos + 1;
@@ -222,7 +240,7 @@ pub fn tokenize(prefix: String, content: String) -> TokenStream {
     
     // Flush remaining literal
     if current_text.len() > 0 {
-        stream.push(Token::literal(current_text.clone(), pos - current_text.len(), pos));
+        stream.push(Token::literal(copy_string(current_text), pos - current_text.len(), pos));
     }
     
     return stream;
@@ -233,8 +251,8 @@ pub fn tokenize(prefix: String, content: String) -> TokenStream {
 // This demonstrates that the compiler now asks the Standard Library for help
 // instead of hardcoding magic text transformations.
 //
-// hex"DEADBEEF" → Vec::<u8>::from_array([0xDE, 0xAD, 0xBE, 0xEF])
-// hex"41 42 43" → Vec::<u8>::from_array([0x41, 0x42, 0x43])
+// hex"DEADBEEF" -> Vec::<u8>::from_array([0xDE, 0xAD, 0xBE, 0xEF])
+// hex"41 42 43" -> Vec::<u8>::from_array([0x41, 0x42, 0x43])
 //
 // The actual expansion currently uses native Rust code (native_hex_expand),
 // but this Salt source serves as the specification for future pure-Salt
@@ -244,43 +262,48 @@ pub fn tokenize(prefix: String, content: String) -> TokenStream {
 /// [SPEC] Hex string prefix handler
 /// Takes hex characters and produces a Vec<u8> initialization
 #[string_prefix("hex")]
-pub comptime fn hex_handler(tokens: Vec<Token>) -> String {
+pub comptime fn hex_handler(tokens: Vec<Token, HeapAllocator>) -> String {
     // 1. Validation: Ensure we only have one string literal token
-    if tokens.len() != 1 {
-        panic("hex prefix expects a single string literal");
+    if tokens.len != 1 {
+        println("Panic: hex prefix expects a single string literal");
+        exit(1);
     }
 
-    let raw_hex = tokens[0].text;
+    // Length was validated above; fetch the single token directly.
+    let raw_hex = tokens.get_unchecked(0).text;
     
     // Strip whitespace separators (allow hex"AA BB CC")
     let mut clean_hex = String::new();
     let mut i = 0;
     while i < raw_hex.len() {
-        let c = raw_hex.char_at(i);
-        if c != ' ' && c != '\t' && c != '\n' {
-            clean_hex.push(c);
+        let c = raw_hex.as_ptr().offset(i).read();
+        if c != 32 && c != 9 && c != 10 {  // space, tab, newline
+            clean_hex.push_byte(c);
         }
         i = i + 1;
     }
     
     // 2. Geometry Check: Hex must be in pairs
     if clean_hex.len() % 2 != 0 {
-        panic(f"Invalid hex length: {clean_hex.len()}. Must be even.");
+        println("Panic: invalid hex length, must be even");
+        exit(1);
     }
 
     // 3. Code Generation: Build the Salt source for Vec<u8>
-    let mut code = "Vec::<u8>::from_array([".to_string();
+    let mut code = String::new();
+    code.push_cstr("Vec::<u8>::from_array([");
     
     let mut j = 0;
     while j < clean_hex.len() {
-        let byte_str = clean_hex.substring(j, j + 2);
-        code = code + "0x" + byte_str + ", ";
+        code.push_cstr("0x");
+        code.push_byte(clean_hex.as_ptr().offset(j).read());
+        code.push_byte(clean_hex.as_ptr().offset(j + 1).read());
+        code.push_cstr(", ");
         j = j + 2;
     }
     
-    code = code + "])";
+    code.push_cstr("])");
     
     // 4. Return the generated code for re-parsing
     return code;
 }
-
