@@ -22,7 +22,7 @@
 //! dir), exactly like production module loading.
 
 use crate::codegen::module_loader::ModuleLoader;
-use crate::codegen::trait_defaults::expand_trait_defaults;
+use crate::codegen::trait_defaults::{expand_trait_defaults, OverrideObligation};
 use crate::grammar::{Item, SaltFile, SaltImpl};
 use crate::registry::Registry;
 
@@ -412,5 +412,58 @@ mod import_binding {
             }
         }
         names
+    }
+}
+
+#[cfg(test)]
+mod contract_inheritance {
+    //! Stage-1 contract inheritance: an override dropping requires or
+    //! ensures clauses its default carried yields an OverrideObligation
+    //! (drained as a hard [E009] by emit_mlir).
+
+    use super::*;
+
+    fn expand(src: &str) -> Vec<OverrideObligation> {
+        let mut file = parse(src);
+        expand_trait_defaults(&mut file, &mut ModuleLoader::new(vec![]), &mut Registry::new())
+    }
+
+    #[test]
+    fn override_dropping_requires_yields_obligation() {
+        let obligations = expand(r#"
+            package main
+
+            trait Guarded {
+                fn wrapped(&self, k: i64) -> i64 requires(k > 0) { return k; }
+            }
+
+            struct Thing { v: i64 }
+
+            impl Guarded for Thing {
+                fn wrapped(&self, k: i64) -> i64 { return k; }
+            }
+        "#);
+        assert_eq!(obligations.len(), 1, "dropped requires must obligate");
+        assert_eq!(obligations[0].trait_name, "Guarded");
+        assert_eq!(obligations[0].method, "wrapped");
+        assert_eq!(obligations[0].dropped_ensures, 0);
+    }
+
+    #[test]
+    fn conformant_override_yields_no_obligation() {
+        let obligations = expand(r#"
+            package main
+
+            trait Guarded {
+                fn wrapped(&self, k: i64) -> i64 requires(k > 0) { return k; }
+            }
+
+            struct Thing { v: i64 }
+
+            impl Guarded for Thing {
+                fn wrapped(&self, k: i64) -> i64 requires(k > 0) { return k * 2; }
+            }
+        "#);
+        assert!(obligations.is_empty(), "strengthening override is legal");
     }
 }

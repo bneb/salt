@@ -32,6 +32,17 @@ use super::module_loader::ModuleLoader;
 /// Namespace-qualified trait identity: `<package path>.<trait name>`.
 type QualifiedId = String;
 
+/// An override whose contract dropped clauses the default carried.
+/// Stage-1 record (clause counts); stage-2 replaces counts with the
+/// clause Exprs for Z3 refinement.
+#[derive(Debug)]
+pub struct OverrideObligation {
+    pub trait_name: String,
+    pub method: String,
+    pub dropped_requires: usize,
+    pub dropped_ensures: usize,
+}
+
 /// Indexes default method tables for every loaded source.
 ///
 /// `by_bare_name` mirrors `by_qualified` for files that refer to a trait
@@ -188,7 +199,7 @@ pub fn expand_trait_defaults(
     file: &mut SaltFile,
     loader: &mut ModuleLoader,
     registry: &mut Registry,
-) {
+) -> Vec<OverrideObligation> {
     // Sorted namespaces keep collection deterministic; the entry file's
     // defaults join the table last under its own package identity.
     let mut namespaces: Vec<String> = loader.loaded_files.keys().cloned().collect();
@@ -205,26 +216,33 @@ pub fn expand_trait_defaults(
 
     // Each file expands against ITS OWN resolution of trait names, so
     // same-named traits in different modules never cross-inherit.
+    let mut obligations = Vec::new();
     for ns in &namespaces {
         if let Some(ast) = loader.loaded_files.get_mut(ns) {
-            expand_file(ast, &table.resolution_for(ast, ns, &entry_ns));
+            obligations.extend(expand_file(ast, &table.resolution_for(ast, ns, &entry_ns)));
         }
     }
-    expand_file(file, &table.resolution_for(file, &entry_ns, &entry_ns));
+    obligations.extend(expand_file(file, &table.resolution_for(file, &entry_ns, &entry_ns)));
 
     // Module impls were snapshotted into ModuleInfo::impls at load time,
     // before expansion; re-copy them so registry-driven registration sees
     // the completed method sets.
     loader.refresh_impl_snapshots(registry);
+    obligations
 }
 
 /// Append omitted defaults to every trait impl in one file.
-fn expand_file(file: &mut SaltFile, resolved: &HashMap<String, &Vec<SaltFn>>) {
+fn expand_file(
+    file: &mut SaltFile,
+    resolved: &HashMap<String, &Vec<SaltFn>>,
+) -> Vec<OverrideObligation> {
+    let mut obligations = Vec::new();
     for item in &mut file.items {
         if let Item::Impl(SaltImpl::Trait { trait_name, methods, .. }) = item {
-            inherit_into(trait_name, methods, resolved);
+            obligations.extend(inherit_into(trait_name, methods, resolved));
         }
     }
+    obligations
 }
 
 /// Append clones of the trait's defaults that the impl does not provide,
@@ -233,12 +251,32 @@ fn inherit_into(
     trait_name: &syn::Ident,
     methods: &mut Vec<SaltFn>,
     resolved: &HashMap<String, &Vec<SaltFn>>,
-) {
-    let Some(defaults) = resolved.get(&trait_name.to_string()) else { return };
+) -> Vec<OverrideObligation> {
+    let Some(defaults) = resolved.get(&trait_name.to_string()) else { return Vec::new() };
     let provided: HashSet<String> = methods.iter().map(|m| m.name.to_string()).collect();
+    let mut obligations = Vec::new();
     for default_fn in defaults.iter() {
+        let override_fn = methods.iter().find(|m| m.name == default_fn.name);
+        // Contract inheritance, stage 1: an override dropping clauses the
+        // default carried is recorded as an obligation. Presence-only
+        // compare -- semantic refinement is stage 2 (Z3).
+        if let Some(ovr) = override_fn {
+            let dropped_requires =
+                default_fn.requires.len().saturating_sub(ovr.requires.len());
+            let dropped_ensures =
+                default_fn.ensures.len().saturating_sub(ovr.ensures.len());
+            if dropped_requires > 0 || dropped_ensures > 0 {
+                obligations.push(OverrideObligation {
+                    trait_name: trait_name.to_string(),
+                    method: default_fn.name.to_string(),
+                    dropped_requires,
+                    dropped_ensures,
+                });
+            }
+        }
         if !provided.contains(&default_fn.name.to_string()) {
             methods.push(default_fn.clone());
         }
     }
+    obligations
 }
