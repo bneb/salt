@@ -1,0 +1,22 @@
+// Fixture: trait default with a requires clause, defined in a MODULE,
+// implemented here, enforced at CALL SITES in other modules.
+package tests.fixtures.contract_xmod.guarded
+
+pub struct Widget {
+    v: i64,
+}
+
+pub trait Guarded {
+    fn core(&self, k: i64) -> i64;
+    fn wrapped(&self, k: i64) -> i64
+        requires(k > 0)
+    {
+        return self.core(k);
+    }
+}
+
+impl Guarded for Widget {
+    fn core(&self, k: i64) -> i64 {
+        return k + self.v;
+    }
+}
