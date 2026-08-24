@@ -134,16 +134,22 @@ fn trace_call(ctx: &LoweringContext, c: &syn::ExprCall, locals: &BTreeMap<String
     // Last segment's turbofish args bind the fn's own generic params
     // positionally; without this, `Pair::<i64>::swapped_with::<f32>(7)`
     // traces as raw placeholder `U`/`T` and later casts reject.
-    let fn_turbofish: Vec<Type> = p.path.segments.last().and_then(|seg| {
+    // Const/type args from ALL segments, in order: struct-level params
+    // (first segment, e.g. Cache::<64>) precede method-level ones. Leftover
+    // return-type placeholders bind positionally against this list.
+    let fn_turbofish: Vec<Type> = p.path.segments.iter().flat_map(|seg| {
         if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
-            Some(args.args.iter().filter_map(|g| match g {
+            args.args.iter().filter_map(|g| match g {
                 syn::GenericArgument::Type(t) =>
                     crate::grammar::SynType::from_std(t.clone()).ok()
                         .and_then(|st| Type::from_syn(&st)),
+                syn::GenericArgument::Const(syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Int(li), .. })) =>
+                    li.base10_parse::<i64>().ok().map(|v| Type::Struct(v.to_string())),
                 _ => None,
-            }).collect())
-        } else { None }
-    }).unwrap_or_default();
+            }).collect::<Vec<_>>()
+        } else { Vec::new() }
+    }).collect();
     // Signature lookups yield the whole Type::Fn; a call's traced type is
     // its RETURN type. (Before payload conformance consumed traced types
     // strictly, this path leaked full signatures and callers deferred.)

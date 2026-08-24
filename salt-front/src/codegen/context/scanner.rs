@@ -195,11 +195,20 @@ impl<'a> CodegenContext<'a> {
     ) {
         for m in methods {
             let name = format!("{}__{}", target_mangled, m.name);
+            // Parse with IMPL generic names in context so placeholders stay
+            // substitutable (see handoff note WS-2).
+            let gen_names: std::collections::HashSet<String> = generics.as_ref()
+                .map(|g| g.params.iter().map(|p| match p {
+                    crate::grammar::GenericParam::Type { name, .. } => name.to_string(),
+                    crate::grammar::GenericParam::Const { name, .. } => name.to_string(),
+                }).collect())
+                .unwrap_or_default();
             let ret_ty = m.ret_type.as_ref()
-                .and_then(Type::from_syn)
+                .and_then(|rt| Type::from_syn_with_generics(rt, &gen_names))
                 .unwrap_or(Type::Unit);
             let args: Vec<Type> = m.args.iter()
-                .filter_map(|arg| arg.ty.as_ref().and_then(Type::from_syn))
+                .filter_map(|arg| arg.ty.as_ref()
+                    .and_then(|t| Type::from_syn_with_generics(t, &gen_names)))
                 .collect();
             self.globals_mut().insert(
                 name.clone(),
