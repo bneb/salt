@@ -9,13 +9,170 @@
 //! omitted defaults are appended to the impl's method list so all
 //! consumers see a complete, override-resolved method set. An explicit
 //! impl method always wins over the default it overrides.
+//!
+//! Defaults are keyed by NAMESPACE-QUALIFIED trait identity
+//! (`<package path>.<trait name>`), never by the bare name alone: two
+//! modules may legally define same-named traits, and bare-name keying
+//! made their implementors cross-inherit whichever body was collected
+//! last. Each impl block is matched against defaults through the eyes
+//! of the FILE CONTAINING IT — local trait definitions first, then the
+//! file's own imports, then a global fallback that preserves the
+//! historical entry-file-wins collision policy.
+//!
+//! Tests: `codegen::tests_trait_defaults` (unit + loader level) and
+//! `tests/trait_defaults_namespace_collision_test.rs` (end-to-end).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::grammar::{Item, SaltFile, SaltFn, SaltImpl};
+use crate::grammar::{ImportDecl, Item, SaltFile, SaltFn, SaltImpl};
 use crate::registry::Registry;
 
 use super::module_loader::ModuleLoader;
+
+/// Namespace-qualified trait identity: `<package path>.<trait name>`.
+type QualifiedId = String;
+
+/// Indexes default method tables for every loaded source.
+///
+/// `by_bare_name` mirrors `by_qualified` for files that refer to a trait
+/// without a qualifying import; it exists only so the fallback resolver
+/// can enumerate candidates deterministically.
+#[derive(Default)]
+struct DefaultTable {
+    /// Qualified id -> default methods declared by that exact trait.
+    by_qualified: HashMap<QualifiedId, Vec<SaltFn>>,
+    /// Bare trait name -> qualified ids declaring it (modules in sorted
+    /// collection order, entry file appended last).
+    by_bare_name: BTreeMap<String, Vec<QualifiedId>>,
+}
+
+impl DefaultTable {
+    /// Indexes one file's trait defaults under `ns`, the file's package
+    /// path. Re-declaration inside one file keeps last-wins semantics,
+    /// matching the previous single-table behavior.
+    fn collect(&mut self, file: &SaltFile, ns: &str) {
+        for item in &file.items {
+            let Item::Trait(t) = item else { continue };
+            if t.default_methods.is_empty() {
+                continue;
+            }
+            let name = t.name.to_string();
+            let qualified = qualified_id(ns, &name);
+            if self.by_qualified.insert(qualified.clone(), t.default_methods.clone()).is_none() {
+                self.by_bare_name.entry(name).or_default().push(qualified);
+            }
+        }
+    }
+
+    /// Resolves every known bare trait name from ONE file's perspective,
+    /// yielding bare name -> the defaults its impl blocks inherit.
+    fn resolution_for<'a>(
+        &'a self,
+        file: &SaltFile,
+        ns: &str,
+        entry_ns: &str,
+    ) -> HashMap<String, &'a Vec<SaltFn>> {
+        let mut resolved = HashMap::new();
+        for bare in self.by_bare_name.keys() {
+            if let Some(defaults) = self.resolve_one(file, ns, entry_ns, bare) {
+                resolved.insert(bare.clone(), defaults);
+            }
+        }
+        resolved
+    }
+
+    /// Binding precedence for one bare name: a trait defined in this very
+    /// file, then a trait reachable through this file's own imports, then
+    /// the global collision fallback.
+    fn resolve_one<'a>(
+        &'a self,
+        file: &SaltFile,
+        ns: &str,
+        entry_ns: &str,
+        bare: &str,
+    ) -> Option<&'a Vec<SaltFn>> {
+        if file_defines_trait(file, bare) {
+            return self.by_qualified.get(&qualified_id(ns, bare));
+        }
+        if let Some(via_import) = self.resolve_via_imports(file, bare) {
+            return Some(via_import);
+        }
+        self.resolve_globally(ns, entry_ns, bare)
+    }
+
+    /// Follows the file's own `use` declarations. Every prefix of an
+    /// import path is a candidate namespace, longest first, so both
+    /// `use p.m.Trait` (item import) and `use p.m` (module import) bind
+    /// correctly and an item import outranks its parent package.
+    fn resolve_via_imports<'a>(&'a self, file: &SaltFile, bare: &str) -> Option<&'a Vec<SaltFn>> {
+        for imp in &file.imports {
+            for candidate in import_candidate_ids(imp, bare) {
+                if let Some(defaults) = self.by_qualified.get(&candidate) {
+                    return Some(defaults);
+                }
+            }
+        }
+        None
+    }
+
+    /// Collision fallback for files that neither define nor import the
+    /// trait, preserving the historical entry-file-wins policy: the entry
+    /// file's definition beats every module's, a unique definition wins
+    /// outright, and a genuine tie resolves to the lexicographically
+    /// first module id so behavior never depends on map iteration order.
+    fn resolve_globally(&self, ns: &str, entry_ns: &str, bare: &str) -> Option<&Vec<SaltFn>> {
+        let candidates = self.by_bare_name.get(bare)?;
+        let entry_id = qualified_id(entry_ns, bare);
+        if ns != entry_ns && candidates.contains(&entry_id) {
+            return self.by_qualified.get(&entry_id);
+        }
+        // The entry branch above already returned when applicable, so the
+        // filtered candidate set cannot be empty here.
+        let winner = candidates.iter()
+            .filter(|id| *id != &entry_id || ns == entry_ns)
+            .min()?;
+        self.by_qualified.get(winner)
+    }
+}
+
+/// Builds `<ns>.<trait>`; the dot cannot appear in identifiers, so the
+/// mapping between qualified ids and (package, trait) pairs is injective.
+fn qualified_id(ns: &str, trait_name: &str) -> String {
+    format!("{}.{}", ns, trait_name)
+}
+
+/// The entry file's namespace identity: its `package` declaration, or
+/// `"main"` when the file omits one (the conventional root package).
+fn entry_namespace(file: &SaltFile) -> String {
+    file.package.as_ref()
+        .map(|p| p.name.iter().map(|id| id.to_string()).collect::<Vec<_>>().join("."))
+        .unwrap_or_else(|| "main".to_string())
+}
+
+fn file_defines_trait(file: &SaltFile, bare: &str) -> bool {
+    file.items.iter().any(|item| matches!(
+        item,
+        Item::Trait(t) if t.name == bare
+    ))
+}
+
+/// Qualified ids an import makes visible for `bare`, most specific
+/// first. A renamed import (`use p.m.Real as bare`) contributes the
+/// real item's id; otherwise every path prefix is probed.
+fn import_candidate_ids(imp: &ImportDecl, bare: &str) -> Vec<QualifiedId> {
+    let segments: Vec<String> = imp.name.iter().map(|id| id.to_string()).collect();
+    let mut ids = Vec::new();
+    for end in (1..=segments.len()).rev() {
+        ids.push(qualified_id(&segments[..end].join("."), bare));
+    }
+    if imp.alias.as_ref().is_some_and(|alias| alias == bare) {
+        if let Some(real) = segments.last() {
+            let parent = segments[..segments.len() - 1].join(".");
+            ids.push(qualified_id(&parent, real));
+        }
+    }
+    ids
+}
 
 /// Expand inherited trait defaults into the entry file and every loaded
 /// module, then re-sync the registry's impl snapshots. Defaults are
@@ -32,26 +189,28 @@ pub fn expand_trait_defaults(
     loader: &mut ModuleLoader,
     registry: &mut Registry,
 ) {
-    // Sorted namespaces keep collection deterministic when identically
-    // named traits exist in several modules; the entry file is consulted
-    // last and therefore wins such (pathological) name collisions.
+    // Sorted namespaces keep collection deterministic; the entry file's
+    // defaults join the table last under its own package identity.
     let mut namespaces: Vec<String> = loader.loaded_files.keys().cloned().collect();
     namespaces.sort();
+    let entry_ns = entry_namespace(file);
 
-    let mut defaults: HashMap<String, Vec<SaltFn>> = HashMap::new();
+    let mut table = DefaultTable::default();
     for ns in &namespaces {
         if let Some(ast) = loader.loaded_files.get(ns) {
-            collect_file_defaults(ast, &mut defaults);
+            table.collect(ast, ns);
         }
     }
-    collect_file_defaults(file, &mut defaults);
+    table.collect(file, &entry_ns);
 
+    // Each file expands against ITS OWN resolution of trait names, so
+    // same-named traits in different modules never cross-inherit.
     for ns in &namespaces {
         if let Some(ast) = loader.loaded_files.get_mut(ns) {
-            expand_file(ast, &defaults);
+            expand_file(ast, &table.resolution_for(ast, ns, &entry_ns));
         }
     }
-    expand_file(file, &defaults);
+    expand_file(file, &table.resolution_for(file, &entry_ns, &entry_ns));
 
     // Module impls were snapshotted into ModuleInfo::impls at load time,
     // before expansion; re-copy them so registry-driven registration sees
@@ -59,22 +218,11 @@ pub fn expand_trait_defaults(
     loader.refresh_impl_snapshots(registry);
 }
 
-/// Index trait name -> default methods declared in one file.
-fn collect_file_defaults(file: &SaltFile, defaults: &mut HashMap<String, Vec<SaltFn>>) {
-    for item in &file.items {
-        if let Item::Trait(t) = item {
-            if !t.default_methods.is_empty() {
-                defaults.insert(t.name.to_string(), t.default_methods.clone());
-            }
-        }
-    }
-}
-
 /// Append omitted defaults to every trait impl in one file.
-fn expand_file(file: &mut SaltFile, defaults: &HashMap<String, Vec<SaltFn>>) {
+fn expand_file(file: &mut SaltFile, resolved: &HashMap<String, &Vec<SaltFn>>) {
     for item in &mut file.items {
         if let Item::Impl(SaltImpl::Trait { trait_name, methods, .. }) = item {
-            inherit_into(trait_name, methods, defaults);
+            inherit_into(trait_name, methods, resolved);
         }
     }
 }
@@ -84,206 +232,13 @@ fn expand_file(file: &mut SaltFile, defaults: &HashMap<String, Vec<SaltFn>>) {
 fn inherit_into(
     trait_name: &syn::Ident,
     methods: &mut Vec<SaltFn>,
-    defaults: &HashMap<String, Vec<SaltFn>>,
+    resolved: &HashMap<String, &Vec<SaltFn>>,
 ) {
-    let Some(defaults) = defaults.get(&trait_name.to_string()) else { return };
+    let Some(defaults) = resolved.get(&trait_name.to_string()) else { return };
     let provided: HashSet<String> = methods.iter().map(|m| m.name.to_string()).collect();
-    for d in defaults {
-        if !provided.contains(&d.name.to_string()) {
-            methods.push(d.clone());
+    for default_fn in defaults.iter() {
+        if !provided.contains(&default_fn.name.to_string()) {
+            methods.push(default_fn.clone());
         }
-    }
-}
-
-#[cfg(test)]
-mod cross_module_tests {
-    //! Loader-level lock on the registry re-sync: a module impl that omits a
-    //! default must surface the inherited method in BOTH the loaded AST and
-    //! the `ModuleInfo::impls` snapshot after ONE expansion call, since
-    //! `init_registry_impls` registers from the snapshot while seeding and
-    //! emission walk the AST.
-
-    use super::*;
-    use crate::registry::Registry;
-
-    const MODULE_SRC: &str = r#"
-        package target.trait_defaults_unit_it.snapshot.widgets
-
-        struct Widget { id: i64 }
-
-        trait Describe {
-            fn tag(&self) -> i64;
-            fn describe(&self) -> i64 {
-                return 7777777;
-            }
-        }
-
-        impl Describe for Widget {
-            fn tag(&self) -> i64 {
-                return self.id;
-            }
-        }
-    "#;
-
-    fn module_namespace() -> String {
-        "target.trait_defaults_unit_it.snapshot.widgets".to_string()
-    }
-
-    /// Loads MODULE_SRC through the real ModuleLoader path (cwd root) and
-    /// returns (loader, registry) before expansion.
-    fn load_widget_module() -> (ModuleLoader, Registry) {
-        let dir = std::env::current_dir()
-            .expect("cwd")
-            .join("target/trait_defaults_unit_it/snapshot");
-        std::fs::create_dir_all(&dir).expect("create unit-test module dir");
-        std::fs::write(dir.join("widgets.salt"), MODULE_SRC).expect("write module");
-        let mut loader = ModuleLoader::new(vec![std::env::current_dir().expect("cwd")]);
-        let mut registry = Registry::new();
-        loader.load_module(&module_namespace(), &mut registry)
-            .expect("module must load");
-        (loader, registry)
-    }
-
-    /// Method names across every trait impl in a snapshot or AST slice.
-    fn trait_impl_method_names(impl_items: &[crate::grammar::SaltImpl]) -> Vec<String> {
-        let mut names = Vec::new();
-        for imp in impl_items {
-            if let crate::grammar::SaltImpl::Trait { methods, .. } = imp {
-                for m in methods {
-                    names.push(m.name.to_string());
-                }
-            }
-        }
-        names
-    }
-
-    fn snapshot_impls(info: &crate::registry::ModuleInfo) -> Vec<crate::grammar::SaltImpl> {
-        info.impls.iter().map(|(i, _)| i.clone()).collect()
-    }
-
-    fn file_trait_impls(file: &SaltFile) -> Vec<crate::grammar::SaltImpl> {
-        file.items.iter().filter_map(|i| match i {
-            Item::Impl(imp @ crate::grammar::SaltImpl::Trait { .. }) => Some(imp.clone()),
-            _ => None,
-        }).collect()
-    }
-
-    #[test]
-    fn expansion_reaches_loaded_ast_and_registry_snapshot() {
-        let (mut loader, mut registry) = load_widget_module();
-        let ns = module_namespace();
-
-        // Pre-condition: the load-time snapshot is stale (no inherited method).
-        let pre = trait_impl_method_names(&snapshot_impls(&registry.modules[&ns]));
-        assert!(!pre.contains(&"describe".to_string()),
-                "snapshot must start without the default, got {:?}", pre);
-
-        let mut entry = syn::parse_str::<SaltFile>("package main\npub fn main() -> i32 { return 0; }").unwrap();
-        expand_trait_defaults(&mut entry, &mut loader, &mut registry);
-
-        let ast_methods = trait_impl_method_names(&file_trait_impls(&loader.loaded_files[&ns]));
-        assert!(ast_methods.contains(&"describe".to_string()),
-                "loaded AST must gain the default, got {:?}", ast_methods);
-
-        let post = trait_impl_method_names(&snapshot_impls(&registry.modules[&ns]));
-        assert!(post.contains(&"describe".to_string()),
-                "registry snapshot must be resynced, got {:?}", post);
-        // Required methods survive the rewrite in both copies.
-        assert!(post.contains(&"tag".to_string()), "required method must survive");
-
-        let dir = std::env::current_dir().expect("cwd").join("target/trait_defaults_unit_it");
-        let _ = std::fs::remove_dir_all(dir);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn parse(src: &str) -> SaltFile {
-        syn::parse_str::<SaltFile>(src).unwrap()
-    }
-
-    const TRAIT_AND_IMPLS: &str = r#"
-        package main
-
-        struct Counter { n: i64 }
-        struct Step { n: i64 }
-
-        trait Resettable {
-            fn reset(&self);
-            fn reset_to_zero(&self) {
-                self.reset();
-            }
-        }
-
-        impl Resettable for Counter {
-            fn reset(&self) { }
-        }
-
-        impl Resettable for Step {
-            fn reset(&self) { }
-            fn reset_to_zero(&self) { }
-        }
-    "#;
-
-    #[test]
-    fn omitted_default_is_injected_into_impl_methods() {
-        let mut file = parse(TRAIT_AND_IMPLS);
-        expand_trait_defaults(&mut file, &mut ModuleLoader::new(vec![]), &mut Registry::new());
-        let counter = file.items.iter().find_map(|i| match i {
-            Item::Impl(SaltImpl::Trait { target_ty, methods, .. }) => {
-                let name = format!("{:?}", target_ty);
-                name.contains("Counter").then_some(methods.len())
-            }
-            _ => None,
-        });
-        assert_eq!(counter, Some(2), "omitted default must be appended");
-    }
-
-    #[test]
-    fn explicit_override_wins_over_default() {
-        let mut file = parse(TRAIT_AND_IMPLS);
-        expand_trait_defaults(&mut file, &mut ModuleLoader::new(vec![]), &mut Registry::new());
-        let step = file.items.iter().find_map(|i| match i {
-            Item::Impl(SaltImpl::Trait { target_ty, methods, .. }) => {
-                let name = format!("{:?}", target_ty);
-                name.contains("Step").then_some(methods.clone())
-            }
-            _ => None,
-        });
-        let methods = step.expect("Step impl must exist");
-        assert_eq!(methods.len(), 2, "override must not duplicate the default");
-        let reset_to_zero = methods.iter().find(|m| m.name == "reset_to_zero").unwrap();
-        assert_eq!(reset_to_zero.body.stmts.len(), 0, "impl body must win over default body");
-    }
-
-    #[test]
-    fn impl_without_matching_trait_is_untouched() {
-        let src = r#"
-            package main
-            struct Cat { }
-            trait Pet { fn speak(&self); }
-            trait Feed { fn feed(&self); }
-            impl Pet for Cat { fn speak(&self) { } }
-        "#;
-        let mut file = parse(src);
-        expand_trait_defaults(&mut file, &mut ModuleLoader::new(vec![]), &mut Registry::new());
-        let count = file.items.iter().filter_map(|i| match i {
-            Item::Impl(SaltImpl::Trait { methods, .. }) => Some(methods.len()),
-            _ => None,
-        }).next();
-        assert_eq!(count, Some(1));
-    }
-
-    #[test]
-    fn defaults_from_trait_without_impls_are_ignored_safely() {
-        let src = r#"
-            package main
-            trait Lone { fn helper(&self) -> i64 { return 7; } }
-        "#;
-        let mut file = parse(src);
-        expand_trait_defaults(&mut file, &mut ModuleLoader::new(vec![]), &mut Registry::new());
-        assert_eq!(file.items.len(), 1, "no impl present, nothing rewritten");
     }
 }

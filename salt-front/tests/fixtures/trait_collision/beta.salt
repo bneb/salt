@@ -1,0 +1,23 @@
+// Fixture for tests/trait_defaults_namespace_collision_test.rs.
+//
+// The BETA side of a deliberate name collision: a trait `Config` distinct
+// from alpha.salt's same-named trait, with default `value()` returning
+// 222222. See alpha.salt for why this pair exists.
+package tests.fixtures.trait_collision.beta
+
+struct BetaCfg {
+    v: i64,
+}
+
+trait Config {
+    fn kind(&self) -> i64;
+    fn value(&self) -> i64 {
+        return 222222;
+    }
+}
+
+impl Config for BetaCfg {
+    fn kind(&self) -> i64 {
+        return 2;
+    }
+}

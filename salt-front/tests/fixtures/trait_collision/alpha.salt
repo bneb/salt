@@ -1,0 +1,30 @@
+// Fixture for tests/trait_defaults_namespace_collision_test.rs.
+//
+// The ALPHA side of a deliberate name collision: a trait `Config` whose
+// default `value()` returns 111111, implemented here by AlphaCfg. A
+// second, unrelated module (beta.salt) declares its OWN `Config` with
+// default 222222.
+//
+// Regression context: expand_trait_defaults once keyed defaults by BARE
+// trait name, so this pair cross-inherited — alpha's implementors picked
+// up beta's constant 222222 (beta sorts last) instead of their own
+// 111111. Defaults are now keyed by namespace-qualified identity and each
+// impl resolves through its own file's imports/local definitions.
+package tests.fixtures.trait_collision.alpha
+
+struct AlphaCfg {
+    v: i64,
+}
+
+trait Config {
+    fn kind(&self) -> i64;
+    fn value(&self) -> i64 {
+        return 111111;
+    }
+}
+
+impl Config for AlphaCfg {
+    fn kind(&self) -> i64 {
+        return 1;
+    }
+}

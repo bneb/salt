@@ -100,6 +100,8 @@ mod tests_ptr_null_comparison;
 #[cfg(test)]
 mod tests_malloc_arg_escape;
 #[cfg(test)]
+mod tests_trait_defaults;
+#[cfg(test)]
 mod tests_static_mut;
 #[cfg(test)]
 mod tests_struct_ref_pass;
