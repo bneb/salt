@@ -107,3 +107,36 @@ fn xmod_const_generic_identity_stays_value_keyed() {
     assert!(mlir.contains("Cache__new_128"), "xmod value-keyed symbol missing");
     assert_no_size_spelled_identity(&mlir);
 }
+
+#[test]
+fn const_param_named_like_real_struct_keeps_single_identity() {
+    // When a const param shares its name with a REAL struct (WIDTH), call
+    // and callee identities used to split: callee returned !struct_Buf_128
+    // while the caller typed the local as the composed ghost
+    // !struct_Buf_main__WIDTH. NameResolver now scopes const params
+    // (register_generic_param) and substitute_generics sees through
+    // pkg-prefixed placeholder spellings.
+    const SRC: &str = r#"
+        package main
+
+        struct WIDTH { pad: i64 }
+
+        struct Buf<const WIDTH: i64> { w: i64 }
+
+        impl<const WIDTH: i64> Buf<WIDTH> {
+            pub fn new() -> Buf<WIDTH> { return Buf { w: 0 }; }
+        }
+
+        pub fn main() -> i32 {
+            let b = Buf::<128>::new();
+            let r = b.w;
+            return r as i32;
+        }
+    "#;
+    let result = compile(SRC, false, None, true);
+    assert!(result.is_ok(), "collision repro failed: {:?}", result.err());
+    let mlir = result.unwrap();
+    assert!(mlir.contains("!struct_main__Buf_128 "), "value-keyed identity missing");
+    assert!(mlir.contains("func.call @main__Buf__new_128"), "value-keyed call missing");
+    assert!(!mlir.contains("Buf_main__WIDTH"), "composed ghost identity leaked");
+}

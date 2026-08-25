@@ -11,9 +11,28 @@ fn is_self_ref(n: &str, c: &Type) -> bool {
     matches!(c, Type::Struct(s) | Type::Generic(s) | Type::Concrete(s, _) if s == n)
 }
 
+/// True when `name` (or its pkg-stripped leaf: `main__SIZE` -> `SIZE`)
+/// is a declared param in the active map. Placeholder spellings reach
+/// substitution pre-prefixed from several layers; all must normalize.
+fn maps_param(m: &std::collections::BTreeMap<String, Type>, name: &str) -> bool {
+    if m.contains_key(name) { return true; }
+    if let Some(idx) = name.rfind("__") {
+        return m.contains_key(&name[idx + 2..]);
+    }
+    false
+}
+
 fn sub_through(m: &std::collections::BTreeMap<String, Type>, n: &str, ty: &Type) -> Type {
-    let Some(c) = m.get(n) else { return ty.clone(); };
-    if is_self_ref(n, c) { return Type::Generic(n.to_string()); }
+    // Resolve through prefixed spellings to the owning param leaf.
+    let leaf = if m.contains_key(n) {
+        n
+    } else if let Some(idx) = n.rfind("__") {
+        &n[idx + 2..]
+    } else {
+        n
+    };
+    let Some(c) = m.get(leaf) else { return ty.clone(); };
+    if is_self_ref(leaf, c) { return Type::Generic(leaf.to_string()); }
     substitute_generics(m, c)
 }
 
@@ -48,7 +67,7 @@ pub fn substitute_generics(type_map: &std::collections::BTreeMap<String, Type>, 
         return ty.clone();
     }
     match ty {
-        Type::Struct(name) if type_map.contains_key(name) => sub_through(type_map, name, ty),
+        Type::Struct(name) if maps_param(type_map, name) => sub_through(type_map, name, ty),
         Type::Generic(name) => sub_through(type_map, name, ty),
         Type::Concrete(name, args) => {
             if args.is_empty() {

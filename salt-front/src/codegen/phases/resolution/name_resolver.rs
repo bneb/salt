@@ -319,10 +319,16 @@ impl NameResolver {
     }
 
     fn register_generic_param(&mut self, param: &GenericParam, added: &mut Vec<String>) {
-        if let GenericParam::Type { name, .. } = param {
-            if self.local_generics.insert(name.to_string()) {
-                added.push(name.to_string());
-            }
+        // CONST params must register too: a const ident in a type position
+        // (`Cache<WIDTH>`) is a placeholder, never a global type to qualify.
+        // Missing this let suffix-fallback rewrite WIDTH -> main__WIDTH when
+        // a real struct shared the name, splitting call/callee identities.
+        let name = match param {
+            GenericParam::Type { name, .. } => name,
+            GenericParam::Const { name, .. } => name,
+        };
+        if self.local_generics.insert(name.to_string()) {
+            added.push(name.to_string());
         }
     }
 
