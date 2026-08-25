@@ -1860,8 +1860,7 @@ fn register_fn_signature(ctx: &CodegenContext, f: &crate::grammar::SaltFn, pkg_n
             .map(|a| resolve_type_safe(ctx, a.ty.as_ref().unwrap_or(&unknown_ty)))
             .collect::<Vec<_>>()
     });
-    let ret = bind_signature_placeholders(&ret, &f.generics);
-    let args: Vec<Type> = raw_args.iter().map(|a| bind_signature_placeholders(a, &f.generics)).collect();
+    let args = raw_args;
     ctx.globals_mut().insert(mangled, Type::Fn(args, Box::new(ret)));
     Ok(())
 }
@@ -1982,29 +1981,9 @@ pub(crate) fn scoped_generic_hydration<T>(
     out
 }
 
-/// Rewrites self-named placeholder args left by context-free parsing into
-/// true `Generic` placeholders so stored signatures stay substitutable at
-/// call sites. Identity for signatures without declared generics.
-pub(crate) fn bind_signature_placeholders(
-    ty: &Type,
-    generics: &Option<crate::grammar::Generics>,
-) -> Type {
-    let Some(g) = generics else { return ty.clone(); };
-    let mut map = std::collections::BTreeMap::new();
-    for param in &g.params {
-        let name = match param {
-            crate::grammar::GenericParam::Type { name, .. } => name.to_string(),
-            crate::grammar::GenericParam::Const { name, .. } => name.to_string(),
-        };
-        map.insert(name.clone(), Type::Struct(name));
-    }
-    crate::codegen::types::substitution::substitute_generics(&map, ty)
-}
-
 fn register_impl_signatures(ctx: &CodegenContext, imp: &SaltImpl) -> Result<(), String> {
     if let SaltImpl::Methods { target_ty, methods, generics } = imp {
         let parsed_ty = scoped_generic_hydration(ctx, generics, || resolve_type_safe(ctx, target_ty));
-        let parsed_ty = bind_signature_placeholders(&parsed_ty, generics);
         let _target_name = match &parsed_ty {
             Type::Struct(name) | Type::Enum(name) => name.clone(),
             Type::Concrete(name, _) => name.clone(),
@@ -2019,7 +1998,6 @@ fn register_impl_signatures(ctx: &CodegenContext, imp: &SaltImpl) -> Result<(), 
         register_impl_methods_merged(ctx, methods, generics, key.clone(), &parsed_ty);
     } else if let SaltImpl::Trait { trait_name: _, target_ty, methods, generics } = imp {
         let parsed_ty = scoped_generic_hydration(ctx, generics, || resolve_type_safe(ctx, target_ty));
-        let parsed_ty = bind_signature_placeholders(&parsed_ty, generics);
 
         let mut key = parsed_ty.to_key().unwrap_or_else(|| {
             crate::types::TypeKey { path: vec![], name: parsed_ty.mangle_suffix(), specialization: None }
