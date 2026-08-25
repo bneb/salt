@@ -6,7 +6,7 @@ use crate::common::mangling::Mangler;
 
 /// Provenance defines the 'Legal Origin' of a pointer.
 /// This tracks the lifecycle "Shadow" for formal verification.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Provenance {
     Static,       // Global constants (.data/.rodata)
     Stack,        // Function-local frame
@@ -58,7 +58,7 @@ impl TypeKey {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Type {
     I8, I16, I32, I64,
     U8, U16, U32, U64, Usize,
