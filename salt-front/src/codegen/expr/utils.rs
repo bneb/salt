@@ -178,6 +178,20 @@ fn check_wildcard_resolution(
     None
 }
 
+/// True when `leaf` is spelled as an integer literal: optional sign followed
+/// by one or more ASCII digits ("-7", "+5", "007", "9223372036854775807").
+/// Such leaves are const-generic VALUES surfacing as `Type::Struct(v.to_string())`,
+/// never symbols; package qualification must refuse them instead of minting a
+/// `pkg__-7` identity (T-a: turbofish caller/callee identity split). The
+/// keyword spellings "true"/"false" are refused for the same reason ahead of
+/// the T-c value-identity work: they are reserved words, so no user type can
+/// bear those names, and the Mangler does not escape.
+fn is_value_spelled_leaf(leaf: &str) -> bool {
+    if leaf == "true" || leaf == "false" { return true; }
+    let digits = leaf.strip_prefix('-').or_else(|| leaf.strip_prefix('+')).unwrap_or(leaf);
+    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+}
+
 pub fn resolve_package_prefix(
     registry: Option<&crate::registry::Registry>,
     imports: &[crate::grammar::ImportDecl],
@@ -186,7 +200,10 @@ pub fn resolve_package_prefix(
     segments: &[String],
 ) -> Option<(String, String)> {
     if segments.is_empty() { return None; }
-    
+    // T-a: value-spelled leaves (const-generic arguments) must never qualify
+    // into `pkg__-7`-style identities.
+    if is_value_spelled_leaf(&segments[segments.len() - 1]) { return None; }
+
     if segments[0] == "std" {
         for i in (1..=segments.len()).rev() {
             let namespace = Mangler::mangle(&segments[0..i]);
@@ -398,5 +415,19 @@ mod tests {
         partial.insert("B".to_string(), Type::Bool);
         assert_eq!(ordered_complete_generics(&declared, &partial), vec![Type::I64, Type::Bool],
             "Fully bound templates must be projected in declaration order");
+    }
+
+    #[test]
+    fn test_value_spelled_leaf_classification() {
+        for lit in ["-7", "+5", "007", "0", "9223372036854775807"] {
+            assert!(super::is_value_spelled_leaf(lit), "`{lit}` is a value");
+        }
+        for sym in ["S_-7", "S_7", "main__S", "_7", "3x", "-", "+", "--4", "1_000", "0x10"] {
+            assert!(!super::is_value_spelled_leaf(sym), "`{sym}` stays symbol-eligible");
+        }
+        // T-c rail: reserved keyword spellings are refused ahead of the
+        // value-identity work so no pkg__true ghost can ever be minted.
+        assert!(super::is_value_spelled_leaf("true"));
+        assert!(super::is_value_spelled_leaf("false"));
     }
 }
