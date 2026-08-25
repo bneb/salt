@@ -112,18 +112,33 @@ impl<'a> CodegenContext<'a> {
             format!("{}{}", pkg_prefix, f.name)
         };
 
-        let ret_ty = if let Some(rt) = &f.ret_type {
-            self.bridge_resolve_type(rt)
-        } else {
-            Type::Unit
-        };
-        let args: Vec<Type> = f.args.iter()
-            .filter_map(|arg| arg.ty.as_ref().map(|t| self.bridge_resolve_type(t)))
-            .collect();
+        let (ret_ty, args) = self.scan_fn_signature(f);
         self.globals_mut().insert(name.clone(), Type::Fn(args.clone(), Box::new(ret_ty.clone())));
 
         let current_imports = self.imports().clone();
         self.generic_impls_mut().insert(name.clone(), (f.clone(), current_imports));
+    }
+
+    /// Resolves a fn's signature with its generic params hydrated in scope
+    /// and stored as substitutable placeholders, so downstream consumers
+    /// bind values instead of minting param-name ghost identities.
+    fn scan_fn_signature(&self, f: &SaltFn) -> (Type, Vec<Type>) {
+        let (raw_ret, raw_args) = crate::codegen::scoped_generic_hydration(self, &f.generics, || {
+            let ret_ty = if let Some(rt) = &f.ret_type {
+                self.bridge_resolve_type(rt)
+            } else {
+                Type::Unit
+            };
+            let args: Vec<Type> = f.args.iter()
+                .filter_map(|arg| arg.ty.as_ref().map(|t| self.bridge_resolve_type(t)))
+                .collect();
+            (ret_ty, args)
+        });
+        let ret_ty = crate::codegen::bind_signature_placeholders(&raw_ret, &f.generics);
+        let args: Vec<Type> = raw_args.iter()
+            .map(|a| crate::codegen::bind_signature_placeholders(a, &f.generics))
+            .collect();
+        (ret_ty, args)
     }
 
     fn scan_def_impl(&self, i: &SaltImpl, pkg_prefix: &str, path: &[String]) {

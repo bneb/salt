@@ -1,0 +1,12 @@
+// Fixture: const-generic struct defined in a MODULE, instantiated at two
+// distinct const values from the entry module (see
+// tests/const_generic_identity_test.rs::xmod_const_generic_identity_stays_value_keyed).
+package tests.fixtures.const_xmod.cache
+
+pub struct Cache<const SIZE: i64> { next: i64 }
+
+impl<const SIZE: i64> Cache<SIZE> {
+    pub fn new() -> Cache<SIZE> {
+        return Cache { next: SIZE };
+    }
+}

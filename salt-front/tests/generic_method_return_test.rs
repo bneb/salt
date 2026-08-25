@@ -100,10 +100,9 @@ fn const_value_keyed_identities_distinct() {
 
     assert!(mlir.contains("Cache_64"), "Cache_64 identity missing");
     assert!(mlir.contains("Cache_128"), "Cache_128 identity missing");
-    // Uses (allocas, call returns) must never spell the param-name ghost;
-    // a vestigial unused DECL may remain from scan-time registration.
-    let uses_ghost = mlir.lines().filter(|l| l.contains("Cache_SIZE"))
-        .any(|l| !l.contains("=") || l.contains("-> "));
-    assert!(!uses_ghost, "param-name ghost used in an op");
+    // Pre-scan hydration (see codegen::scoped_generic_hydration) removed the
+    // scan-time phantom registration: not even an unused vestigial DECL may
+    // spell the param name anywhere in the module.
+    assert!(!mlir.contains("Cache_SIZE"), "param-name ghost identity leaked");
     assert!(!mlir.contains("main__Cache_main__SIZE"), "composed ghost must not appear");
 }
