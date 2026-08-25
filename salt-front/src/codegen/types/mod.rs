@@ -18,10 +18,12 @@ pub mod specialization;
 pub mod spec_template;
 pub mod expansion;
 pub mod generic_arg;
+pub mod instance_id;
 pub mod define_instance;
 #[cfg(test)] mod numeric_tests;
 #[cfg(test)] mod resolution_tests;
 #[cfg(test)] mod generic_arg_tests;
+#[cfg(test)] mod instance_id_tests;
 #[cfg(test)] mod define_instance_tests;
 
 pub use canonical::{TypeID, TypeIDRegistry};

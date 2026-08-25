@@ -99,6 +99,18 @@ impl GenericArg {
     }
 }
 
+/// True when `leaf` is spelled as an integer literal: optional sign followed
+/// by one or more ASCII digits ("-7", "+5", "007"), or a reserved keyword
+/// ("true"/"false"). Such leaves are const-generic VALUES surfacing as
+/// `Type::Struct(v.to_string())`, never symbols; package qualification and
+/// refusing InstanceId constructors must reject them instead of minting
+/// `pkg__-7`-style identities. CANONICAL definition -- expr/utils delegates.
+pub(crate) fn is_value_spelled_leaf(leaf: &str) -> bool {
+    if leaf == "true" || leaf == "false" { return true; }
+    let digits = leaf.strip_prefix('-').or_else(|| leaf.strip_prefix('+')).unwrap_or(leaf);
+    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+}
+
 /// WS-R3/T-b refusal diagnostic for an integer literal in const-generic
 /// position that cannot represent an `i64`. Compilation must FAIL with this
 /// message instead of silently dropping the argument: the drop minted ghost

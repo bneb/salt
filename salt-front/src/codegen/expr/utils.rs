@@ -187,9 +187,7 @@ fn check_wildcard_resolution(
 /// the T-c value-identity work: they are reserved words, so no user type can
 /// bear those names, and the Mangler does not escape.
 fn is_value_spelled_leaf(leaf: &str) -> bool {
-    if leaf == "true" || leaf == "false" { return true; }
-    let digits = leaf.strip_prefix('-').or_else(|| leaf.strip_prefix('+')).unwrap_or(leaf);
-    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+    crate::codegen::types::generic_arg::is_value_spelled_leaf(leaf)
 }
 
 pub fn resolve_package_prefix(
