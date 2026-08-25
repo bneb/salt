@@ -11,7 +11,6 @@ use crate::codegen::trait_registry::TraitRegistry;
 
 use crate::codegen::passes::liveness::LivenessResult;
 
-pub mod scanner;
 
 /// Phase 1: Template and registry discovery (read-mostly after initialization)
 pub struct DiscoveryState {

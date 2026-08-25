@@ -54,6 +54,41 @@ mod tests {
     }
 
     #[test]
+    fn from_legacy_classifies_digit_and_keyword_leaves() {
+        use crate::codegen::types::instance_id::InstanceId;
+        let id = InstanceId::from_legacy(owner(), &[
+            Type::Struct("-7".into()),
+            Type::Struct("64".into()),
+            Type::Struct("main__Node".into()),
+            Type::Struct("4612811918334230528".into()), // positive f64 bits
+        ]);
+        assert_eq!(
+            id.args(),
+            &[
+                GenericArg::Const(ConstValue::Integer(-7)),
+                GenericArg::Const(ConstValue::Integer(64)),
+                GenericArg::Type(Type::Struct("main__Node".into())),
+                // Fits i64 => Const; NEGATIVE float bits (>= 2^63) would
+                // fail the strict parse and stay honest Type spellings.
+                GenericArg::Const(ConstValue::Integer(4612811918334230528)),
+            ]
+        );
+    }
+
+    #[test]
+    fn from_legacy_key_round_trips_byte_identical() {
+        use crate::codegen::types::instance_id::InstanceId;
+        let legacy = vec![Type::Struct("-7".into())];
+        let id = InstanceId::from_legacy(owner(), &legacy);
+        let direct = TypeKey {
+            path: vec![],
+            name: "main__S".into(),
+            specialization: Some(legacy.clone()),
+        };
+        assert_eq!(id.to_legacy_type_key().mangle(), direct.mangle());
+    }
+
+    #[test]
     fn fn_instance_carries_validated_args() {
         let fid = FnInstanceId::from_parts(
             owner(),

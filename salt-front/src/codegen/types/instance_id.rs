@@ -55,6 +55,25 @@ impl InstanceId {
 
     pub(crate) fn args(&self) -> &[GenericArg] { &self.args }
 
+    /// TOTAL classifier constructor for the chokepoint: converts today's
+    /// legacy specialization args into typed GenericArgs (digit leaves ->
+    /// Const(Integer) where they fit i64, else kept as Type; keywords ->
+    /// Const(Bool); everything else -> Type) and returns the InstanceId.
+    /// Never fails: registration-time validation must not introduce new
+    /// refusals (T-b/T-c refusals happen earlier at extraction). S3 will
+    /// STORE this id instead of discarding it.
+    pub(crate) fn from_legacy(owner: TemplateOwner, legacy_args: &[Type]) -> Self {
+        let args = legacy_args.iter().map(|ty| match ty {
+            // Digit leaves classify as Const(Integer); >i64 bit encodings
+            // (float bits) fail the strict parse and stay honest Type
+            // spellings. Keywords stay Type until S3 adds Const(Bool).
+            Type::Struct(n) => GenericArg::from_legacy_struct_value(n, false)
+                .unwrap_or_else(|_| GenericArg::Type(ty.clone())),
+            other => GenericArg::Type(other.clone()),
+        }).collect();
+        Self { owner, args }
+    }
+
     /// The TypeKey this instance corresponds to under TODAY'S string-keyed
     /// registry scheme. Golden pin: byte-equal to constructing the TypeKey
     /// directly from legacy spellings (see instance_id_tests).
