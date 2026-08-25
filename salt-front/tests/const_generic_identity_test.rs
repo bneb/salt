@@ -140,3 +140,40 @@ fn const_param_named_like_real_struct_keeps_single_identity() {
     assert!(mlir.contains("func.call @main__Buf__new_128"), "value-keyed call missing");
     assert!(!mlir.contains("Buf_main__WIDTH"), "composed ghost identity leaked");
 }
+
+#[test]
+fn real_struct_field_inside_const_generic_keeps_identity() {
+    // A REAL struct (Node) used as a field type and as a literal inside a
+    // const-generic struct's specialized body must keep its own identity.
+    // infer_struct_generics' else-fallback used to dump ambient type-map
+    // values as the literal's generic args, composing main__Node_5 from
+    // Box2_5's bindings ("Undefined struct: main__Node_5").
+    const SRC: &str = r#"
+        package main
+
+        struct Node { v: i64 }
+
+        struct Box2<const NODE: i64> { n: Node }
+
+        impl<const NODE: i64> Box2<NODE> {
+            pub fn get(&self) -> Node { return self.n; }
+            pub fn make() -> Box2<NODE> { return Box2 { n: Node { v: 0 } }; }
+        }
+
+        pub fn main() -> i32 {
+            let a = Box2::<5>::make();
+            let b = Box2::<9>::make();
+            let x = a.get();
+            let y = b.get();
+            return (x.v + y.v + a.n.v) as i32;
+        }
+    "#;
+    let result = compile(SRC, false, None, true);
+    assert!(result.is_ok(), "shadow repro failed: {:?}", result.err());
+    let mlir = result.unwrap();
+    assert!(mlir.contains("@main__Box2__make_5"), "value-keyed make_5 missing");
+    assert!(mlir.contains("!struct_main__Box2_9 "), "value-keyed Box2_9 identity missing");
+    assert!(mlir.contains("!struct_main__Node "), "real Node identity missing");
+    assert!(!mlir.contains("_NODE"), "param-name ghost leaked");
+    assert!(!mlir.contains("main__Node_"), "spec-suffixed concrete struct leaked");
+}

@@ -41,7 +41,13 @@ fn infer_struct_generics(ctx: &mut LoweringContext, s: &syn::ExprStruct, full_na
         param_names.iter().filter_map(|pname| {
             inferred_map.get(pname).cloned()
         }).collect()
-    } else { let mut s: Vec<_> = ctx.current_type_map().iter().collect(); s.sort_by_key(|(k,_)|*k); s.into_iter().map(|(_,v)|v.clone()).collect() }
+    } else {
+        // Base has NO declared generics (not found, or found without any):
+        // a concrete struct accepts zero inferred args. Dumping ambient
+        // type-map values here composed phantom identities like
+        // main__Node_5 for real structs inside specialized bodies.
+        Vec::new()
+    }
 }
 
 fn eval_struct_fields(
