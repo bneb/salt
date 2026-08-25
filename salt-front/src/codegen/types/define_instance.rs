@@ -34,7 +34,8 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
     /// previous entry (e.g. the step-6 placeholder) is displaced, nothing
     /// is returned, no emission state is touched.
     pub(crate) fn define_struct_instance(&mut self, key: TypeKey, info: StructInfo) {
-        let _typed = validate_instance(ParamOwner::mangled(&base_mangled(&key)), &info.specialization_args);
+        let typed = validate_instance(ParamOwner::mangled(&base_mangled(&key)), &info.specialization_args);
+        self.instance_ids_mut().insert(key.clone(), typed);
         self.struct_registry_mut().insert(key, info);
     }
 
@@ -43,7 +44,8 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
     /// Semantics are EXACTLY `enum_registry.insert(key, info)`; same
     /// overwrite-in-place contract as [`Self::define_struct_instance`].
     pub(crate) fn define_enum_instance(&mut self, key: TypeKey, info: EnumInfo) {
-        let _typed = validate_instance(ParamOwner::mangled(&base_mangled(&key)), &info.specialization_args);
+        let typed = validate_instance(ParamOwner::mangled(&base_mangled(&key)), &info.specialization_args);
+        self.instance_ids_mut().insert(key.clone(), typed);
         self.enum_registry_mut().insert(key, info);
     }
 }
@@ -60,13 +62,15 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
 impl<'a> CodegenContext<'a> {
     /// Registers one monomorphized struct instance under `key`.
     pub(crate) fn define_struct_instance(&self, key: TypeKey, info: StructInfo) {
-        let _typed = validate_instance(ParamOwner::mangled(&base_mangled(&key)), &info.specialization_args);
+        let typed = validate_instance(ParamOwner::mangled(&base_mangled(&key)), &info.specialization_args);
+        self.instance_ids_mut().insert(key.clone(), typed);
         self.struct_registry_mut().insert(key, info);
     }
 
     /// Registers one monomorphized enum instance under `key`.
     pub(crate) fn define_enum_instance(&self, key: TypeKey, info: EnumInfo) {
-        let _typed = validate_instance(ParamOwner::mangled(&base_mangled(&key)), &info.specialization_args);
+        let typed = validate_instance(ParamOwner::mangled(&base_mangled(&key)), &info.specialization_args);
+        self.instance_ids_mut().insert(key.clone(), typed);
         self.enum_registry_mut().insert(key, info);
     }
 }

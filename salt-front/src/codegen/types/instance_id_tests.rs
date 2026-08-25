@@ -89,6 +89,24 @@ mod tests {
     }
 
     #[test]
+    fn keyword_leaves_carry_bool_kind_after_s3() {
+        use crate::codegen::types::instance_id::InstanceId;
+        let id = InstanceId::from_legacy(owner(), &[
+            Type::Struct("true".into()),
+            Type::Struct("false".into()),
+        ]);
+        assert_eq!(
+            id.args(),
+            &[
+                GenericArg::Const(ConstValue::Bool(true)),
+                GenericArg::Const(ConstValue::Bool(false)),
+            ]
+        );
+        // Keys stay byte-identical to the legacy spelling either way.
+        assert_eq!(id.to_legacy_type_key().mangle(), "main__S_true_false");
+    }
+
+    #[test]
     fn fn_instance_carries_validated_args() {
         let fid = FnInstanceId::from_parts(
             owner(),

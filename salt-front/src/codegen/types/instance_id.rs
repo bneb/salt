@@ -11,6 +11,7 @@
 //! soon as owners carry ParamId registries.
 #![allow(dead_code)] // Introduced ahead of caller migration (S2+).
 
+use crate::evaluator::ConstValue;
 use crate::types::{Type, TypeKey};
 use crate::codegen::types::generic_arg::{GenericArg, is_value_spelled_leaf};
 
@@ -67,6 +68,9 @@ impl InstanceId {
             // Digit leaves classify as Const(Integer); >i64 bit encodings
             // (float bits) fail the strict parse and stay honest Type
             // spellings. Keywords stay Type until S3 adds Const(Bool).
+            Type::Struct(n) if n == "true" || n == "false" => {
+                GenericArg::Const(ConstValue::Bool(n == "true"))
+            }
             Type::Struct(n) => GenericArg::from_legacy_struct_value(n, false)
                 .unwrap_or_else(|_| GenericArg::Type(ty.clone())),
             other => GenericArg::Type(other.clone()),
