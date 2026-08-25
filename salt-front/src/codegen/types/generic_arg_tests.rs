@@ -22,18 +22,37 @@ mod tests {
     }
 
     #[test]
-    fn test_non_integer_consts_fall_back_to_zero() {
-        // Mirrors the scan_types.rs:147,149 Struct("0") fallback.
-        let values = [
-            ConstValue::Float(2.5),
-            ConstValue::Bool(true),
-            ConstValue::String("x".into()),
-            ConstValue::Array(vec![ConstValue::Integer(1)]),
-            ConstValue::Complex,
-        ];
-        for value in values {
-            assert_eq!(legacy(value), Type::Struct("0".into()));
-        }
+    fn test_bool_consts_spell_as_reserved_keywords() {
+        // T-c: previously collapsed to Struct("0"), making B::<true> and
+        // B::<false> share one identity. Keywords are collision-free
+        // (reserved words; see expr/utils is_value_spelled_leaf).
+        assert_eq!(legacy(ConstValue::Bool(true)), Type::Struct("true".into()));
+        assert_eq!(legacy(ConstValue::Bool(false)), Type::Struct("false".into()));
+    }
+
+    #[test]
+    fn test_float_consts_spell_as_digit_safe_bits() {
+        // T-c: Display would emit "inf"/"NaN" (legal identifiers) and '.'
+        // (bypasses the value-leaf guard); bits are digit-safe, deterministic,
+        // and -0.0 folds onto 0.0 per float_key.
+        assert_eq!(
+            legacy(ConstValue::Float(2.5)),
+            Type::Struct((2.5f64).to_bits().to_string())
+        );
+        assert_eq!(
+            legacy(ConstValue::Float(0.0)),
+            legacy(ConstValue::Float(-0.0))
+        );
+    }
+
+    #[test]
+    fn test_array_and_complex_keep_zero_fallback() {
+        // No turbofish literal syntax reaches these classes; legacy spell.
+        assert_eq!(
+            legacy(ConstValue::Array(vec![ConstValue::Integer(1)])),
+            Type::Struct("0".into())
+        );
+        assert_eq!(legacy(ConstValue::Complex), Type::Struct("0".into()));
     }
 
     #[test]

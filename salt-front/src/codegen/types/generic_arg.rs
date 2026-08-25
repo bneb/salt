@@ -60,16 +60,42 @@ impl GenericArg {
         Err(format!("not a legacy const spelling: {spelling:?}"))
     }
 
-    /// Reproduces today's string spellings EXACTLY, proving behavior-neutrality:
-    /// `Type(t)` unchanged; `Integer(i)` -> `Struct(decimal)`, the wrap emitted
-    /// by seeker.rs:420, scan_types.rs:146 and expr/resolver.rs:101,248; any
-    /// other const -> `Struct("0")`, the scan_types.rs:147,149 fallback.
+    /// Maps args to their string spellings. The INTEGER class reproduces the
+    /// pre-T-c convention exactly (`Integer(i)` -> `Struct(decimal)`) --
+    /// behavior-neutrality for everything that worked before. T-c extends
+    /// the previously-BROKEN classes: Bool consts spell as the reserved
+    /// keywords "true"/"false" (no user type can collide; see expr/utils
+    /// is_value_spelled_leaf) and Float consts as digit-safe IEEE bits
+    /// (-0.0 folded onto 0.0 via float_key) -- Display would emit "inf"/
+    /// "NaN" (legal identifiers!) and '.', which bypasses the value-leaf
+    /// guard and re-opens pkg__2_5-style ghost minting. Array/Complex have
+    /// no turbofish literal syntax and keep the legacy Struct("0") spell.
     pub(crate) fn to_legacy_type(&self) -> Type {
         match self {
             Self::Type(ty) => ty.clone(),
             Self::Const(ConstValue::Integer(i)) => Type::Struct(i.to_string()),
+            Self::Const(ConstValue::Bool(b)) => Type::Struct(b.to_string()),
+            Self::Const(ConstValue::Float(f)) => Type::Struct(float_key(*f).to_string()),
             Self::Const(_) => Type::Struct("0".to_string()),
         }
+    }
+
+    /// Extracts one const-generic argument from turbofish syntax with VALUE
+    /// semantics: hex/underscore/Unary-Neg literals normalize through the
+    /// evaluator exactly as scan_types does, so every creation site agrees
+    /// on a single canonical spelling per value. Int literals that do not
+    /// fit i64 return the [E003] refusal diagnostic (T-b).
+    pub(crate) fn from_const_expr(
+        expr: &syn::Expr,
+        evaluator: &crate::evaluator::Evaluator,
+    ) -> Result<Self, String> {
+        if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(li), .. }) = expr {
+            let val = li.base10_parse::<i64>()
+                .map_err(|_| unrepresentable_const_diag(li.base10_digits()))?;
+            return Ok(Self::Const(ConstValue::Integer(val)));
+        }
+        let value = evaluator.eval_expr(expr).map_err(|e| format!("{:?}", e))?;
+        Ok(Self::Const(value))
     }
 }
 

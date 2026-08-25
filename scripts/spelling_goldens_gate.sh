@@ -61,6 +61,19 @@ check unary_plus nonzero '' '' "$RT/rt_probe_unary_plus.salt"              # par
 check overflow_literal nonzero '' '' "$RT/rt_probe_overflow_literal.salt"   # FLIP[T-b] LANDED: [E003] refusal cites digits; no MLIR artifact -> no O_K ghost, no ptr-typed call
 check i64max 0 '9223372036854775807' '' "$RT/rt_probe_i64max.salt"
 
+# T-c landed (round 9): non-Integer turbofish consts get DISTINCT value
+# identities -- Bool keywords, Float digit-safe IEEE bits. The gate must
+# enforce distinct SUFFIXED CALLS, not just decls (narrow fixes proved
+# false-fixed before; see handoff ROUND 8 T-c scope).
+check bool_true 0 'struct_main__B_true' '(B_FLAG|B__mk\(\))' \
+  "$ROOT/.round1-staging/wsr3/rt_audit_bool_float_turbofish.salt"
+check bool_false 0 'struct_main__B_false' '(B_FLAG|B__mk\(\))' \
+  "$ROOT/.round1-staging/wsr3/rt_audit_bool_float_turbofish.salt"
+check float_distinct 0 'F_4612811918334230528' '(F_D|B__mk\(\))' \
+  "$ROOT/.round1-staging/wsr3p2/rtv_float_turbofish.salt"
+check float_second 0 'F_4609434218613702656' '' \
+  "$ROOT/.round1-staging/wsr3p2/rtv_float_turbofish.salt"
+
 if [ -n "$FAILURES" ]; then
   echo "SPELLING-GOLDENS FAILED:"
   printf '%s' "$FAILURES"
