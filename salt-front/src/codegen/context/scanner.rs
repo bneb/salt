@@ -383,7 +383,7 @@ impl<'a> CodegenContext<'a> {
 
         let (fields, field_order, field_alignments) = self.build_struct_fields(s);
 
-        self.struct_registry_mut().insert(key, crate::registry::StructInfo {
+        self.define_struct_instance(key, crate::registry::StructInfo {
             name: name.clone(),
             fields,
             field_order,
@@ -448,7 +448,7 @@ impl<'a> CodegenContext<'a> {
                 specialization: None,
             };
 
-            self.enum_registry_mut().insert(key, crate::registry::EnumInfo {
+            self.define_enum_instance(key, crate::registry::EnumInfo {
                 name,
                 variants,
                 max_payload_size: max_size,

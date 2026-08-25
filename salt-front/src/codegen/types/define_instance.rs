@@ -8,7 +8,7 @@
 
 use crate::registry::{EnumInfo, StructInfo};
 use crate::types::TypeKey;
-use crate::codegen::context::LoweringContext;
+use crate::codegen::context::{CodegenContext, LoweringContext};
 
 impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
     /// Registers one monomorphized struct instance under `key`.
@@ -25,6 +25,27 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
     /// Semantics are EXACTLY `enum_registry.insert(key, info)`; same
     /// overwrite-in-place contract as [`Self::define_struct_instance`].
     pub(crate) fn define_enum_instance(&mut self, key: TypeKey, info: EnumInfo) {
+        self.enum_registry_mut().insert(key, info);
+    }
+}
+
+/// CodegenContext-receiver twins of the chokepoint above.
+///
+/// The accessor families differ (`RefMut` guard vs `&mut`, see
+/// context/accessors.rs:150-161 vs :13-16), so the insert is expressed once
+/// per receiver instead of forcing bootstrap callers through the
+/// all-RefCell `with_lowering_ctx` lock (context.rs:1210). Semantics are
+/// identical: overwrite-in-place `HashMap::insert`, nothing returned, no
+/// emission state touched. Bootstrap note: these wrappers never read or
+/// write `suppress_specialization`; `registry_init` keeps owning it.
+impl<'a> CodegenContext<'a> {
+    /// Registers one monomorphized struct instance under `key`.
+    pub(crate) fn define_struct_instance(&self, key: TypeKey, info: StructInfo) {
+        self.struct_registry_mut().insert(key, info);
+    }
+
+    /// Registers one monomorphized enum instance under `key`.
+    pub(crate) fn define_enum_instance(&self, key: TypeKey, info: EnumInfo) {
         self.enum_registry_mut().insert(key, info);
     }
 }
