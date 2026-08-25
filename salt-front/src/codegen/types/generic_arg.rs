@@ -73,6 +73,22 @@ impl GenericArg {
     }
 }
 
+/// WS-R3/T-b refusal diagnostic for an integer literal in const-generic
+/// position that cannot represent an `i64`. Compilation must FAIL with this
+/// message instead of silently dropping the argument: the drop minted ghost
+/// param-name identities like `main__O_K` plus ptr-typed unsuffixed calls.
+/// E003 per src/errors.rs conventions: comptime-value failures refine to the
+/// compile-stage code (cf. lib.rs "comptime evaluation failed").
+pub(crate) fn unrepresentable_const_diag(digits: &str) -> String {
+    crate::errors::coded(
+        "E003",
+        format!(
+            "const generic argument `{digits}` does not fit in i64 \
+             (valid range -9223372036854775808..=9223372036854775807)"
+        ),
+    )
+}
+
 /// Canonical float identity key: IEEE bits with -0.0 folded onto 0.0.
 fn float_key(f: f64) -> u64 {
     let bits = f.to_bits();

@@ -418,9 +418,15 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
                              params.push(crate::codegen::type_bridge::resolve_type(self, &crate::grammar::SynType::from_std(ty.clone()).map_err(|e| e.to_string())?));
                          }
                          syn::GenericArgument::Const(syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(i), .. })) => {
-                             if let Ok(val) = i.base10_parse::<i64>() {
-                                 params.push(GenericArg::from_const_value(ConstValue::Integer(val)).to_legacy_type());
-                             }
+                            // T-b refusal: silent drop minted ghost O_K
+                            // identities downstream. Hardened identically to
+                            // expr/resolver.rs so wiring this pass can never
+                            // reintroduce the drop. `_ => {}` (Unary etc.) is
+                            // intentionally untouched (T-a scope).
+                            let val = i.base10_parse::<i64>().map_err(|_e| {
+                                crate::codegen::types::generic_arg::unrepresentable_const_diag(i.base10_digits())
+                            })?;
+                            params.push(GenericArg::from_const_value(ConstValue::Integer(val)).to_legacy_type());
                          }
                          _ => {}
                      }

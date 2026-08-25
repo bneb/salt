@@ -48,7 +48,7 @@ check shadow_repro 0 'Box2__make_5' '(_NODE|Node_[0-9])' \
 check neg_turbofish 0 'S_-7' '' "$RT/rt_probe_neg_turbofish.salt"          # FLIP[T-a]: dual S_-7/S_main__-7 collapses to ONE spelling
 check leading_zero 0 '(Z_7|Z__mk_7)' '' "$RT/rt_probe_leading_zero.salt"
 check unary_plus nonzero '' '' "$RT/rt_probe_unary_plus.salt"              # parser E002; router unreached
-check overflow_literal 0 'O_K' '' "$RT/rt_probe_overflow_literal.salt"     # FLIP[T-b]: must become refusal + diagnostic, no O_K ghost
+check overflow_literal nonzero '' '' "$RT/rt_probe_overflow_literal.salt"   # FLIP[T-b] LANDED: [E003] refusal cites digits; no MLIR artifact -> no O_K ghost, no ptr-typed call
 check i64max 0 '9223372036854775807' '' "$RT/rt_probe_i64max.salt"
 
 if [ -n "$FAILURES" ]; then

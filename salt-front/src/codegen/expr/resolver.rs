@@ -94,14 +94,18 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
                              generics.push(resolved.clone());
                              fn_level_generics.push(resolved);
                          } else if let syn::GenericArgument::Const(syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(li), .. })) = arg {
-                             if let Ok(val) = li.base10_parse::<i64>() {
-                                 // Const-generic values ride as value-named
-                                 // Struct types (scan_types convention) so
-                                 // distinct ints distinct-specialize.
-                                 let v = crate::types::Type::Struct(val.to_string());
-                                 generics.push(v.clone());
-                                 fn_level_generics.push(v);
-                             }
+                            // T-b refusal: an unrepresentable literal fails
+                            // compilation here (the LIVE call path); it must
+                            // never silently drop into fewer generics.
+                            let val = li.base10_parse::<i64>().map_err(|_e| {
+                                crate::codegen::types::generic_arg::unrepresentable_const_diag(li.base10_digits())
+                            })?;
+                            // Const-generic values ride as value-named
+                            // Struct types (scan_types convention) so
+                            // distinct ints distinct-specialize.
+                            let v = crate::types::Type::Struct(val.to_string());
+                            generics.push(v.clone());
+                            fn_level_generics.push(v);
                          }
                      }
                  }
@@ -244,9 +248,11 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
                     let syn_ty = crate::grammar::SynType::from_std(ty.clone()).map_err(|e| e.to_string())?;
                     generics.push(crate::codegen::type_bridge::resolve_type(self.ctx, &syn_ty));
                 } else if let syn::GenericArgument::Const(syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(li), .. })) = arg {
-                    if let Ok(val) = li.base10_parse::<i64>() {
-                        generics.push(crate::types::Type::Struct(val.to_string()));
-                    }
+                    // T-b refusal: same class as resolve_path above.
+                    let val = li.base10_parse::<i64>().map_err(|_e| {
+                        crate::codegen::types::generic_arg::unrepresentable_const_diag(li.base10_digits())
+                    })?;
+                    generics.push(crate::types::Type::Struct(val.to_string()));
                 }
             }
         }
