@@ -351,6 +351,7 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
                  Ok(info) => { self.define_enum_instance(key.clone(), info); }
                  Err(e) => {
                      self.enum_registry_mut().remove(&key);
+                    self.instance_ids_mut().remove(&key);
                      self.monomorphizer_mut().pending_set.remove(&mangled);
                      return Err(e);
                  }
@@ -366,6 +367,7 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
                          // type name (D1: field access on erased generic self-types),
                          // so leave the registry entry absent instead.
                          self.struct_registry_mut().remove(&key);
+                        self.instance_ids_mut().remove(&key);
                          self.monomorphizer_mut().pending_set.remove(&mangled);
                          return Ok(key);
                      }

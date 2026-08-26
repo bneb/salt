@@ -179,10 +179,7 @@ pub fn emit_field(
                 if let Some(i) = candidates.iter().position(|i| i.name == *name) { return Some(candidates[i].clone()); }
                 candidates.into_iter().next().cloned()
             })
-            .ok_or_else(|| {
-                let available: Vec<String> = ctx.struct_registry().values().map(|i| i.name.clone()).collect();
-                format!("Undefined struct: {} (Available: {:?})", name, available)
-            })?;
+            .ok_or_else(|| crate::codegen::expr::literals::undefined_struct_err(ctx, name))?;
             
         let field_name = if let syn::Member::Named(id) = &f.member { id.to_string() } else { "unnamed".to_string() };
         
