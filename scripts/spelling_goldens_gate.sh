@@ -99,6 +99,24 @@ check float_distinct 0 'F_4612811918334230528' '(F_D|B__mk\(\))' \
 check float_second 0 'F_4609434218613702656' '' \
   "$ROOT/.round1-staging/wsr3p2/rtv_float_turbofish.salt"
 
+# S8 maturity ratchet: corpus growth pins for emission contracts the RT6
+# battery does not cover. Probes: .round1-staging/s20/s8/probes/.
+S8="$ROOT/.round1-staging/s20/s8/probes"
+# i64::MIN spelled as a negative literal must survive as the exact constant
+# (no E003 overflow refusal, no saturation to ...807).
+check i64min_neg_literal 0 'constant -9223372036854775808 : i64' \
+  'constant 9223372036854775807 : i64' "$S8/probe_i64min_neg.salt"
+# Enum declaration lowers to one tagged-union struct named struct_main__Color
+# (ghost-suffix family forbidden) with the variant tag inserted at field [0].
+check enum_struct_identity 0 'struct_main__Color' '(Color_[0-9]|Color__[0-9])' \
+  "$S8/probe_enum_variant.salt"
+check enum_tag_insert 0 'llvm\.insertvalue .*\[0\] : !struct_main__Color' '' \
+  "$S8/probe_enum_variant.salt"
+# Scientific-notation literal normalizes through the evaluator to the fixed
+# 17-mantissa-digit decimal spelling; raw source text must not leak.
+check sci_float_norm 0 '1\.50000000000000000e3 : f64' '1\.5e3' \
+  "$S8/probe_sci_float.salt"
+
 if [ -n "$FAILURES" ]; then
   echo "SPELLING-GOLDENS FAILED:"
   printf '%s' "$FAILURES"
