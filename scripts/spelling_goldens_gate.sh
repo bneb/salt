@@ -75,10 +75,10 @@ check i64max 0 '9223372036854775807' '' "$RT/rt_probe_i64max.salt"
 # actionable diagnostics elsewhere.
 S3B="$ROOT/.round1-staging/s3b"
 check nb4_receiver_compiles 0 'main__len_of_T' '(Unsupported explicit cast|Unresolved generic)' "$S3B/nb4_generic_vec_receiver.salt"
-# NB-5c landed: U binds via prefix unification; remaining refusal = missing
-# 1-arg instance key (allocator-placeholder arity normalization, S3 final).
-check nb2_refuses_cleanly nonzero 'Undefined struct: std__collections__vec__Vec_i64' '' "$S3B/nb2_vec_identity_match.salt"
-check nb2c_near_miss nonzero 'closest registered instance' '' "$S3B/nb2_vec_identity_match.salt"  # NB-6 UX bridge: near-miss hint present
+# NB-5c landed: U binds via prefix unification; drain instantiates as
+# main__drain_i64 with the 1-arg Vec spelling (allocator placeholder no
+# longer forks the call-site key).
+check nb2_compiles 0 'main__drain_i64' '(Unresolved generic|Undefined struct)' "$S3B/nb2_vec_identity_match.salt"  # FLIP[NB-5c]: arity-tolerant unify binds U
 
 # NB-4/NB-5 landed (round 14-15): generic-receiver methods that cannot bind
 # their type params REFUSE with actionable guidance instead of wrong-code

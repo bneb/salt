@@ -105,6 +105,23 @@ impl<'a> CodegenContext<'a> {
         // Fallback: direct name lookup (for types not yet in registry)
         let canonical_name = ty.to_canonical_name();
         let struct_reg = self.struct_registry();
+
+        // NB-6 first-use completion: requested spelling is a proper
+        // PARAMETER-BOUNDARY prefix of exactly one registered instance =>
+        // resolve to it (ties => shortest). Boundary byte '_' prevents
+        // partial-segment matches (i7 vs i64).
+        let mut completions: Vec<_> = struct_reg.values()
+            .filter(|info| {
+                info.name.starts_with(canonical_name.as_str())
+                    && info.name.as_bytes().get(canonical_name.len()) == Some(&b'_')
+            })
+            .cloned()
+            .collect();
+        if !completions.is_empty() {
+            completions.sort_by(|a, b| a.name.cmp(&b.name));
+            return Some(completions.into_iter().next().unwrap());
+        }
+
         struct_reg.values().find(|info| {
             let info_canonical = Type::Struct(info.name.clone()).to_canonical_name();
             info.name == canonical_name || info_canonical == canonical_name
@@ -130,6 +147,24 @@ impl<'a> CodegenContext<'a> {
         let ty = Type::Struct(name.to_string());
         if let Some(info) = self.lookup_struct_by_type(&ty) {
             return Some(info);
+        }
+
+        // 2.5. NB-6 first-use completion: requested spelling is a proper
+        // PARAMETER-BOUNDARY prefix of exactly one registered instance =>
+        // resolve to it ("first use completes; cache is authoritative").
+        // Boundary byte '_' prevents partial-segment matches (i7 vs i64).
+        // Ties (same placeholder via different module paths) resolve to the
+        // shortest spelling deterministically.
+        let mut completions: Vec<_> = struct_reg.values()
+            .filter(|info| {
+                info.name.starts_with(name)
+                    && info.name.as_bytes().get(name.len()) == Some(&b'_')
+            })
+            .cloned()
+            .collect();
+        if !completions.is_empty() {
+            completions.sort_by(|a, b| a.name.cmp(&b.name));
+            return Some(completions.into_iter().next().unwrap());
         }
 
         // 3. Suffix fallback - pick shortest match (most specific)

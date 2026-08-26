@@ -232,6 +232,29 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
         if let Some(i) = candidates.iter().position(|i| i.name == name) {
             return Some(candidates[i].clone());
         }
+
+        // NB-6 first-use completion: a requested spelling that is a proper
+        // PARAMETER-BOUNDARY prefix of exactly one registered instance
+        // resolves to it ("first use completes; cache is authoritative").
+        // Boundary check requires the next byte to be '_' so partial
+        // segment matches (i7 vs i64) never complete.
+        let mut completions: Vec<_> = self.discovery.struct_registry.values()
+            .filter(|i| {
+                i.name.starts_with(name)
+                    && i.name.as_bytes().get(name.len()) == Some(&b'_')
+            })
+            .collect();
+        completions.sort_by(|a, b| a.name.cmp(&b.name));
+        // Deterministic shortest-wins: competing completions arise from the
+        // SAME unbound placeholder spelled via different module paths
+        // (A vs main__A); they denote ONE instance. Distinct allocators
+        // remain reachable via explicit full turbofish.
+        if let Some(c) = completions.into_iter().next() {
+            return Some(c.clone());
+        }
+
+        // Legacy suffix fallback (shortest __suffix match) — retained LAST
+        // so first-use completion takes precedence when applicable.
         candidates.into_iter().next().cloned()
     }
 
@@ -642,6 +665,10 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
     pub fn lookup_struct_by_type(&self, ty: &Type) -> Option<crate::registry::StructInfo> {
         match ty {
             Type::Struct(name) => {
+                // NB-6 first-use completion (mirror of struct_lookup twin).
+                if let Some(done) = self.find_struct_by_name(name) {
+                    return Some(done);
+                }
                 let mut candidates: Vec<_> = self.discovery.struct_registry.iter()
                     .filter(|(key, info)| info.name == *name || key.name == *name || key.mangle() == *name)
                     .map(|(_, info)| info).collect();
@@ -649,7 +676,19 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
                 if let Some(i) = candidates.iter().position(|i| i.name == *name) {
                     return Some(candidates[i].clone());
                 }
-                candidates.into_iter().next().cloned()
+                // NB-6 first-use completion: a requested spelling that is a
+                // proper PARAMETER-BOUNDARY prefix of registered instances
+                // resolves to the SHORTEST one (ties = same unbound
+                // placeholder via different module paths; distinct
+                // allocators need explicit full turbofish).
+                let mut completions: Vec<_> = self.discovery.struct_registry.iter()
+                    .filter(|(_, info)| {
+                        info.name.starts_with(name.as_str())
+                            && info.name.as_bytes().get(name.len()) == Some(&b'_')
+                    })
+                    .map(|(_, info)| info).collect();
+                completions.sort_by(|a, b| a.name.cmp(&b.name));
+                completions.into_iter().next().cloned()
             }
             _ => None,
         }
