@@ -80,7 +80,17 @@ fn eval_struct_fields(
             *ctx.pending_pointer_state = None;
 
             if f_ty == Type::Unit && actual_ty == Type::I64 {
-                crate::ice!("Type Poisoning Detected: Field '{}' resolved to Unit but assigned I64. \nGeneric substitution failed during monomorphization. \nStructure: {}\nArg Type: {:?}", name, mangled_name, actual_ty);
+                // NB-1: this shape arises when a user struct's mangled name
+                // collides with a generic instantiation of same prefix
+                // (GBox_i64 vs GBox<i64>). Refuse with a NAMING diagnostic
+                // instead of panicking mid-emission.
+                return Err(format!(
+                    "[E007] struct literal `{}` conflicts with registered type `{}`: \
+                     field `{}` resolved to `unit` but received `i64`. \
+                     Rename one of the two competing types (naming-collision class NB-1).",
+                    s.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default(),
+                    mangled_name, name
+                ));
             }
 
             field_vals.insert(name, (val, actual_ty));
