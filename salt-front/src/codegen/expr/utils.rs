@@ -190,6 +190,64 @@ fn is_value_spelled_leaf(leaf: &str) -> bool {
     crate::codegen::types::generic_arg::is_value_spelled_leaf(leaf)
 }
 
+fn resolve_std_registry_prefix(
+    registry: Option<&crate::registry::Registry>,
+    segments: &[String],
+) -> Option<(String, String)> {
+    if segments[0] != "std" { return None; }
+    for i in (1..=segments.len()).rev() {
+        let namespace = Mangler::mangle(&segments[0..i]);
+        if let Some(reg) = registry {
+            let mod_path = segments[0..i].join(".");
+            if reg.modules.contains_key(&mod_path) {
+                return Some((namespace, Mangler::mangle(&segments[i..])));
+            }
+        }
+    }
+    Some((Mangler::mangle(segments), String::new()))
+}
+
+fn resolve_import_alias_prefix(
+    registry: Option<&crate::registry::Registry>,
+    imports: &[crate::grammar::ImportDecl],
+    first: &str,
+    segments: &[String],
+) -> Option<(String, String)> {
+    for imp in imports.iter() {
+        if let Some(res) = check_explicit_and_implicit_alias(registry, imp, first, segments) {
+            return Some(res);
+        }
+    }
+    None
+}
+
+fn resolve_namespace_import_prefix(
+    imports: &[crate::grammar::ImportDecl],
+    segments: &[String],
+) -> Option<(String, String)> {
+    for i in (1..=segments.len()).rev() {
+        let namespace = segments[0..i].join(".");
+        for imp in imports.iter() {
+            let full: String = imp.name.iter().map(|id: &syn::Ident| id.to_string()).collect::<Vec<_>>().join(".");
+            if full == namespace {
+                let full_pkg: String = Mangler::mangle(&imp.name.iter().map(|id: &syn::Ident| id.to_string()).collect::<Vec<_>>());
+                let item = if i < segments.len() { Mangler::mangle(&segments[i..]) } else { String::new() };
+                return Some((full_pkg, item));
+            }
+        }
+    }
+    None
+}
+
+fn is_intrinsic_or_ptr_name(name: &str) -> bool {
+    let intrinsics = ["size_of", "align_of", "zeroed", "popcount", "ctpop"];
+    intrinsics.contains(&name)
+        || name.starts_with("intrin_")
+        || name.contains("ptr_offset")
+        || name.contains("ptr_read")
+        || name.contains("ptr_write")
+}
+
 pub fn resolve_package_prefix(
     registry: Option<&crate::registry::Registry>,
     imports: &[crate::grammar::ImportDecl],
@@ -202,67 +260,29 @@ pub fn resolve_package_prefix(
     // into `pkg__-7`-style identities.
     if is_value_spelled_leaf(&segments[segments.len() - 1]) { return None; }
 
-    if segments[0] == "std" {
-        for i in (1..=segments.len()).rev() {
-            let namespace = Mangler::mangle(&segments[0..i]);
-            if let Some(reg) = registry {
-                let mod_path = segments[0..i].join(".");
-                if reg.modules.contains_key(&mod_path) {
-                    return Some((namespace, Mangler::mangle(&segments[i..])));
-                }
-            }
-        }
-        return Some((Mangler::mangle(segments), String::new()));
-    }
+    if let Some(res) = resolve_std_registry_prefix(registry, segments) { return Some(res); }
 
     let first = &segments[0];
-    for imp in imports.iter() {
-        if let Some(res) = check_explicit_and_implicit_alias(registry, imp, first, segments) {
-            return Some(res);
-        }
-    }
-    
-    for i in (1..=segments.len()).rev() {
-        let namespace = segments[0..i].join(".");
-        for imp in imports.iter() {
-            let full: String = imp.name.iter().map(|id: &syn::Ident| id.to_string()).collect::<Vec<_>>().join(".");
-            if full == namespace {
-                let full_pkg: String = Mangler::mangle(&imp.name.iter().map(|id: &syn::Ident| id.to_string()).collect::<Vec<_>>());
-                let item = if i < segments.len() { Mangler::mangle(&segments[i..]) } else { String::new() };
-                return Some((full_pkg, item));
-            }
-        }
-    }
+    if let Some(res) = resolve_import_alias_prefix(registry, imports, first, segments) { return Some(res); }
+    if let Some(res) = resolve_namespace_import_prefix(imports, segments) { return Some(res); }
 
     if segments.len() == 1 {
         let name = &segments[0];
-        let intrinsics = ["size_of", "align_of", "zeroed", "popcount", "ctpop"];
-        if intrinsics.contains(&name.as_str()) || name.starts_with("intrin_") || 
-           name.contains("ptr_offset") || name.contains("ptr_read") || name.contains("ptr_write") {
-            return None;
-        }
-    }
-    
-    if segments.len() == 1 {
-        let name = &segments[0];
-        if external_decls.contains(name) {
-            return None;
-        }
+        if is_intrinsic_or_ptr_name(name) { return None; }
+        if external_decls.contains(name) { return None; }
     }
 
     if let Some(res) = check_wildcard_resolution(registry, imports, segments) {
         return Some(res);
     }
-    
+
     let pkg_name = {
         let pkg = current_package?;
         Mangler::mangle(&pkg.name.iter().map(|id| id.to_string()).collect::<Vec<_>>())
     };
-    
-    if pkg_name.is_empty() {
-        return None;
-    }
-    
+
+    if pkg_name.is_empty() { return None; }
+
     let item = Mangler::mangle(segments);
     Some((pkg_name, item))
 }
