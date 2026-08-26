@@ -4,7 +4,8 @@ Instantiated goal prompts for SPRINT_ROADMAP.md sprints. One goal per sprint;
 any agent executes cold. Dependencies run in ID order; unmet dependencies =
 BLOCKED, not skip.
 
-- **SALT-S1-CORRECTNESS-FOUNDATIONS** — DISPATCHED (in flight)
+- **SALT-S1-CORRECTNESS-FOUNDATIONS** — COMPLETE (ghost-identity family closed at root; see ROADMAP.md S-ladder retros)
+- **SALT-S2-ONE-TYPE-SYSTEM** — IN FLIGHT (S0–S3a landed: InstanceId scaffold, define_instance chokepoint, side map; S3b readers + S4/S5 remain)
 - SALT-S2-ONE-TYPE-SYSTEM — DEPENDS-ON: S1
 - SALT-S3-GENERICS-THAT-EARN-TRUST — DEPENDS-ON: S2
 - SALT-S4-VERIFICATION-AS-PRODUCT — DEPENDS-ON: S2
