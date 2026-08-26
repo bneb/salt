@@ -118,12 +118,10 @@ pub(crate) fn is_value_spelled_leaf(leaf: &str) -> bool {
 /// E003 per src/errors.rs conventions: comptime-value failures refine to the
 /// compile-stage code (cf. lib.rs "comptime evaluation failed").
 pub(crate) fn unrepresentable_const_diag(digits: &str) -> String {
-    crate::errors::coded(
-        "E003",
-        format!(
-            "const generic argument `{digits}` does not fit in i64 \
-             (valid range -9223372036854775808..=9223372036854775807)"
-        ),
+    // Cause-line convention: refine without repeating the banner code.
+    format!(
+        "const generic argument `{digits}` does not fit in i64 \
+         (valid range -9223372036854775808..=9223372036854775807)"
     )
 }
 

@@ -30,6 +30,9 @@ check() {
   if [ "$want_exit" = "nonzero" ] && [ "$rc" -eq 0 ]; then
     FAILURES+="GOLDEN $name: expected nonzero exit, got 0"$'\n'; return
   fi
+  if [ "$want_exit" = "nonzero" ] && [ -f "$out" ]; then
+    FAILURES+="GOLDEN $name: refusal left MLIR artifact"$'\n'
+  fi
   # Refusal rows (nonzero) pin their contract against STDERR; compile rows
   # pin against emitted MLIR.
   local target="$out"

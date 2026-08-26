@@ -182,8 +182,10 @@ pub fn cast_numeric(
                 _ => false,
             };
             if unresolved_target {
+                // Cause-line convention (errors.rs): the CLI banner carries
+                // the code; cause lines REFINE without repeating it.
                 return Err(format!(
-                    "[E003] cannot infer type parameter `{}` for this expression; \
+                    "cannot infer type parameter `{}` for this expression; \
                      add a turbofish (e.g. `Vec::<i64>::new()`) or an explicit annotation",
                     to.mangle_suffix()
                 ));

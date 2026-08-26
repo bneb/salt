@@ -33,7 +33,6 @@ fn compile_src(src: &str) -> Result<String, String> {
 #[test]
 fn overflow_literal_refuses_with_cited_digits() {
     let err = drive("99999999999999999999").expect_err("overflow must refuse");
-    assert!(err.contains("[E003]"), "missing [E003] prefix: {}", err);
     assert!(err.contains("does not fit in i64"), "missing class text: {}", err);
     assert!(err.contains("99999999999999999999"), "must cite digits: {}", err);
 }
@@ -42,7 +41,7 @@ fn overflow_literal_refuses_with_cited_digits() {
 fn first_unrepresentable_value_refuses_too() {
     let err = drive("9223372036854775808").expect_err("i64::MAX+1 must refuse");
     assert!(
-        err.contains("[E003]") && err.contains("9223372036854775808"),
+        err.contains("does not fit in i64") && err.contains("9223372036854775808"),
         "unexpected refusal text: {}", err
     );
 }
@@ -75,4 +74,16 @@ fn generic_receiver_method_without_bindable_params_refuses_cleanly() {
     "#;
     let err = compile_src(SRC).expect_err("unbindable generics must refuse");
     assert!(err.contains("Unresolved generic"), "unexpected refusal: {}", err);
+}#[test]
+fn cast_to_undeclared_placeholder_gets_actionable_diagnostic() {
+    // NB-4/NB-5 arm pin (RT amendment 1): casts whose target is a bare
+    // unresolved placeholder must produce the TURBOFISH guidance message,
+    // not the generic unsupported-cast text.
+    let err = compile_src(
+        "package main\n\npub fn main() -> i32 { let x = 5 as Q; return x as i32; }\n",
+    ).expect_err("placeholder-target cast must refuse");
+    assert!(
+        err.contains("cannot infer type parameter"),
+        "missing actionable guidance: {}", err
+    );
 }
