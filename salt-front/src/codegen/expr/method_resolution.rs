@@ -1041,7 +1041,13 @@ fn emit_resolved_method_call(
                 crate::grammar::GenericParam::Type { name, .. } => name.to_string(),
                 crate::grammar::GenericParam::Const { name, .. } => name.to_string(),
             };
-            ctx.current_type_map_mut().insert(name.clone(), Type::Generic(name));
+            // S1 hardening: receiver-derived bindings (populate_type_map_
+            // from_receiver seeded {T: i64}) must NOT be clobbered by
+            // same-named merged impl params -- entry semantics keep the
+            // concrete binding; pure placeholders still seed.
+            ctx.current_type_map_mut()
+                .entry(name.clone())
+                .or_insert_with(|| Type::Generic(name));
         }
     }
 

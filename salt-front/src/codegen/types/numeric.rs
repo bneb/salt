@@ -306,6 +306,11 @@ fn promote_numeric_fallback(ctx: &mut LoweringContext, out: &mut String, var: &s
                     _ => false,
                 }
             }
+            fn value_leaf(sg: &str) -> bool {
+                let d = sg.strip_prefix('-').unwrap_or(sg);
+                (!d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+                    || sg == "true" || sg == "false"
+            }
             let (f_name, f_args) = args_of(from);
             let (t_name, t_args) = args_of(to);
             if let (Some(f_name), Some(t_name)) = (f_name, t_name) {
@@ -318,6 +323,18 @@ fn promote_numeric_fallback(ctx: &mut LoweringContext, out: &mut String, var: &s
                     let extra_ok =
                         f_args[t_args.len()..].iter().all(bare_placeholder_leaf);
                     if extra_ok {
+                        return Ok(var.to_string());
+                    }
+                }
+                // NB-5c mirror: a STRUCT-spelled source encodes its bound
+                // values in the name tail (...Vec_i64 => ["i64"]). Accept
+                // when every tail segment is a value leaf and the segment
+                // count covers the target's BOUND (non-placeholder) args.
+                if matches!(from, Type::Struct(_)) && f_name.starts_with(t_name.as_str()) {
+                    let tail = &f_name[t_name.len()..];
+                    let segs: Vec<&str> = tail.split('_').filter(|s| !s.is_empty()).collect();
+                    let bound_count = t_args.iter().filter(|a| !bare_placeholder_leaf(a)).count();
+                    if segs.iter().all(|sg| value_leaf(sg)) && segs.len() >= bound_count {
                         return Ok(var.to_string());
                     }
                 }
