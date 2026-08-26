@@ -26,6 +26,10 @@ fn drive(literal: &str) -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
+fn compile_src(src: &str) -> Result<String, String> {
+    compile(src, false, None, true).map_err(|e| e.to_string())
+}
+
 #[test]
 fn overflow_literal_refuses_with_cited_digits() {
     let err = drive("99999999999999999999").expect_err("overflow must refuse");
@@ -47,4 +51,28 @@ fn first_unrepresentable_value_refuses_too() {
 fn i64_max_still_compiles_full_width() {
     let mlir = drive("9223372036854775807").expect("boundary value compiles");
     assert!(mlir.contains("9223372036854775807"), "full-width spelling lost");
+}
+
+
+#[test]
+fn generic_receiver_method_without_bindable_params_refuses_cleanly() {
+    // NB-4/NB-5 contract: a method call whose type parameters cannot be
+    // bound from the receiver or arguments must REFUSE (nonzero, no MLIR
+    // artifact) instead of emitting phantom-cast wrong code.
+    const SRC: &str = r#"
+        package main
+
+        use std.collections.vec.Vec;
+
+        fn len_of<U>(v: Vec<U>) -> i64 { return v.len(); }
+
+        pub fn main() -> i32 {
+            let mut v = Vec::new();
+            v.push(1);
+            let n = len_of(v);
+            return n as i32;
+        }
+    "#;
+    let err = compile_src(SRC).expect_err("unbindable generics must refuse");
+    assert!(err.contains("Unresolved generic"), "unexpected refusal: {}", err);
 }

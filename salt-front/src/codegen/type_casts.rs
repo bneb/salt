@@ -163,6 +163,31 @@ pub fn cast_numeric(
             if let Some(r) = cast_pointer_and_references(ctx, out, var, from, to, &res)? {
                 return Ok(r);
             }
+            // NB-4/NB-5: a cast whose TARGET is a bare unresolved type
+            // parameter means upstream inference could not bind it (e.g.
+            // Vec::new() without turbofish). Refuse with actionable guidance
+            // instead of the generic message -- this class previously
+            // compiled as silent wrong-code only when values happened to
+            // flow; requiring a cast makes the gap unavoidable.
+            let unresolved_target = match &to {
+                Type::Struct(n) | Type::Generic(n) => {
+                    !n.contains("__")
+                        && !matches!(
+                            n.as_str(),
+                            "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
+                                | "usize" | "f32" | "f64" | "bool"
+                        )
+                }
+                Type::Concrete(n, a) if a.is_empty() => !n.contains("__"),
+                _ => false,
+            };
+            if unresolved_target {
+                return Err(format!(
+                    "[E003] cannot infer type parameter `{}` for this expression; \
+                     add a turbofish (e.g. `Vec::<i64>::new()`) or an explicit annotation",
+                    to.mangle_suffix()
+                ));
+            }
             Err(format!(
                 "Unsupported explicit cast {} -> {}",
                 from.mangle_suffix(),

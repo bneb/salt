@@ -22,15 +22,19 @@ FAILURES=""
 # check <name> <expected_exit:0|nonzero> <require_regex> <forbid_regex> <probe>
 check() {
   local name="$1" want_exit="$2" require="$3" forbid="$4" probe="$5"
-  local out="$TMP/${name}.mlir" rc=0
-  "$SALTC" "$probe" -o "$out" >/dev/null 2>&1 || rc=$?
+  local out="$TMP/${name}.mlir" err="$TMP/${name}.err" rc=0
+  "$SALTC" "$probe" -o "$out" >/dev/null 2>"$err" || rc=$?
   if [ "$want_exit" = "0" ] && [ "$rc" -ne 0 ]; then
     FAILURES+="GOLDEN $name: expected exit 0, got $rc"$'\n'; return
   fi
   if [ "$want_exit" = "nonzero" ] && [ "$rc" -eq 0 ]; then
     FAILURES+="GOLDEN $name: expected nonzero exit, got 0"$'\n'; return
   fi
-  if [ -n "$require" ] && ! grep -qE "$require" "$out" 2>/dev/null; then
+  # Refusal rows (nonzero) pin their contract against STDERR; compile rows
+  # pin against emitted MLIR.
+  local target="$out"
+  if [ "$want_exit" = "nonzero" ]; then target="$err"; fi
+  if [ -n "$require" ] && ! grep -qE "$require" "$target" 2>/dev/null; then
     FAILURES+="GOLDEN $name: required pattern missing: $require"$'\n'
   fi
   if [ -n "$forbid" ] && grep -qE "$forbid" "$out" 2>/dev/null; then
@@ -60,6 +64,14 @@ check leading_zero 0 '(Z_7|Z__mk_7)' '' "$RT/rt_probe_leading_zero.salt"
 check unary_plus nonzero '' '' "$RT/rt_probe_unary_plus.salt"              # parser E002; router unreached
 check overflow_literal nonzero '' '' "$RT/rt_probe_overflow_literal.salt"   # FLIP[T-b] LANDED: [E003] refusal cites digits; no MLIR artifact -> no O_K ghost, no ptr-typed call
 check i64max 0 '9223372036854775807' '' "$RT/rt_probe_i64max.salt"
+
+# NB-4/NB-5 landed (round 14-15): generic-receiver methods that cannot bind
+# their type params REFUSE with actionable guidance instead of wrong-code
+# casts/ghosts. Full local inference = backlog WS-7; these rows pin the
+# refusal contract until then.
+S36="$ROOT/.round1-staging/s3b"
+check nb4_infer_refusal nonzero 'Unresolved generic' '' "$S36/nb4_generic_vec_receiver.salt"  # completeness refusal precedes cast diag (NB-5 order)
+check nb2_infer_refusal nonzero 'Unresolved generic' '' "$S36/nb2_vec_match_generic.salt"
 
 # T-c landed (round 9): non-Integer turbofish consts get DISTINCT value
 # identities -- Bool keywords, Float digit-safe IEEE bits. The gate must
