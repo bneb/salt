@@ -979,6 +979,42 @@ fn determine_method_mangling(
     } else { mangled_method }
 }
 
+/// Collects single-use Ptr-tracked locals bound to OWNED by-value params.
+#[allow(clippy::cmp_owned)] // REASON: SSA ids embed var names; Ident lacks str-eq on this toolchain version
+fn collect_method_arg_moves(
+    m: &syn::ExprMethodCall,
+    arg_tys: &[Type],
+    local_vars: &HashMap<String, (Type, LocalKind)>,
+) -> Vec<String> {
+    let mut moved: Vec<String> = Vec::new();
+    for (i, arg_expr) in m.args.iter().enumerate() {
+        let owned = matches!(
+            arg_tys.get(i),
+            Some(Type::Struct(_)) | Some(Type::Concrete(..))
+        );
+        if !owned { continue; }
+        if let syn::Expr::Path(p) = arg_expr {
+            if p.path.segments.len() == 1 {
+                let name = p.path.segments[0].ident.to_string();
+                if matches!(local_vars.get(&name), Some((_, LocalKind::Ptr(_)))) {
+                    moved.push(name);
+                }
+            }
+        }
+    }
+    moved.sort();
+    moved.dedup();
+    moved.retain(|name| {
+        m.args.iter().filter(|a| matches!(
+            &**a,
+            syn::Expr::Path(pp)
+                if pp.path.segments.len() == 1
+                    && pp.path.segments[0].ident.to_string() == *name
+        )).count() == 1
+    });
+    moved
+}
+
 #[allow(clippy::too_many_arguments)] // REASON: all 11 params independently necessary for emitting resolved method call
 fn emit_resolved_method_call(
     ctx: &mut LoweringContext,
@@ -1066,6 +1102,17 @@ fn emit_resolved_method_call(
 
     let arg_tys = signature_arg_tys;
     
+    // NB move-semantics (method twin): owned by-value params move from
+    // single-use Ptr-tracked locals.
+    let method_moves = collect_method_arg_moves(m, &arg_tys, local_vars);
+    for name in &method_moves {
+        let _ = ctx.transfer_ownership_by_var_lc(name);
+    }
+
+    for name in &method_moves {
+        let _ = ctx.transfer_ownership_by_var_lc(name);
+    }
+
     for (i, arg_expr) in m.args.iter().enumerate() {
         let expected = arg_tys.get(i);
         let (val, ty) = emit_expr(ctx, out, arg_expr, local_vars, expected)?;

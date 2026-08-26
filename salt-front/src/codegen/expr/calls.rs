@@ -7,6 +7,47 @@ use super::emit_expr;
 use super::literals::emit_enum_constructor;
 use super::call_helpers::{emit_low_level_call, handle_post_call_state};
 #[allow(clippy::too_many_arguments)] // REASON: all 9 params independently meaningful; bundling would obscure intent
+/// NB move-semantics: bare-path args bound to OWNED by-value params take
+/// ownership from their Ptr-tracked source locals. Returns unique var names
+/// used exactly once across ALL positional args (conservative).
+#[allow(clippy::cmp_owned)] // REASON: SSA ids embed var names; Ident lacks str-eq on this toolchain version
+pub(crate) fn collect_owned_arg_moves(
+    args: &[syn::Expr],
+    arg_tys: &[Type],
+    local_vars: &HashMap<String, (Type, LocalKind)>,
+) -> Vec<String> {
+    let mut moved: Vec<String> = Vec::new();
+    for (i, arg_expr) in args.iter().enumerate() {
+        let owned = matches!(
+            arg_tys.get(i),
+            Some(Type::Struct(_)) | Some(Type::Concrete(..))
+        );
+        if !owned {
+            continue;
+        }
+        if let syn::Expr::Path(p) = arg_expr {
+            if p.path.segments.len() == 1 {
+                let name = p.path.segments[0].ident.to_string();
+                if matches!(local_vars.get(&name), Some((_, LocalKind::Ptr(_)))) {
+                    moved.push(name);
+                }
+            }
+        }
+    }
+    moved.sort();
+    moved.dedup();
+    moved.retain(|name| {
+        args.iter().filter(|a| matches!(
+            &**a,
+            syn::Expr::Path(pp)
+                if pp.path.segments.len() == 1
+                    && pp.path.segments[0].ident.to_string() == *name
+        )).count() == 1
+    });
+    moved
+}
+
+#[allow(clippy::too_many_arguments)] // REASON: all 9 params independently meaningful; bundling would obscure intent
 fn emit_function_call(
     ctx: &mut LoweringContext,
     out: &mut String,
@@ -552,6 +593,12 @@ fn emit_function_args(
 
     let mut args_vals = Vec::new();
     let mut inferred_tys = Vec::new();
+
+    // NB move-semantics: by-value owned args take ownership from their
+    // source locals (single-use only; conservative).
+    for name in collect_owned_arg_moves(args_vec, arg_tys, local_vars) {
+        let _ = ctx.transfer_ownership_by_var(&name);
+    }
 
     for (i, arg_expr) in args_vec.iter().enumerate() {
         let (mut val, mut ty) = super::emit_expr(ctx, out, arg_expr, local_vars, None)?;

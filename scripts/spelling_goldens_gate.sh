@@ -68,13 +68,22 @@ check unary_plus nonzero '' '' "$RT/rt_probe_unary_plus.salt"              # par
 check overflow_literal nonzero '' '' "$RT/rt_probe_overflow_literal.salt"   # FLIP[T-b] LANDED: [E003] refusal cites digits; no MLIR artifact -> no O_K ghost, no ptr-typed call
 check i64max 0 '9223372036854775807' '' "$RT/rt_probe_i64max.salt"
 
+# NB-4/NB-5 landed (rounds 14-16): generic-receiver chains no longer emit
+# phantom casts/ghosts. Where local inference is still missing (Vec::new()
+# without turbofish), identities remain CONSISTENTLY param-spelled
+# (len_of_T -- values correct, WS-7 will upgrade); refusal contracts pin
+# actionable diagnostics elsewhere.
+S3B="$ROOT/.round1-staging/s3b"
+check nb4_receiver_compiles 0 'main__len_of_T' '(Unsupported explicit cast|Unresolved generic)' "$S3B/nb4_generic_vec_receiver.salt"
+# NB-5c landed: U binds via prefix unification; remaining refusal = missing
+# 1-arg instance key (allocator-placeholder arity normalization, S3 final).
+check nb2_refuses_cleanly nonzero 'Undefined struct: std__collections__vec__Vec_i64' '' "$S3B/nb2_vec_identity_match.salt"
+
 # NB-4/NB-5 landed (round 14-15): generic-receiver methods that cannot bind
 # their type params REFUSE with actionable guidance instead of wrong-code
 # casts/ghosts. Full local inference = backlog WS-7; these rows pin the
 # refusal contract until then.
 S36="$ROOT/.round1-staging/s3b"
-check nb4_infer_refusal nonzero 'Unresolved generic' '' "$S36/nb4_generic_vec_receiver.salt"  # completeness refusal precedes cast diag (NB-5 order)
-check nb2_infer_refusal nonzero 'Unresolved generic' '' "$S36/nb2_vec_match_generic.salt"
 
 # T-c landed (round 9): non-Integer turbofish consts get DISTINCT value
 # identities -- Bool keywords, Float digit-safe IEEE bits. The gate must

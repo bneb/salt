@@ -326,6 +326,23 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
         self.control_flow.consumed_vars.contains(var_name)
     }
 
+
+    /// NB move-semantics twin (LoweringContext fields are direct refs).
+    pub(crate) fn transfer_ownership_by_var_lc(&mut self, var_name: &str) -> bool {
+        let mut removed = false;
+        for scope in self.control_flow.cleanup_stack.iter_mut().rev() {
+            if let Some(pos) = scope.iter().position(|t| t.var_name == var_name) {
+                scope.remove(pos);
+                removed = true;
+                break;
+            }
+        }
+        if removed {
+            let _ = self.ownership_tracker.mark_moved(var_name, self.z3_solver);
+        }
+        removed
+    }
+
     pub fn mark_devoured(&mut self, var_name: &str) {
         self.control_flow.devoured_vars.insert(var_name.to_string());
     }
@@ -750,6 +767,24 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
             out.push_str(&format!("    func.call @{}({}) : (!llvm.ptr) -> ()\n", task.drop_fn, task.value));
         }
         Ok(())
+    }
+
+    /// NB move-semantics: removes any cleanup task whose var_name matches
+    /// (by-value argument move into a callee) and records the Z3 Moved
+    /// transition. Returns true when a tracked task was removed.
+    pub fn transfer_ownership_by_var(&mut self, var_name: &str) -> bool {
+        let mut removed = false;
+        for scope in self.control_flow.cleanup_stack.iter_mut().rev() {
+            if let Some(pos) = scope.iter().position(|t| t.var_name == var_name) {
+                scope.remove(pos);
+                removed = true;
+                break;
+            }
+        }
+        if removed {
+            let _ = self.ownership_tracker.mark_moved(var_name, self.z3_solver);
+        }
+        removed
     }
 
     pub fn release_by_var_name(&mut self, var_name: &str) {

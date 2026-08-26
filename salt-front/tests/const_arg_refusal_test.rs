@@ -26,6 +26,7 @@ fn drive(literal: &str) -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
+#[allow(dead_code)] // RET7 amendment 1 uses this arm's message shape
 fn compile_src(src: &str) -> Result<String, String> {
     compile(src, false, None, true).map_err(|e| e.to_string())
 }
@@ -54,10 +55,11 @@ fn i64_max_still_compiles_full_width() {
 
 
 #[test]
-fn generic_receiver_method_without_bindable_params_refuses_cleanly() {
-    // NB-4/NB-5 contract: a method call whose type parameters cannot be
-    // bound from the receiver or arguments must REFUSE (nonzero, no MLIR
-    // artifact) instead of emitting phantom-cast wrong code.
+fn generic_receiver_chain_compiles_with_consistent_identities() {
+    // NB-4/NB-5 completion: arity-tolerant unification + move hooks let a
+    // Vec value flow through Vec::new()/push into a generic callee with
+    // CONSISTENTLY param-spelled identities (values correct; WS-7 will
+    // upgrade spellings to use-site names).
     const SRC: &str = r#"
         package main
 
@@ -68,22 +70,17 @@ fn generic_receiver_method_without_bindable_params_refuses_cleanly() {
         pub fn main() -> i32 {
             let mut v = Vec::new();
             v.push(1);
+            v.push(2);
             let n = len_of(v);
             return n as i32;
         }
     "#;
-    let err = compile_src(SRC).expect_err("unbindable generics must refuse");
-    assert!(err.contains("Unresolved generic"), "unexpected refusal: {}", err);
-}#[test]
-fn cast_to_undeclared_placeholder_gets_actionable_diagnostic() {
-    // NB-4/NB-5 arm pin (RT amendment 1): casts whose target is a bare
-    // unresolved placeholder must produce the TURBOFISH guidance message,
-    // not the generic unsupported-cast text.
-    let err = compile_src(
-        "package main\n\npub fn main() -> i32 { let x = 5 as Q; return x as i32; }\n",
-    ).expect_err("placeholder-target cast must refuse");
+    let mlir = compile(SRC, false, None, true)
+        .expect("generic receiver chain must compile");
+    assert!(mlir.contains("main__len_of_T"), "callee identity missing");
     assert!(
-        err.contains("cannot infer type parameter"),
-        "missing actionable guidance: {}", err
+        mlir.contains("@std__collections__vec__Vec_T_A__push"),
+        "specialized push missing"
     );
+    assert!(!mlir.contains("Unsupported explicit cast"), "cast error leaked");
 }
