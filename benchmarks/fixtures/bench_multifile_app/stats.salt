@@ -1,0 +1,50 @@
+// Multi-file benchmark, module 2 of 3: statistics kernels.
+// Part of benchmarks/fixtures/bench_multifile_app/.
+package basalt.bench_app
+
+import std.core.ptr.Ptr
+import std.core.arena
+
+fn sum_of(arr: Ptr<i64>, n: i64) -> i64
+    requires n > 0
+{
+    let mut total: i64 = 0;
+    for i in 0..n {
+        invariant i >= 0;
+        unsafe {
+            total += arr[i];
+        }
+    }
+    return total;
+}
+
+fn max_of(arr: Ptr<i64>, n: i64) -> i64
+    requires n > 0
+{
+    let mut best: i64 = 0;
+    unsafe {
+        best = arr[0];
+    }
+    for i in 1..n {
+        invariant i >= 1;
+        unsafe {
+            if arr[i] > best { best = arr[i]; }
+        }
+    }
+    return best;
+}
+
+fn gen_series(n: i64) -> Ptr<i64>
+    requires n > 0
+{
+    let buf = arena::alloc(n * 8) as Ptr<i64>;
+    let mut s: i64 = 7;
+    for i in 0..n {
+        invariant i >= 0;
+        s = (1103515245 * s + 12345) % 2147483648;
+        unsafe {
+            buf[i] = s % 500;
+        }
+    }
+    return buf;
+}

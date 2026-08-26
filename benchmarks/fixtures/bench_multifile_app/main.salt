@@ -1,0 +1,24 @@
+// Multi-file benchmark, module 3 of 3: entry point.
+// Part of benchmarks/fixtures/bench_multifile_app/.
+package basalt.bench_app
+
+fn main() -> i32 {
+    let a = Vec2 { x: 1.0f32, y: 2.0f32 };
+    let b = Vec2 { x: 3.0f32, y: 4.0f32 };
+    let c = vadd(a, b);
+    let d = dot(c, vscale(a, 2.0f32));
+
+    let r1 = Rect { min_x: 0.0, min_y: 0.0, max_x: 4.0, max_y: 6.0 };
+    let r2 = Rect { min_x: 2.0, min_y: 1.0, max_x: 9.0, max_y: 5.0 };
+    let u = rect_union(r1, r2);
+
+    let n = 1024 as i64;
+    let data = gen_series(n);
+    let total = sum_of(data, n);
+    let peak = max_of(data, n);
+
+    if d > 0.0f32 && rect_area(u) == 45.0f32 && total >= 0 && peak >= 0 {
+        return 0;
+    }
+    return 1;
+}

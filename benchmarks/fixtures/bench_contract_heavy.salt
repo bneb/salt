@@ -1,0 +1,105 @@
+// Timing benchmark: Z3 contract-heavy module.
+// Part of the compiler timing harness (scripts/timing_harness.sh).
+// Stresses contract checking: bitwise/bv reasoning, bounds propagation,
+// and cross-branch postconditions. Bitwise proofs are among the most
+// expensive checks in the front end (cf. tests/z3_contracts/test_bv.salt),
+// so this fixture anchors the slow end of the compile-time spectrum.
+package main
+
+pub fn mask_identity(x: i32) -> i32
+    requires(x & 0xFF == x)
+{ return x; }
+
+pub fn or_monotonic(x: i32, y: i32) -> i32
+    requires(x >= 0 && y >= 0)
+    ensures(result >= x)
+{ return x | y; }
+
+pub fn and_bounds(x: i32) -> i32
+    requires(x >= 0 && x <= 255)
+    ensures(result >= 0 && result <= 255)
+{ return x & 0xFF; }
+
+pub fn xor_involution(a: i32, b: i32) -> i32
+{ return (a ^ b) ^ b; }
+
+pub fn shift_bounds(x: i32) -> i32
+    requires(x >= 0 && x <= 65535)
+    ensures(result >= 0 && result <= 65535)
+{ return (x << 8) >> 8; }
+
+pub fn rotl8_small(x: i32) -> i32
+    requires(x >= 0 && x < 256)
+    ensures(result >= 0 && result < 256)
+{
+    let hi = (x << 1) & 0xFF;
+    let carry = (x >> 7) & 1;
+    return hi | carry;
+}
+
+pub fn nibble_swap(x: i32) -> i32
+    requires(x >= 0 && x < 256)
+    ensures(result >= 0 && result < 256)
+{ return ((x & 0x0F) << 4) | ((x >> 4) & 0x0F); }
+
+pub fn popcount2(x: i32) -> i32
+    requires(x >= 0 && x < 4)
+    ensures(result >= 0 && result <= 2)
+{ return (x & 1) + ((x >> 1) & 1); }
+
+pub fn chain_masks(a: i32) -> i32
+    requires(a >= 0)
+    ensures(result >= 0)
+{
+    let b = a & 0xFFFF;
+    let c = b & 0xFF00;
+    let d = c >> 8;
+    return d & 0xFF;
+}
+
+pub fn branch_bounds(x: i32) -> i32
+    requires(x >= -100 && x <= 100)
+    ensures(result >= -200 && result <= 200)
+{ if x < 0 { return -2 * x; } return 2 * x; }
+
+pub fn mul_then_mask(a: i32) -> i32
+    requires(a >= 0 && a <= 15)
+    ensures(result >= 0 && result <= 255)
+{ return (a * a) & 0xFF; }
+
+pub fn div_mod_pair(a: i32, b: i32) -> i32
+    requires(b > 0 && a >= 0)
+    ensures(result >= 0)
+{ return (a / b) + (a % b) / b; }
+
+pub fn cond_select(flag: bool, a: i32, b: i32) -> i32
+    requires(a >= 0 && b >= 0)
+    ensures(result >= 0)
+{ if flag { return a; } return b; }
+
+pub fn nested_clamp(x: i32) -> i32
+    ensures(result >= 0 && result <= 100)
+{
+    let mut a = x;
+    if a < 0 { a = 0; } else { if a > 100 { a = 100; } }
+    if a < 0 { a = 0; }
+    return a;
+}
+
+pub fn main() -> i32 {
+    let _a = mask_identity(127);
+    let _b = or_monotonic(3, 12);
+    let _c = and_bounds(128);
+    let _d = xor_involution(9, 5);
+    let _e = shift_bounds(4095);
+    let _f = rotl8_small(200);
+    let _g = nibble_swap(171);
+    let _h = popcount2(3);
+    let _i = chain_masks(70000);
+    let _j = branch_bounds(-75);
+    let _k = mul_then_mask(13);
+    let _l = div_mod_pair(47, 5);
+    let _m = cond_select(true, 7, 9);
+    let _n = nested_clamp(-42);
+    return 0;
+}

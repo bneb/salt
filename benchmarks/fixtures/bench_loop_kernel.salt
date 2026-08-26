@@ -1,0 +1,101 @@
+// Timing benchmark: loop-heavy numeric kernel.
+// Part of the compiler timing harness (scripts/timing_harness.sh).
+// Stresses loop lowering, invariant tracking, slice-style raw-pointer
+// access under contracts, and nested function calls in hot loops.
+// Uses the basalt.* namespace for arena/Ptr availability.
+package basalt.bench_loops
+
+import std.core.ptr.Ptr
+import std.core.arena
+
+fn lcg(x: i64) -> i64 {
+    return (1103515245 * x + 12345) % 2147483648;
+}
+
+fn fill_lcg(arr: Ptr<i64>, n: i64, seed: i64)
+    requires n > 0
+{
+    let mut s = seed;
+    for i in 0..n {
+        invariant i >= 0;
+        s = lcg(s);
+        unsafe {
+            arr[i] = s % 1000;
+        }
+    }
+}
+
+fn prefix_sums(src: Ptr<i64>, dst: Ptr<i64>, n: i64)
+    requires n > 0
+{
+    let mut acc: i64 = 0;
+    for i in 0..n {
+        invariant i >= 0;
+        acc += src[i];
+        dst[i] = acc;
+    }
+}
+
+fn max_of(arr: Ptr<i64>, n: i64) -> i64
+    requires n > 0
+{
+    let mut best: i64 = 0;
+    unsafe {
+        best = arr[0];
+    }
+    for i in 1..n {
+        invariant i >= 1;
+        unsafe {
+            if arr[i] > best { best = arr[i]; }
+        }
+    }
+    return best;
+}
+
+fn count_above(arr: Ptr<i64>, n: i64, threshold: i64) -> i64
+    requires n > 0
+{
+    let mut hits: i64 = 0;
+    for i in 0..n {
+        invariant i >= 0;
+        invariant hits >= 0;
+        unsafe {
+            if arr[i] > threshold { hits += 1; }
+        }
+    }
+    return total_guard(hits);
+}
+
+fn total_guard(hits: i64) -> i64
+{ return hits; }
+
+fn weighted_checksum(arr: Ptr<i64>, n: i64) -> i64
+    requires n > 0
+{
+    let mut total: i64 = 0;
+    for i in 0..n {
+        invariant i >= 0;
+        unsafe {
+            total += (arr[i] % 97) * (i % 13 + 1);
+        }
+    }
+    return total;
+}
+
+// NOTE: plain `fn main`, not `pub fn main` — a pub main disables the
+// call-site contract specialization that proves the arena store bounds
+// below (verified against prebuilt saltc; see round findings).
+fn main() -> i32 {
+    let n = 4096 as i64;
+    let a = arena::alloc(n * 8) as Ptr<i64>;
+    let b = arena::alloc(n * 8) as Ptr<i64>;
+
+    fill_lcg(a, n, 42);
+    prefix_sums(a, b, n);
+    let mx = max_of(b, n);
+    let hits = count_above(a, n, 500);
+    let sum = weighted_checksum(b, n);
+
+    if mx > 0 && hits >= 0 && sum != 0 { return 0; }
+    return 1;
+}

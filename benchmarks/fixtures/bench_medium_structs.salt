@@ -1,0 +1,135 @@
+// Timing benchmark: medium struct-heavy module.
+// Part of the compiler timing harness (scripts/timing_harness.sh).
+// Stresses struct layout, impl/method resolution, tagged-union match
+// lowering, arena allocation, and Ptr<T> field access.
+// Uses the basalt.* package namespace so arena/Ptr patterns (which require
+// unsafe internally) are available, matching benchmarks/problems/*.
+package basalt.bench_structs
+
+import std.core.ptr.Ptr
+import std.core.arena
+
+struct Vec2 {
+    x: f32,
+    y: f32,
+}
+
+impl Vec2 {
+    fn dot(self: Vec2, other: Vec2) -> f32 {
+        return self.x * other.x + self.y * other.y;
+    }
+
+    fn length_squared(self: Vec2) -> f32 {
+        return self.x * self.x + self.y * self.y;
+    }
+}
+
+struct Rect {
+    min_x: f32,
+    min_y: f32,
+    max_x: f32,
+    max_y: f32,
+}
+
+impl Rect {
+    fn width(self: Rect) -> f32 { return self.max_x - self.min_x; }
+    fn height(self: Rect) -> f32 { return self.max_y - self.min_y; }
+    fn area(self: Rect) -> f32 { return self.width() * self.height(); }
+
+    fn contains(self: Rect, p: Vec2) -> bool {
+        return p.x >= self.min_x && p.x <= self.max_x
+            && p.y >= self.min_y && p.y <= self.max_y;
+    }
+}
+
+const SHAPE_CIRCLE: i32 = 0;
+const SHAPE_RECT: i32 = 1;
+const SHAPE_POLY: i32 = 2;
+
+struct Shape {
+    tag: i32,
+    radius: f32,
+    rect: Rect,
+}
+
+fn circle(r: f32) -> Shape {
+    return Shape {
+        tag: SHAPE_CIRCLE,
+        radius: r,
+        rect: Rect { min_x: 0.0, min_y: 0.0, max_x: 0.0, max_y: 0.0 },
+    };
+}
+
+fn box_shape(r: Rect) -> Shape {
+    return Shape { tag: SHAPE_RECT, radius: 0.0, rect: r };
+}
+
+fn shape_area(s: &Shape) -> f32 {
+    match s.tag {
+        0 => return 3.14159 * s.radius * s.radius,
+        1 => return s.rect.area(),
+        _ => return 0.0
+    }
+}
+
+struct TreeNode {
+    val: i32,
+    left: Ptr<TreeNode>,
+    right: Ptr<TreeNode>,
+}
+
+fn make_leaf(val: i32) -> Ptr<TreeNode> {
+    let n: Ptr<TreeNode> = arena::alloc(24) as Ptr<TreeNode>;
+    n.val = val;
+    n.left = Ptr<TreeNode>::empty();
+    n.right = Ptr<TreeNode>::empty();
+    return n;
+}
+
+fn attach(parent: Ptr<TreeNode>, left: Ptr<TreeNode>, right: Ptr<TreeNode>) {
+    parent.left = left;
+    parent.right = right;
+}
+
+unsafe fn tree_sum(root: Ptr<TreeNode>) -> i32 {
+    if !(root as i64 != 0) { return 0; }
+    let mut total = root.val;
+    total += tree_sum(root.left);
+    total += tree_sum(root.right);
+    return total;
+}
+
+fn build_sample_tree() -> Ptr<TreeNode> {
+    let root = make_leaf(10);
+    let l = make_leaf(20);
+    let r = make_leaf(30);
+    let ll = make_leaf(40);
+    let lr = make_leaf(50);
+    attach(l, ll, lr);
+    attach(root, l, r);
+    return root;
+}
+
+pub fn main() -> i32 {
+    let v = Vec2 { x: 3.0f32, y: 4.0f32 };
+    let w = Vec2 { x: 1.0f32, y: 2.0f32 };
+    let d = v.dot(w);
+    let len2 = v.length_squared();
+
+    let r = Rect { min_x: 0.0, min_y: 0.0, max_x: 10.0, max_y: 5.0 };
+    let inside = r.contains(Vec2 { x: 2.0f32, y: 3.0f32 });
+
+    let c = circle(2.0f32);
+    let b = box_shape(r);
+    let a_c = shape_area(&c);
+    let a_b = shape_area(&b);
+
+    let root = build_sample_tree();
+    let mut total: i32 = 0;
+    unsafe { total = tree_sum(root); }
+
+    if d == 11.0f32 && len2 == 25.0f32 && inside && a_b == 50.0f32 && total == 150 {
+        if a_c > 12.0f32 { return 0; }
+    }
+    return 1;
+}
