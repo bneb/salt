@@ -70,6 +70,20 @@ impl<'a> CodegenContext<'a> {
         final_output
     }
 
+    /// Resolve a canonical name through the typed instance side-map.
+    ///
+    /// Split out of lookup_struct_by_type to keep that function inside the
+    /// 32-line limit; it also gives the side-map probe a name, which is the
+    /// step that has to win before the older name-shaped fallbacks run.
+    fn lookup_via_instance_map(&self, canonical_name: &str) -> Option<StructInfo> {
+        let instance_ids = self.instance_ids();
+        let struct_reg = self.struct_registry();
+        instance_ids
+            .keys()
+            .find(|key| key.name == canonical_name || key.mangle() == canonical_name)
+            .and_then(|key| struct_reg.get(key).cloned())
+    }
+
     /// Phase 5: Identity-Based Struct Lookup by TypeID
     /// Resolves a TypeID to its physical StructInfo with zero string matching.
     ///
@@ -88,28 +102,40 @@ impl<'a> CodegenContext<'a> {
         }).cloned()
     }
 
+    /// Lookup struct info directly via its typed InstanceId.
+    #[allow(dead_code)]
+    pub(crate) fn lookup_struct_by_instance_id(&self, target_id: &crate::codegen::types::instance_id::InstanceId) -> Option<StructInfo> {
+        let instance_ids = self.instance_ids();
+        let struct_reg = self.struct_registry();
+        for (key, id) in instance_ids.iter() {
+            if id == target_id {
+                if let Some(info) = struct_reg.get(key) {
+                    return Some(info.clone());
+                }
+            }
+        }
+        None
+    }
+
     /// Phase 5: Identity-Based Struct Lookup by Type
-    /// Convenience method that extracts TypeID from a Type and looks up the StructInfo.
-    ///
-    /// This is the primary entry point for field access hardening.
-    /// Instead of suffix matching, the TypeID is computed and a direct lookup is performed.
+    /// Convenience method that extracts TypeID / InstanceId from a Type and looks up the StructInfo.
     pub fn lookup_struct_by_type(&self, ty: &Type) -> Option<StructInfo> {
-        // First, try to resolve via TypeID
         let canonical_name = ty.to_canonical_name();
+        let struct_reg = self.struct_registry();
+
+        // 1. Prioritize typed instance side-map match
+        if let Some(info) = self.lookup_via_instance_map(&canonical_name) {
+            return Some(info);
+        }
+
+        // 2. Try to resolve via TypeID
         if let Some(type_id) = self.type_id_registry().lookup(&canonical_name) {
             if let Some(info) = self.lookup_struct_by_id(type_id) {
                 return Some(info);
             }
         }
 
-        // Fallback: direct name lookup (for types not yet in registry)
-        let canonical_name = ty.to_canonical_name();
-        let struct_reg = self.struct_registry();
-
-        // NB-6 first-use completion: requested spelling is a proper
-        // PARAMETER-BOUNDARY prefix of exactly one registered instance =>
-        // resolve to it (ties => shortest). Boundary byte '_' prevents
-        // partial-segment matches (i7 vs i64).
+        // 3. NB-6 first-use completion
         let mut completions: Vec<_> = struct_reg.values()
             .filter(|info| {
                 info.name.starts_with(canonical_name.as_str())
@@ -122,6 +148,7 @@ impl<'a> CodegenContext<'a> {
             return Some(completions.into_iter().next().unwrap());
         }
 
+        // 4. Canonical name match fallback
         struct_reg.values().find(|info| {
             let info_canonical = Type::Struct(info.name.clone()).to_canonical_name();
             info.name == canonical_name || info_canonical == canonical_name

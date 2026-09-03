@@ -14,6 +14,8 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
     pub fn struct_registry_mut(&mut self) -> &mut std::collections::HashMap<crate::types::TypeKey, crate::registry::StructInfo> { &mut self.discovery.struct_registry }
     pub fn enum_registry(&self) -> &std::collections::HashMap<crate::types::TypeKey, crate::registry::EnumInfo> { &self.discovery.enum_registry }
     pub fn enum_registry_mut(&mut self) -> &mut std::collections::HashMap<crate::types::TypeKey, crate::registry::EnumInfo> { &mut self.discovery.enum_registry }
+    #[allow(dead_code)]
+    pub(crate) fn instance_ids(&self) -> &std::collections::HashMap<crate::types::TypeKey, crate::codegen::types::instance_id::InstanceId> { &self.discovery.instance_ids }
     pub(crate) fn instance_ids_mut(&mut self) -> &mut std::collections::HashMap<crate::types::TypeKey, crate::codegen::types::instance_id::InstanceId> { &mut self.discovery.instance_ids }
     pub fn trait_registry(&self) -> &crate::codegen::trait_registry::TraitRegistry { &self.discovery.trait_registry }
     pub fn trait_registry_mut(&mut self) -> &mut crate::codegen::trait_registry::TraitRegistry { &mut self.discovery.trait_registry }
@@ -159,6 +161,9 @@ impl<'a> CodegenContext<'a> {
     }
     pub fn enum_registry_mut(&self) -> std::cell::RefMut<'_, std::collections::HashMap<TypeKey, EnumInfo>> {
         std::cell::RefMut::map(self.discovery.borrow_mut(), |d| &mut d.enum_registry)
+    }
+    pub(crate) fn instance_ids(&self) -> std::cell::Ref<'_, std::collections::HashMap<crate::types::TypeKey, crate::codegen::types::instance_id::InstanceId>> {
+        std::cell::Ref::map(self.discovery.borrow(), |d| &d.instance_ids)
     }
     pub(crate) fn instance_ids_mut(&self) -> std::cell::RefMut<'_, std::collections::HashMap<crate::types::TypeKey, crate::codegen::types::instance_id::InstanceId>> {
         std::cell::RefMut::map(self.discovery.borrow_mut(), |d| &mut d.instance_ids)
