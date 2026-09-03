@@ -536,6 +536,22 @@ Contracts cannot prove all properties. Known limitations of the current implemen
   across module boundaries -- but a caller cannot rely on a callee's
   postcondition to discharge its own obligation. Establish the property from the
   caller's own parameters and locals instead.
+- A function's own `requires` clause is not assumed as a fact for reasoning
+  inside its own body -- only for checking calls made INTO it from elsewhere.
+  A caller cannot write `requires { x <= LIMIT }` and rely on that clause
+  alone to justify a call it makes using `x`; the same fact re-stated as a
+  path-sensitive `if` guard, written directly in the body, does work. This
+  holds even across a `while` loop with a mutated induction variable, as
+  long as the guard is immediately adjacent to the call it protects.
+- Unsigned integer types carry no non-negativity constraint. `ensures {
+  result >= 0 }` on a bare `u32` parameter does not prove. A fact like
+  "`x < y` implies `y > 0`", true for any real unsigned pair, is therefore
+  not derivable from an unsigned comparison alone -- guard the property you
+  actually need (e.g. `if y == 0 { ... }`) rather than inferring it.
+- A `Ptr<T>.field` read is opaque in ARGUMENT position, not only when
+  returned: two occurrences of the same `set[0].count` are two unrelated
+  symbols to the solver, even with nothing mutated between them. Bind the
+  read to a local once and use the local everywhere the fact is needed.
 - Locals are not constrained to their defining expressions. After
   `let end = ptr + len;` a guard on `end` does not discharge an obligation
   stated over `ptr + len`; the two are unrelated to the solver. Write path
