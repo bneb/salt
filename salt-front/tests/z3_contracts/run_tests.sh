@@ -740,6 +740,35 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# ── Bool postconditions MUST be checked, not skipped ───────────
+echo -n "  test_bool_postcondition_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_bool_postcondition_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_bpc > /tmp/z3_out_bpc.txt 2>&1; then
+    echo "PASS (bool postconditions proved)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (true bool postcondition rejected)"
+    cat /tmp/z3_out_bpc.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+echo -n "  test_bool_postcondition_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_bool_postcondition_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_bpc_rej > /tmp/z3_out_bpc_rej.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_bpc_rej.txt; then
+        echo "PASS (false bool postcondition rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (false bool postcondition ACCEPTED — silently skipped)"
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then

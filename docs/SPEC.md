@@ -536,11 +536,24 @@ Contracts cannot prove all properties. Known limitations of the current implemen
   across module boundaries -- but a caller cannot rely on a callee's
   postcondition to discharge its own obligation. Establish the property from the
   caller's own parameters and locals instead.
+- Locals are not constrained to their defining expressions. After
+  `let end = ptr + len;` a guard on `end` does not discharge an obligation
+  stated over `ptr + len`; the two are unrelated to the solver. Write path
+  conditions over the parameters the contract mentions, or state the contract
+  over a value the function returns.
 - Conditionally-assigned `mut` locals lose their constraints. After
   `let mut x = a; if c { x = b; }` the solver does not merge the branches, so a
   guard on `x` will not discharge a later obligation about it. Where this
   matters, state the precondition immediately before the operation it protects.
 - The `@trusted` attribute bypasses verification entirely for the annotated function body.
+
+Postconditions on bool-returning functions used to be skipped in silence, which
+is the more dangerous shape of the same problem: the return value was translated
+through the integer path, which had no arm for bool literals or for comparisons
+in value position, so translation failed and no check ran. `ensures { result }`
+on `return false` compiled clean and reported nothing. Bools now carry as 0/1 in
+that encoding and a bare identifier in boolean position means "not zero"; see
+`tests/z3_contracts/test_bool_postcondition_proved.salt`.
 
 Named constants used to belong on this list by accident: a `const` referenced in
 a contract lowered to a fresh unconstrained symbol rather than its value, so
