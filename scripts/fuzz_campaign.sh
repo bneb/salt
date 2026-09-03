@@ -19,6 +19,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ITERATIONS="${FUZZ_ITERATIONS:-100}"
 TIMEOUT_SECS="${FUZZ_TIMEOUT_SECS:-10}"
+export LIBRARY_PATH="${LIBRARY_PATH:-}:/opt/homebrew/lib:/usr/local/lib"
 
 while [ $# -gt 0 ]; do
   case "$1" in

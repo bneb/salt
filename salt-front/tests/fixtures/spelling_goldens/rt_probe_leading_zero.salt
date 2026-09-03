@@ -1,0 +1,16 @@
+// RT probe WS-R2/R4: multi-digit-with-leading-zero const literal.
+// syn LitInt("007").base10_parse::<i64>() == 7; Display prints "7".
+// Both old (Type::Struct(val.to_string())) and new
+// (GenericArg::Const(Integer).to_legacy_type()) spell "7" -> byte-equal.
+package main
+
+struct Z<const K: i64> { v: i64 }
+
+impl<const K: i64> Z<K> {
+    pub fn mk() -> Z<K> { return Z { v: K }; }
+}
+
+pub fn main() -> i32 {
+    let a = Z::<007>::mk();
+    return a.v as i32;
+}

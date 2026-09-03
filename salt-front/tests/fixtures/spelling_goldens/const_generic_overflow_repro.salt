@@ -1,0 +1,15 @@
+package main
+
+struct Cache<const SIZE: i64> { next: i64 }
+
+impl<const SIZE: i64> Cache<SIZE> {
+    pub fn new() -> Cache<SIZE> {
+        return Cache { next: SIZE };
+    }
+}
+
+pub fn main() -> i32 {
+    let a = Cache::<64>::new();
+    let b = Cache::<128>::new();
+    return (a.next + b.next) as i32;
+}

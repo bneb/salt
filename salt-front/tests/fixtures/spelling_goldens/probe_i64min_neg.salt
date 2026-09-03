@@ -1,0 +1,6 @@
+package main
+
+pub fn main() -> i32 {
+    let a: i64 = -9223372036854775808;
+    return 0;
+}
