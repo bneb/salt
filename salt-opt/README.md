@@ -37,7 +37,19 @@ The `OneShotBufferizePass` ensures that high-level tensor operations are convert
 | [`src/dialect/`](./src/dialect) | **Dialect.** Definition of the `!salt` IR operations. |
 
 ## Build
+
+CMake, not Bazel — there are no Bazel files in this repository, and the
+instruction that used to be here sent you straight into a wall.
+
+The LLVM/MLIR major version is pinned (see `CONTRIBUTING.md`); a mismatch
+fails at configure time rather than silently producing a backend that emits
+IR for a different LLVM than the `llc` consuming it downstream.
+
 ```bash
-# Handled by Bazel
-bazel build //:salt-opt
+cmake -S salt-opt -B salt-opt/build -DCMAKE_BUILD_TYPE=Release \
+  -DLLVM_DIR=$(brew --prefix llvm@21)/lib/cmake/llvm \
+  -DMLIR_DIR=$(brew --prefix llvm@21)/lib/cmake/mlir
+cmake --build salt-opt/build -j
 ```
+
+Produces `salt-opt/build/salt-opt`. Requires Z3 as well as LLVM/MLIR 21.
