@@ -543,11 +543,17 @@ Contracts cannot prove all properties. Known limitations of the current implemen
   path-sensitive `if` guard, written directly in the body, does work. This
   holds even across a `while` loop with a mutated induction variable, as
   long as the guard is immediately adjacent to the call it protects.
-- Unsigned integer types carry no non-negativity constraint. `ensures {
-  result >= 0 }` on a bare `u32` parameter does not prove. A fact like
-  "`x < y` implies `y > 0`", true for any real unsigned pair, is therefore
-  not derivable from an unsigned comparison alone -- guard the property you
-  actually need (e.g. `if y == 0 { ... }`) rather than inferring it.
+- ~~Unsigned integer types carry no non-negativity constraint.~~ **Fixed.**
+  `u8/u16/u32/u64/usize` (and the signed narrow types `i8/i16`) now carry
+  their type's range as an implicit fact wherever a value of that type is in
+  scope for a `requires` or `ensures` check -- not only for the direct
+  arguments of the call being verified, which is as far as the existing
+  bounds-injection reached before. So `dense_idx < count` now DOES imply
+  `count > 0` for unsigned types, without an extra guard stating it.
+  Scoped to the free variables the constraint under check actually mentions,
+  not every local in scope: the unscoped version measurably regressed one
+  proof-gate fixture (a bitvector-heavy check pushed past its 100ms
+  watchdog by the extra assertions) before this constraint was added.
 - A `Ptr<T>.field` read is opaque in ARGUMENT position, not only when
   returned: two occurrences of the same `set[0].count` are two unrelated
   symbols to the solver, even with nothing mutated between them. Bind the

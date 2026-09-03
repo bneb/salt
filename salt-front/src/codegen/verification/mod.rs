@@ -318,6 +318,22 @@ impl VerificationEngine {
                  // implied by the type system (e.g., u8 ∈ [0, 255]).
                  assert_type_bounds(ctx, &call_vals_z3, param_tys, &solver);
 
+                 // Also bound every OTHER typed value the check actually
+                 // depends on -- not just this call's own arguments, but not
+                 // every local in the caller's scope either (see
+                 // assert_scope_type_bounds). A local referenced only in a
+                 // path condition (e.g. `if dense_idx >= count`) never
+                 // appears in call_vals_z3, so without this its
+                 // non-negativity was never available to derive facts like
+                 // "count >= 1" from "dense_idx < count".
+                 let relevant = collect_ident_names_from(
+                     std::iter::once(actual_req)
+                         .chain(caller_pcs.iter())
+                         .chain(path_conditions.iter())
+                         .chain(loop_assumptions.iter()),
+                 );
+                 assert_scope_type_bounds(ctx, local_vars, &relevant, &solver);
+
                  // Inject Pointer State Tokens
                  // For each argument that is a known variable, map its pointer state into Z3
                  for (i, _p_name) in params.iter().enumerate() {
@@ -565,6 +581,7 @@ impl VerificationEngine {
     ///      - UNSAT → postcondition is PROVEN (violation impossible)
     ///      - SAT → postcondition VIOLATED (counterexample found)
     ///      - Unknown → deferred to runtime assertion
+    #[allow(clippy::too_many_arguments)] // REASON: all 8 params independently meaningful; bundling would obscure intent
     pub fn verify_postcondition(
         ctx: &mut LoweringContext<'_, '_>,
         ensures: &[syn::Expr],
@@ -573,6 +590,7 @@ impl VerificationEngine {
         params: &[String],
         local_vars: &HashMap<String, (Type, crate::codegen::context::LocalKind)>,
         fn_name: &str,
+        return_ty: &Type,
     ) -> Result<bool, String> {
         if ensures.is_empty() || ctx.config.no_verify {
             return Ok(false);
@@ -697,10 +715,14 @@ impl VerificationEngine {
                 ens
             };
 
-            // Create a `result` symbol and register it in the Z3 locals
+            // Create a `result` symbol and register it in the Z3 locals, typed
+            // by the function's REAL return type rather than a placeholder --
+            // this used to be hardcoded to Type::I32 regardless of what the
+            // function actually returned, so `ensures { result >= 0 }` on a
+            // u32-returning function got no bound at all on `result` itself.
             let result_sym = crate::z3_shim::ast::Int::new_const(ctx.z3_ctx, "result");
             let mut ens_locals = z3_locals.clone();
-            ens_locals.insert("result".to_string(), (Type::I32, crate::codegen::context::LocalKind::SSA("result".to_string())));
+            ens_locals.insert("result".to_string(), (return_ty.clone(), crate::codegen::context::LocalKind::SSA("result".to_string())));
 
             if let Ok(z3_ens) = crate::codegen::expr::translate_bool_to_z3(ctx, actual_ens, &ens_locals, &sym_ctx) {
                 if let Ok(ref ret_val) = z3_return_val {
@@ -710,6 +732,12 @@ impl VerificationEngine {
                     solver.push();
                     solver.assert(&binding);
                     solver.assert(&z3_ens.not());
+                    // Every typed value the postcondition itself mentions,
+                    // INCLUDING result now that it carries its real type,
+                    // gets its type's range asserted -- the postcondition
+                    // check never had this at all before.
+                    let relevant = collect_ident_names(actual_ens);
+                    assert_scope_type_bounds(ctx, &ens_locals, &relevant, &solver);
                     *ctx.total_checks += 1;
 
                     match solver.check() {
@@ -846,6 +874,62 @@ impl VerificationEngine {
 /// Assert type-based bounds into a Z3 solver so contracts implied by
 /// the type system are proved at compile time. Covers all integer types,
 /// bool, and unwraps Atomic<T> to the inner type.
+/// Assert the range a Salt integer/bool TYPE guarantees for one Z3 value.
+///
+/// Z3's native Int is arbitrary-precision with no inherent range, so without
+/// this a `u32` is indistinguishable from an unbounded signed integer to the
+/// solver -- "x < y implies y > 0", true for any real unsigned pair, is not
+/// derivable. This was previously inlined into assert_type_bounds and applied
+/// ONLY to the direct arguments of one call-site check; factored out so the
+/// same true-by-construction facts can be asserted anywhere a typed Z3 value
+/// is in scope (see assert_scope_type_bounds).
+fn assert_bound_for_type<'ctx>(
+    ctx: &mut LoweringContext<'_, '_>,
+    val: &crate::z3_shim::ast::Int<'ctx>,
+    ty: &Type,
+    solver: &crate::z3_shim::Solver<'ctx>,
+) {
+    let zero = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, 0);
+    // Unwrap Atomic<T> to the storage type for bounds
+    let ty = match ty {
+        Type::Atomic(inner) => inner.as_ref(),
+        other => other,
+    };
+    match ty {
+        Type::U8 => {
+            let max = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, 255);
+            solver.assert(&val.ge(&zero));
+            solver.assert(&val.le(&max));
+        }
+        Type::U16 => {
+            let max = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, 65535);
+            solver.assert(&val.ge(&zero));
+            solver.assert(&val.le(&max));
+        }
+        Type::U32 | Type::U64 | Type::Usize => {
+            solver.assert(&val.ge(&zero));
+        }
+        Type::I8 => {
+            let min = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, -128);
+            let max = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, 127);
+            solver.assert(&val.ge(&min));
+            solver.assert(&val.le(&max));
+        }
+        Type::I16 => {
+            let min = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, -32768);
+            let max = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, 32767);
+            solver.assert(&val.ge(&min));
+            solver.assert(&val.le(&max));
+        }
+        Type::Bool => {
+            let one = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, 1);
+            solver.assert(&val.ge(&zero));
+            solver.assert(&val.le(&one));
+        }
+        _ => {}
+    }
+}
+
 fn assert_type_bounds<'ctx>(
     ctx: &mut LoweringContext<'_, '_>,
     call_vals_z3: &[crate::z3_shim::ast::Int<'ctx>],
@@ -854,45 +938,85 @@ fn assert_type_bounds<'ctx>(
 ) {
     for (i, arg_val) in call_vals_z3.iter().enumerate() {
         if i >= param_tys.len() { continue; }
-        let zero = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, 0);
-        // Unwrap Atomic<T> to the storage type for bounds
-        let ty = match &param_tys[i] {
-            Type::Atomic(inner) => inner.as_ref(),
-            other => other,
-        };
-        match ty {
-            Type::U8 => {
-                let max = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, 255);
-                solver.assert(&arg_val.ge(&zero));
-                solver.assert(&arg_val.le(&max));
-            }
-            Type::U16 => {
-                let max = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, 65535);
-                solver.assert(&arg_val.ge(&zero));
-                solver.assert(&arg_val.le(&max));
-            }
-            Type::U32 | Type::U64 | Type::Usize => {
-                solver.assert(&arg_val.ge(&zero));
-            }
-            Type::I8 => {
-                let min = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, -128);
-                let max = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, 127);
-                solver.assert(&arg_val.ge(&min));
-                solver.assert(&arg_val.le(&max));
-            }
-            Type::I16 => {
-                let min = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, -32768);
-                let max = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, 32767);
-                solver.assert(&arg_val.ge(&min));
-                solver.assert(&arg_val.le(&max));
-            }
-            Type::Bool => {
-                let one = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, 1);
-                solver.assert(&arg_val.ge(&zero));
-                solver.assert(&arg_val.le(&one));
-            }
-            _ => {}
+        assert_bound_for_type(ctx, arg_val, &param_tys[i], solver);
+    }
+}
+
+/// Assert type-derived bounds for EVERY typed value in scope, not only the
+/// arguments of the one call being checked.
+///
+/// assert_type_bounds alone misses a real case: a local referenced ONLY in a
+/// path condition (an `if` guard) rather than passed as an argument to the
+/// call under verification. `dense_idx` in `if dense_idx >= count { return; }
+/// return sub_checked(count, 1);` is exactly this -- it never appears in
+/// sub_checked's own argument list, so its non-negativity was never
+/// asserted, and "count >= 1" (needed for sub_checked's `b <= a`) could not
+/// be derived from "dense_idx < count" without it.
+struct IdentCollector {
+    names: std::collections::HashSet<String>,
+}
+impl<'ast> syn::visit::Visit<'ast> for IdentCollector {
+    fn visit_expr_path(&mut self, p: &'ast syn::ExprPath) {
+        if let Some(id) = p.path.get_ident() {
+            self.names.insert(id.to_string());
         }
+        syn::visit::visit_expr_path(self, p);
+    }
+}
+
+/// Every bare identifier a `syn::Expr` references, e.g. `dense_idx` and
+/// `count` from `dense_idx >= count`. Used to scope assert_scope_type_bounds
+/// down to the variables a check actually depends on, rather than every
+/// local in the function -- see assert_scope_type_bounds for why that
+/// distinction is load-bearing, not just tidiness.
+fn collect_ident_names(expr: &syn::Expr) -> std::collections::HashSet<String> {
+    use syn::visit::Visit;
+    let mut c = IdentCollector { names: std::collections::HashSet::new() };
+    c.visit_expr(expr);
+    c.names
+}
+
+fn collect_ident_names_from<'e>(
+    exprs: impl IntoIterator<Item = &'e syn::Expr>,
+) -> std::collections::HashSet<String> {
+    let mut all = std::collections::HashSet::new();
+    for e in exprs {
+        all.extend(collect_ident_names(e));
+    }
+    all
+}
+
+/// Assert type-derived bounds for every typed value NAMED in `relevant`.
+///
+/// assert_type_bounds alone misses a real case: a local referenced ONLY in a
+/// path condition (an `if` guard) rather than passed as an argument to the
+/// call under verification. `dense_idx` in `if dense_idx >= count { return; }
+/// return sub_checked(count, 1);` is exactly this -- it never appears in
+/// sub_checked's own argument list, so its non-negativity was never
+/// asserted, and "count >= 1" (needed for sub_checked's `b <= a`) could not
+/// be derived from "dense_idx < count" without it.
+///
+/// Scoped to `relevant` rather than every entry in `locals`: asserting bounds
+/// for variables the constraint under check does not even mention only adds
+/// solver work, and on at least one existing fixture (test_bv.salt, a
+/// bitvector-heavy proof) that extra work was enough to push a previously
+/// UNSAT-in-time check past the 100ms watchdog into an UNKNOWN/timeout --
+/// still sound, but a real loss of what proves. Confirmed by measurement,
+/// not assumed: unscoped, proof_gate regressed by exactly this fixture;
+/// scoped to free variables, it does not.
+fn assert_scope_type_bounds<'ctx>(
+    ctx: &mut LoweringContext<'_, '_>,
+    locals: &HashMap<String, (Type, crate::codegen::context::LocalKind)>,
+    relevant: &std::collections::HashSet<String>,
+    solver: &crate::z3_shim::Solver<'ctx>,
+) {
+    let entries: Vec<(String, Type)> = locals.iter()
+        .filter(|(name, _)| relevant.contains(*name))
+        .map(|(name, (ty, _))| (name.clone(), ty.clone()))
+        .collect();
+    for (name, ty) in entries {
+        let val = crate::z3_shim::ast::Int::new_const(ctx.z3_ctx, name);
+        assert_bound_for_type(ctx, &val, &ty, solver);
     }
 }
 

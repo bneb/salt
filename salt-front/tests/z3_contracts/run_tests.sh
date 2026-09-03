@@ -769,6 +769,35 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# ── Unsigned types must carry non-negativity for the solver ────
+echo -n "  test_unsigned_bound_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_unsigned_bound_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_ub > /tmp/z3_out_ub.txt 2>&1; then
+    echo "PASS (unsigned bounds proved)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (unsigned non-negativity not available to the solver)"
+    cat /tmp/z3_out_ub.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+echo -n "  test_unsigned_bound_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_unsigned_bound_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_ub_rej > /tmp/z3_out_ub_rej.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|could not prove' /tmp/z3_out_ub_rej.txt; then
+        echo "PASS (genuinely unguarded subtraction still rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (unguarded subtraction ACCEPTED — soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then

@@ -16,20 +16,27 @@ fn verify_return_ensures_clause(
     if ensures.is_empty() { return Ok(()); }
     let fn_name = ctx.current_fn_name().clone();
     let file = ctx.config.file;
-    let (requires, param_names) = file.items.iter()
+    let (requires, param_names, raw_ret_ty) = file.items.iter()
         .filter_map(|item| {
             if let crate::grammar::Item::Fn(f) = item {
                 if f.name == fn_name || ctx.expansion.current_fn_name.ends_with(&f.name.to_string()) {
                     let params: Vec<String> = f.args.iter().map(|a| a.name.to_string()).collect();
-                    return Some((f.requires.clone(), params));
+                    return Some((f.requires.clone(), params, f.ret_type.clone()));
                 }
             }
             None
         })
         .next()
-        .unwrap_or((vec![], vec![]));
+        .unwrap_or((vec![], vec![], None));
+    // `result`'s type for verify_postcondition's bounds injection -- this
+    // used to be hardcoded, so a bool/u32/etc-returning function's `result`
+    // symbol got no type-derived facts at all. Unit (no declared return
+    // type) resolves to Type::Unit, which the bounds table leaves alone.
+    let return_ty = raw_ret_ty.as_ref()
+        .map(|rt| crate::codegen::type_bridge::resolve_type(ctx, rt))
+        .unwrap_or(Type::Unit);
     match crate::codegen::verification::VerificationEngine::verify_postcondition(
-        ctx, &ensures, &requires, ret_expr, &param_names, local_vars, &fn_name,
+        ctx, &ensures, &requires, ret_expr, &param_names, local_vars, &fn_name, &return_ty,
     ) {
         Ok(true) => {
             out.push_str(&format!("    // z3_postcondition_verified: ensures proven for '{}'\n", fn_name));
