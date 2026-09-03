@@ -527,7 +527,27 @@ Contracts cannot prove all properties. Known limitations of the current implemen
 - Floating-point properties: the solver's theory of floating-point arithmetic is incomplete. Contracts with non-trivial float expressions may timeout.
 - String length and content: only compile-time-known string literals are reliably folded to constants. Properties of strings from runtime sources (I/O, network) rely on the timeout fallback.
 - Non-linear integer arithmetic: multiplication of two variables may timeout.
+- Fields of a returned value: `ensures { result.field < N }` is not proven, because
+  the postcondition is checked against a single symbolic `result` rather than
+  against the struct's fields. Constrain the field through a scalar the function
+  already returns, or check it at runtime.
+- A callee's `ensures` is not assumed at the call site. Preconditions propagate
+  outward -- a `requires` is checked wherever the function is called, including
+  across module boundaries -- but a caller cannot rely on a callee's
+  postcondition to discharge its own obligation. Establish the property from the
+  caller's own parameters and locals instead.
+- Conditionally-assigned `mut` locals lose their constraints. After
+  `let mut x = a; if c { x = b; }` the solver does not merge the branches, so a
+  guard on `x` will not discharge a later obligation about it. Where this
+  matters, state the precondition immediately before the operation it protects.
 - The `@trusted` attribute bypasses verification entirely for the annotated function body.
+
+Named constants used to belong on this list by accident: a `const` referenced in
+a contract lowered to a fresh unconstrained symbol rather than its value, so
+`ensures { result < MAX }` became `result < <anything>` and Z3 duly produced a
+counter-example. The identical contract written with a literal proved fine,
+which made the failure look like a limit of the solver. Constants now lower to
+their values; see `tests/z3_contracts/test_const_in_contract_proved.salt`.
 
 ---
 

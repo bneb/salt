@@ -709,6 +709,37 @@ else
     show_evidence
 fi
 
+# ── Named constants in contracts MUST resolve to their value ───
+echo -n "  test_const_in_contract_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_const_in_contract_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_const > /tmp/z3_out_const.txt 2>&1; then
+    echo "PASS (constant resolved to its value)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (constant lowered to an unconstrained symbol)"
+    cat /tmp/z3_out_const.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+# ── ...without weakening soundness ─────────────────────────────
+echo -n "  test_const_in_contract_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_const_in_contract_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_const_rej > /tmp/z3_out_const_rej.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_const_rej.txt; then
+        echo "PASS (false contract still rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_const_rej.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (false contract accepted — soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then

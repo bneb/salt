@@ -1,0 +1,30 @@
+// Z3 Contract Test: a named constant in a contract must lower to its VALUE.
+// Expected: PASS
+//
+// Constants fell through translate_to_z3's Path arm to the fresh-variable
+// fallback, so `result < MAX_LEN` became `result < <unconstrained>`. Z3
+// satisfied that by choosing MAX_LEN = 0 and reported a counter-example, so
+// every contract mentioning a constant was unprovable. The identical contract
+// written with a literal proved fine, which made the failures look like a
+// limit of the prover rather than an unresolved name.
+package test_const_in_contract_proved
+
+const MAX_LEN: u32 = 100;
+
+// Guarded on the constant, so the postcondition holds on both paths.
+pub fn clamp(a: u32) -> u32
+    ensures { result < MAX_LEN }
+{
+    if a >= MAX_LEN { return 0; }
+    return a;
+}
+
+// The same shape with the value read through a pointer. Memory loads were
+// believed opaque to the prover; they are not, the constant was the problem.
+pub fn clamp_loaded(p: u64) -> u32
+    ensures { result < MAX_LEN }
+{
+    let v = *(p as &u32);
+    if v >= MAX_LEN { return 0; }
+    return v;
+}

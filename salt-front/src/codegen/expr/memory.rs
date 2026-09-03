@@ -977,6 +977,32 @@ fn assert_field_type_bounds(
     }
 }
 
+/// Resolve an identifier to an integer compile-time constant, if it is one.
+///
+/// Tries the bare name and then the current package's mangling, matching how
+/// literals.rs resolves constant paths. Returns None for anything that is not
+/// a registered integer constant, so callers keep their existing behaviour for
+/// genuine variables.
+fn lookup_const_int<'a, 'ctx>(ctx: &LoweringContext<'a, 'ctx>, name: &str) -> Option<i64> {
+    use crate::evaluator::ConstValue;
+
+    let mut candidates = vec![name.to_string()];
+    if let Some(pkg) = &*ctx.current_package {
+        let segs: Vec<String> = pkg.name.iter().map(|i: &syn::Ident| i.to_string()).collect();
+        let pkg_mangled = crate::common::mangling::Mangler::mangle(&segs);
+        candidates.push(crate::common::mangling::Mangler::mangle(&[&pkg_mangled, &name.to_string()]));
+    }
+
+    for key in candidates {
+        match ctx.evaluator.constant_table.get(&key) {
+            Some(ConstValue::Integer(v)) => return Some(*v),
+            Some(ConstValue::Bool(b)) => return Some(if *b { 1 } else { 0 }),
+            _ => {}
+        }
+    }
+    None
+}
+
 pub fn translate_to_z3<'a, 'ctx>(
     ctx: &mut LoweringContext<'a, 'ctx>,
     expr: &syn::Expr,
@@ -1007,6 +1033,17 @@ pub fn translate_to_z3<'a, 'ctx>(
             if let Some(_z3_val) = ctx.symbolic_tracker.get(&name).cloned() {
                                 return Ok(_z3_val);
             }
+            // A named compile-time constant must lower to its VALUE, not to a
+            // fresh symbol. Falling through to the fallback below made every
+            // contract mentioning a constant unprovable: `ensures { result < M }`
+            // became `result < <unconstrained>`, which Z3 satisfies by choosing
+            // M = 0 and reports as a counter-example. The same contract written
+            // with a literal proved fine, so the failures looked like limits of
+            // the prover rather than an unresolved name.
+            if let Some(val) = lookup_const_int(ctx, &name) {
+                return Ok(ctx.mk_int(val));
+            }
+
             // Fallback to fresh variable — store it so subsequent lookups find it
                         let fresh = ctx.mk_var(&name);
             ctx.symbolic_tracker.insert(name.clone(), fresh.clone());
