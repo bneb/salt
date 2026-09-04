@@ -1,0 +1,45 @@
+// Z3 Contract Test: an ensures clause Z3 cannot decide within 100ms must
+// still be enforced -- by a runtime check, not by silence.
+// Expected: compiles (Z3 defers this one check), AND the emitted MLIR must
+// contain a real call to __salt_contract_violation.
+//
+// verify_postcondition's SatResult::Unknown branch, and the Sat branch's
+// "return expression uses an untracked local" sub-case, were both empty.
+// The comments in both said "deferred to runtime"; neither called anything.
+// requires' own Unknown branch calls emit_requires_runtime_check; ensures
+// had no equivalent function at all -- not a missed call, the function did
+// not exist. Every ensures clause complex enough to time out compiled
+// clean with zero enforcement: not proven, not checked at runtime, no
+// warning printed.
+//
+// Found on a real function (kernel/core/syscall_ipc.salt's
+// validate_shm_request in KeuOS): an astronomically wrong bound on its
+// final return's postcondition compiled silently before this fix. This
+// fixture reproduces the same shape that reliably drives Z3 to Unknown --
+// several early-return branches feeding an OR-of-AND postcondition on the
+// last one -- rather than relying on a single hard-to-predict query, so the
+// test does not depend on exactly which expression happens to time out.
+package test_ensures_timeout_runtime_check
+
+const LIMIT: u64 = 0x0000800000000000;
+const PAGE_SIZE: u64 = 4096;
+
+pub fn validate(a: u64, b: u64, n: u64) -> u64
+    ensures {
+        result != 0 ||
+        ((a + n * PAGE_SIZE) <= LIMIT && (b + n * PAGE_SIZE) <= LIMIT)
+    }
+{
+    if a >= LIMIT { return 0 - 1; }
+    if b >= LIMIT { return 0 - 1; }
+    if (a & 0xFFF) != 0 || (b & 0xFFF) != 0 { return 0 - 1; }
+    if n == 0 || n > 16 { return 0 - 1; }
+    if (a + n * PAGE_SIZE) < a { return 0 - 1; }
+    // Deliberately too permissive: the real check would be `> LIMIT`. This
+    // is what a future edit accidentally weakening the bound looks like --
+    // exactly the case that must not compile in silence.
+    if a >= LIMIT || (a + n * PAGE_SIZE) > LIMIT + 0x1000000000000 { return 0 - 1; }
+    if (b + n * PAGE_SIZE) < b { return 0 - 1; }
+    if b >= LIMIT || (b + n * PAGE_SIZE) > LIMIT { return 0 - 1; }
+    return 0;
+}

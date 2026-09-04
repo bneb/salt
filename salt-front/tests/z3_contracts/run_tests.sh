@@ -798,6 +798,30 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# ── A deferred (timed-out) ensures MUST still emit a runtime check ──
+echo -n "  test_ensures_timeout_runtime_check: "
+if "$SALTC" "$SCRIPT_DIR/test_ensures_timeout_runtime_check.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_etrc > /tmp/z3_out_etrc.txt 2>&1; then
+    if grep -q '__salt_contract_violation' /tmp/z3_test_etrc; then
+        if grep -qi 'WARNING: Z3 could not prove' /tmp/z3_out_etrc.txt; then
+            echo "PASS (deferred ensures got a real runtime check + warning)"
+            PASS=$((PASS + 1))
+            show_evidence
+        else
+            echo "FAIL (runtime check present but no warning printed)"
+            FAIL=$((FAIL + 1))
+        fi
+    else
+        echo "FAIL (compiled with ZERO enforcement — the original silent bug)"
+        cat /tmp/z3_out_etrc.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (unexpected compile error)"
+    cat /tmp/z3_out_etrc.txt | head -5
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then

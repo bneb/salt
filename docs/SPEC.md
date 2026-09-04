@@ -524,6 +524,15 @@ If either check fails, the compiler reports a counterexample. Invariants that co
 
 Contracts cannot prove all properties. Known limitations of the current implementation:
 
+- Integer overflow/wraparound is not modeled. Arithmetic is unbounded
+  (arbitrary-precision) internally, not the fixed-width, wrapping arithmetic
+  real hardware performs. `ensures { (a + 1) > a }` on a `u64` proves, even
+  though it is false at `a = u64::MAX` on real hardware. Practically: an
+  overflow GUARD written in your own code (`if a + b < a { reject }`) still
+  executes as real, correctly-wrapping machine code at runtime and remains
+  fully protective -- what does NOT hold is any expectation that the prover
+  will catch you if you forget to write one. Removing such a guard and
+  re-proving is not, by itself, evidence the guard was unnecessary.
 - Floating-point properties: the solver's theory of floating-point arithmetic is incomplete. Contracts with non-trivial float expressions may timeout.
 - String length and content: only compile-time-known string literals are reliably folded to constants. Properties of strings from runtime sources (I/O, network) rely on the timeout fallback.
 - Non-linear integer arithmetic: multiplication of two variables may timeout.

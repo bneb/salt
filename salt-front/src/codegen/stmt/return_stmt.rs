@@ -36,7 +36,7 @@ fn verify_return_ensures_clause(
         .map(|rt| crate::codegen::type_bridge::resolve_type(ctx, rt))
         .unwrap_or(Type::Unit);
     match crate::codegen::verification::VerificationEngine::verify_postcondition(
-        ctx, &ensures, &requires, ret_expr, &param_names, local_vars, &fn_name, &return_ty,
+        ctx, out, &ensures, &requires, ret_expr, &param_names, local_vars, &fn_name, &return_ty,
     ) {
         Ok(true) => {
             out.push_str(&format!("    // z3_postcondition_verified: ensures proven for '{}'\n", fn_name));

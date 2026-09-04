@@ -659,7 +659,7 @@ fn emit_return_expr(ctx: &mut LoweringContext, out: &mut String, r: &syn::ExprRe
                         .unwrap_or(Type::Unit);
 
                     match crate::codegen::verification::VerificationEngine::verify_postcondition(
-                        ctx, &ensures, &requires, e, &param_names, local_vars, &fn_name, &return_ty,
+                        ctx, out, &ensures, &requires, e, &param_names, local_vars, &fn_name, &return_ty,
                     ) {
                         Ok(true) => {
                             out.push_str(&format!("    // z3_postcondition_verified: ensures proven for '{}'\n", fn_name));

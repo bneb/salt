@@ -581,9 +581,10 @@ impl VerificationEngine {
     ///      - UNSAT → postcondition is PROVEN (violation impossible)
     ///      - SAT → postcondition VIOLATED (counterexample found)
     ///      - Unknown → deferred to runtime assertion
-    #[allow(clippy::too_many_arguments)] // REASON: all 8 params independently meaningful; bundling would obscure intent
+    #[allow(clippy::too_many_arguments)] // REASON: all 9 params independently meaningful; bundling would obscure intent
     pub fn verify_postcondition(
         ctx: &mut LoweringContext<'_, '_>,
+        out: &mut String,
         ensures: &[syn::Expr],
         requires: &[syn::Expr],
         return_expr: &syn::Expr,
@@ -752,8 +753,22 @@ impl VerificationEngine {
                             // (mutated locals like `acc` that Z3 treats as unconstrained).
                             // In that case, the SAT result is due to incomplete symbolic tracking,
                             // not a genuine violation. Defer to runtime assertion.
+                            //
+                            // "Defer to runtime assertion" was the comment, not the
+                            // behavior: this branch was empty. A mutated local like
+                            // `acc` made the postcondition SAT for a reason that had
+                            // nothing to do with the code being wrong, and the result
+                            // was silence -- no compile error, no runtime check, no
+                            // warning. The build succeeded as if the ensures clause had
+                            // been proven, which it never was.
                             let return_uses_untracked = Self::expr_uses_untracked_local(return_expr, params);
                             if return_uses_untracked {
+                                eprintln!(
+                                    "WARNING: Z3 could not determine `ensures({:?})` for '{}' \
+                                     (return expression uses an untracked local). Emitting runtime check.",
+                                    actual_ens, fn_name
+                                );
+                                emit_ensures_runtime_check(ctx, out, actual_ens, return_expr, local_vars, return_ty)?;
                             } else {
                                 // Genuine violation: the return expression only uses tracked params/literals
                                 let model = solver.get_model();
@@ -784,7 +799,23 @@ impl VerificationEngine {
                             }
                         }
                         crate::z3_shim::SatResult::Unknown => {
-                            // TIMEOUT: Z3 couldn't determine — deferred to runtime
+                            // TIMEOUT: Z3 couldn't determine. The comment here
+                            // matched requires' handling in wording, but not in
+                            // behavior -- requires' Unknown branch calls
+                            // emit_requires_runtime_check; this one called
+                            // nothing. Every ensures clause complex enough to
+                            // time out (100ms) was therefore COMPLETELY
+                            // unenforced: not proven, not checked at runtime,
+                            // no warning printed. Confirmed directly: an
+                            // astronomically-wrong bound on a multi-branch
+                            // function's postcondition compiled clean with zero
+                            // indication anything was ever verified.
+                            eprintln!(
+                                "WARNING: Z3 could not prove `ensures({:?})` for '{}' within 100ms. \
+                                 Emitting runtime check.",
+                                actual_ens, fn_name
+                            );
+                            emit_ensures_runtime_check(ctx, out, actual_ens, return_expr, local_vars, return_ty)?;
                         }
                     }
                     solver.pop(1);
@@ -1018,6 +1049,53 @@ fn assert_scope_type_bounds<'ctx>(
         let val = crate::z3_shim::ast::Int::new_const(ctx.z3_ctx, name);
         assert_bound_for_type(ctx, &val, &ty, solver);
     }
+}
+
+/// Emit a runtime assertion for an `ensures` clause that Z3 could not
+/// resolve (timeout, or a SAT result attributable to an untracked local
+/// rather than a genuine violation -- see the two call sites).
+///
+/// Mirrors emit_requires_runtime_check exactly, including its tradeoff:
+/// return_expr is emitted FRESH here rather than reusing the value already
+/// computed at the real return site, so a return expression with side
+/// effects is evaluated twice on this path. Accepted for the same reason
+/// emit_requires_runtime_check accepts it for arg_exprs -- this only runs
+/// when Z3 could not decide, not on every return.
+fn emit_ensures_runtime_check(
+    ctx: &mut LoweringContext<'_, '_>,
+    out: &mut String,
+    ens: &syn::Expr,
+    return_expr: &syn::Expr,
+    local_vars: &HashMap<String, (Type, crate::codegen::context::LocalKind)>,
+    return_ty: &Type,
+) -> Result<(), String> {
+    let mut temp_locals = local_vars.clone();
+
+    // Emit the return expression fresh to get a real `result` value.
+    let (result_val, _) = crate::codegen::expr::emit_expr(
+        ctx, out, return_expr, &mut temp_locals, Some(return_ty),
+    )?;
+    temp_locals.insert(
+        "result".to_string(),
+        (return_ty.clone(), crate::codegen::context::LocalKind::SSA(result_val)),
+    );
+
+    // Emit the ensures clause as an MLIR boolean expression.
+    let (ens_val, _) = crate::codegen::expr::emit_expr(
+        ctx, out, ens, &mut temp_locals, Some(&Type::Bool),
+    )?;
+
+    // Emit runtime violation check: scf.if violated { call @__salt_contract_violation() }
+    let true_val = format!("%verify_true_{}", ctx.emission.next_id());
+    let violated = format!("%verify_violated_{}", ctx.emission.next_id());
+    out.push_str(&format!("    {} = arith.constant true\n", true_val));
+    out.push_str(&format!("    {} = arith.xori {}, {} : i1\n", violated, ens_val, true_val));
+    ctx.ensure_func_declared("__salt_contract_violation", &[], &Type::Unit).ok();
+    out.push_str(&format!("    scf.if {} {{\n", violated));
+    out.push_str("      func.call @__salt_contract_violation() : () -> ()\n");
+    out.push_str("      scf.yield\n");
+    out.push_str("    }\n");
+    Ok(())
 }
 
 /// Emit a runtime assertion for a `requires` clause that Z3 couldn't prove.
