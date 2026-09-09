@@ -572,6 +572,35 @@ Contracts cannot prove all properties. Known limitations of the current implemen
   stated over `ptr + len`; the two are unrelated to the solver. Write path
   conditions over the parameters the contract mentions, or state the contract
   over a value the function returns.
+- A `mut` local reassigned anywhere -- not only inside a branch -- loses its
+  tracked value for the solver. This is deliberate: the same "havoc" semantics
+  that make while-loop verification sound (a loop's induction variable must be
+  treated as unconstrained going into each iteration, or reasoning about the
+  loop would be unsound) apply to any reassignment, named literally
+  `{var}_havoc_{id}` at the one site that mints them
+  (`codegen/stmt/while_stmt.rs`). `ensures` clauses handle this gracefully: a
+  postcondition whose return value traces to a havoc'd local defers to a
+  runtime check rather than hard-failing (`emit_ensures_runtime_check`).
+  `requires` clauses at a call site do not -- a havoc'd argument produces a
+  hard `E009`, unconditionally, even when the surrounding code is correct
+  (this is what forces the pattern seen throughout this codebase of
+  re-asserting a bound immediately before the call it protects, rather than
+  trusting an earlier clamp).
+
+  This asymmetry looks fixable by mirroring the `ensures` treatment -- detect
+  a havoc'd argument, defer to `emit_requires_runtime_check` instead of
+  failing -- and a patch doing exactly that was built, and reverted, in the
+  course of documenting this entry. It passed every existing contract test
+  except one: `test_slice_cursor_rejected`, built specifically to catch
+  "unsound elision" in bounds checks, where a genuinely wrong loop bound
+  (`while off <= buf.len()`, allowing `off == len` into `buf.set()`) also
+  havocs its induction variable and was accepted by the same broadened
+  leniency. From the solver's side, "a benign clamp the prover cannot see
+  through" and "a genuinely wrong loop bound" are the identical shape --
+  both are SAT results driven by a havoc'd symbol -- and nothing in scope at
+  the call site distinguishes them. Fixing this soundly needs a way to tell
+  those two cases apart that does not currently exist, not a bigger
+  allowlist; recorded here rather than shipped narrower-than-safe.
 - Conditionally-assigned `mut` locals lose their constraints. After
   `let mut x = a; if c { x = b; }` the solver does not merge the branches, so a
   guard on `x` will not discharge a later obligation about it. Where this
