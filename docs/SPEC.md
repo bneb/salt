@@ -634,7 +634,52 @@ Contracts cannot prove all properties. Known limitations of the current implemen
   both are SAT results driven by a havoc'd symbol -- and nothing in scope at
   the call site distinguishes them. Fixing this soundly needs a way to tell
   those two cases apart that does not currently exist, not a bigger
-  allowlist; recorded here rather than shipped narrower-than-safe.
+  allowlist; recorded here rather than shipped narrower-than-safe. **Still
+  open** -- the paragraph below fixes an adjacent, different gap found
+  while re-investigating this one, not this one.
+
+  ~~Nothing re-established anything about a havoc'd variable once its loop
+  exited, not even the loop's own invariant.~~ **Fixed.** A `while` loop's
+  standard Hoare post-loop fact -- `invariant && !cond` -- is now pushed
+  onto `ctx.emission.scoped_facts` when the loop exits (renamed from
+  Tier 1's `let_bindings`; the field now serves both), so code AFTER a
+  loop can use it, the same way `loop_assumptions` already lets code
+  INSIDE the loop use `invariant && cond`. Before this fix, `off` stayed
+  permanently, unconditionally free for the rest of the function the
+  moment any while loop havoc'd it -- not just within the loop, which is
+  what the paragraph above is about, but forever after, since nothing
+  ever un-havocs `symbolic_tracker`'s entry for a name. Soundness rests on
+  `__salt_contract_violation` being `noreturn` (see context.rs's
+  cold+noreturn passthrough): invariant maintenance across iterations is
+  checked at RUNTIME, not proven at compile time (only the base case is),
+  so this is sound because control can only reach post-loop code if that
+  runtime check held on every iteration that ran -- the same trust
+  `emit_requires_runtime_check`/`emit_ensures_runtime_check` already rest
+  on elsewhere, applied somewhere it wasn't reaching before, not a new
+  kind of trust.
+
+  A second, genuine soundness bug was found and fixed in the same change:
+  `scoped_facts` entries are raw expressions re-resolved by NAME at
+  whatever point they're later consulted, and a loop's induction variable
+  is an ordinary, reusable name. Two SEQUENTIAL while loops reusing the
+  same variable name produced a direct contradiction -- the first loop's
+  stale post-fact and the second loop's live one, both resolving against
+  the second loop's havoc symbol once the name was reassigned -- which
+  silently made the solver context UNSAT and let an absurd, unrelated
+  claim "prove" for the rest of the block. Caught empirically
+  (`test_while_post_loop_var_reuse_rejected.salt` reproduces it) while
+  testing this fix, not by inspection. Fixed by anchoring each pushed
+  fact to its own loop's permanent `{var}_havoc_{id}` symbol
+  (`HavocAnchor` in `while_stmt.rs`) instead of the bare, reusable name --
+  the same technique Tier 2 used for call results, applied here because
+  the same class of risk turned out to apply to loop variables too.
+
+  For-loops were not checked for the same gap -- `for_loop.rs` pops
+  `loop_assumptions` the same way but has no post-loop-fact push at all,
+  and for-loop induction variables typically go out of scope entirely at
+  the loop (unlike a `while` loop's condition variable, a pre-declared
+  `mut` local that outlives it), so whether there's anything left to
+  propagate is unclear without a closer look.
 - Conditionally-assigned `mut` locals lose their constraints. After
   `let mut x = a; if c { x = b; }` the solver does not merge the branches, so a
   guard on `x` will not discharge a later obligation about it. Where this

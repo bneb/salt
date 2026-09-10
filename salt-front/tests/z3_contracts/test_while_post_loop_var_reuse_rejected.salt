@@ -1,0 +1,33 @@
+// Z3 Contract Test: a stale post-loop fact from an EARLIER loop must not
+// leak into a LATER loop that reuses the same variable name.
+// Expected: FAIL (verification error)
+//
+// The regression this guards: scoped_facts entries are raw syn::Expr,
+// re-resolved by NAME at whatever point they're later consulted. `off` is
+// an ordinary, reusable source name -- the second loop reusing it
+// overwrites symbolic_tracker["off"] with a new havoc symbol. An
+// unrenamed post-loop fact from the FIRST loop (off <= 3) then resolved
+// against the SECOND loop's unrelated symbol (off >= 100) -- a direct
+// contradiction, silently making the solver context UNSAT and every check
+// after it vacuously "prove", including the absurd claim below. Caught
+// empirically while building the fix, before the anchoring
+// (verify_while_loop_post_body's HavocAnchor, renaming each fact to its
+// loop's own permanent `{var}_havoc_{id}` symbol) was added.
+package test_while_post_loop_var_reuse_rejected
+
+fn absurd(z: i64) requires { z == 999999999 } { }
+
+pub fn f(n: i64) {
+    let mut off: i64 = 0;
+    while off < n {
+        invariant off >= 0 && off <= 3;
+        off = off + 1;
+    }
+
+    let mut off: i64 = 100;
+    while off < n + 200 {
+        invariant off >= 100;
+        off = off + 1;
+    }
+    absurd(off);
+}

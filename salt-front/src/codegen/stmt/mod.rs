@@ -27,10 +27,10 @@ pub fn emit_block(ctx: &mut LoweringContext, out: &mut String, stmts: &[Stmt], l
     // 1. Preamble Pass: Hoist all allocas to function entry
     hoist_allocas_in_block(ctx, stmts, local_vars)?;
 
-    // Non-`mut` lets declared directly in this block (assert_local_expr_in_z3)
-    // record `name == init` here; scoped to this block's lifetime by
-    // truncating back to the pre-loop length on every exit path below.
-    let let_bindings_base = ctx.emission.let_bindings.len();
+    // Non-`mut` lets and while-loop post-conditions declared directly in
+    // this block record facts in ctx.emission.scoped_facts; scoped to this
+    // block's lifetime by truncating back to the pre-loop length below.
+    let scoped_facts_base = ctx.emission.scoped_facts.len();
 
     let mut emitted_terminator = false;
     let mut pushed_guards: usize = 0;
@@ -59,7 +59,7 @@ pub fn emit_block(ctx: &mut LoweringContext, out: &mut String, stmts: &[Stmt], l
     for _ in 0..pushed_guards {
         ctx.emission.path_conditions.pop();
     }
-    ctx.emission.let_bindings.truncate(let_bindings_base);
+    ctx.emission.scoped_facts.truncate(scoped_facts_base);
 
     // If block is empty and not terminated, it must have at least one instruction
     // or a branch to merge to be MLIR-valid.
@@ -286,7 +286,7 @@ fn assert_local_lit_int_in_z3(ctx: &mut LoweringContext, name: &str, init: &Opti
 /// `mut` locals, which stay on `assert_local_lit_int_in_z3`'s literal-only
 /// treatment; see docs/SPEC.md's havoc entry for why that case isn't this
 /// simple). Mirrors the equivalent block in `emit_hoisted_local_init`, and
-/// additionally records the fact in `ctx.emission.let_bindings` -- the
+/// additionally records the fact in `ctx.emission.scoped_facts` -- the
 /// requires/ensures checkers build a fresh solver at each check site rather
 /// than reading `ctx.z3_solver`'s accumulated state, so asserting here alone
 /// only reaches while-loop invariant proving, not contract checks.
@@ -299,7 +299,7 @@ fn assert_local_expr_in_z3(ctx: &mut LoweringContext, name: &str, init: &Option<
 
     let name_ident = syn::Ident::new(name, proc_macro2::Span::call_site());
     let expr_ref: &syn::Expr = &init.expr;
-    ctx.emission.let_bindings.push(syn::parse_quote!(#name_ident == (#expr_ref)));
+    ctx.emission.scoped_facts.push(syn::parse_quote!(#name_ident == (#expr_ref)));
 }
 
 fn emit_unhoisted_local_init(ctx: &mut LoweringContext, out: &mut String, local: &syn::Local, name: &str, local_vars: &mut HashMap<String, (Type, LocalKind)>) -> Result<(), String> {

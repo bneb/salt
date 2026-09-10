@@ -326,8 +326,8 @@ impl VerificationEngine {
                  // scope (see assert_local_expr_in_z3 in codegen/stmt/mod.rs)
                  // so a requires stated over a let-bound name's defining
                  // expression -- or vice versa -- can be related to it.
-                 let let_bindings = ctx.emission.let_bindings.clone();
-                 for lb in &let_bindings {
+                 let scoped_facts = ctx.emission.scoped_facts.clone();
+                 for lb in &scoped_facts {
                      if let Ok(z3_lb) = crate::codegen::expr::translate_bool_to_z3(ctx, lb, &locals_snapshot, &sym_ctx) {
                          solver.assert(&z3_lb);
                      }
@@ -350,7 +350,7 @@ impl VerificationEngine {
                          .chain(caller_pcs.iter())
                          .chain(path_conditions.iter())
                          .chain(loop_assumptions.iter())
-                         .chain(let_bindings.iter()),
+                         .chain(scoped_facts.iter()),
                  );
                  assert_scope_type_bounds(ctx, local_vars, &relevant, &solver);
 
@@ -673,8 +673,8 @@ impl VerificationEngine {
         // assert_local_expr_in_z3 in codegen/stmt/mod.rs), so an ensures
         // clause stated over a let-bound name's defining expression -- or
         // vice versa, as in is_valid_user_ptr's `end`/`ptr + len` -- proves.
-        let let_bindings = ctx.emission.let_bindings.clone();
-        for lb in &let_bindings {
+        let scoped_facts = ctx.emission.scoped_facts.clone();
+        for lb in &scoped_facts {
             if let Ok(z3_lb) = crate::codegen::expr::translate_bool_to_z3(ctx, lb, &z3_locals, &sym_ctx) {
                 solver.assert(&z3_lb);
             }
@@ -768,7 +768,7 @@ impl VerificationEngine {
                     // INCLUDING result now that it carries its real type,
                     // gets its type's range asserted -- the postcondition
                     // check never had this at all before. Also scoped to
-                    // let_bindings' free variables (e.g. `ptr`/`len` behind
+                    // scoped_facts' free variables (e.g. `ptr`/`len` behind
                     // `end == ptr + len`), the same reasoning as `verify`'s
                     // requires-check scoping above -- AND to return_expr's
                     // free variables: `binding` ties `result` to `ret_val`
@@ -779,7 +779,7 @@ impl VerificationEngine {
                     // Without this, `n: u64`'s non-negativity was invisible
                     // to this check and Z3 could pick n = -1.
                     let relevant = collect_ident_names_from(
-                        std::iter::once(actual_ens).chain(let_bindings.iter()).chain(std::iter::once(return_expr)),
+                        std::iter::once(actual_ens).chain(scoped_facts.iter()).chain(std::iter::once(return_expr)),
                     );
                     assert_scope_type_bounds(ctx, &ens_locals, &relevant, &solver);
                     *ctx.total_checks += 1;

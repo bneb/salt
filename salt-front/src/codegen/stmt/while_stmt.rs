@@ -34,21 +34,29 @@ pub(crate) fn prove_while_loop_base_case(
 }
 
 /// Phase B: Inductive step for while loop verification.
+///
+/// Returns the `{original_name: havoc_name}` map for every variable this
+/// call havoc'd, so `verify_while_loop_post_body` can anchor the post-loop
+/// fact to THIS loop's specific, permanent havoc symbols rather than the
+/// bare (reusable) source name -- see that function's doc comment for why
+/// that distinction is load-bearing, not just tidiness.
 pub(crate) fn setup_while_loop_inductive_step(
     ctx: &mut LoweringContext,
     stmts: &[Stmt],
     bv: &mut HashMap<String, (Type, LocalKind)>,
     cond: &syn::Expr,
     inv: &[syn::Expr],
-) -> Result<(), String> {
-    if ctx.config.no_verify { return Ok(()); }
+) -> Result<HashMap<String, String>, String> {
+    if ctx.config.no_verify { return Ok(HashMap::new()); }
     let sc = crate::codegen::verification::SymbolicContext::new(ctx.z3_ctx);
     ctx.z3_solver.push();
+    let mut havoc_names: HashMap<String, String> = HashMap::new();
     for n in &crate::codegen::stmt::helpers::collect_mutations(stmts) {
         if let Some((ty, _)) = bv.get(n) {
             if ty.is_integer() {
                 let f = format!("{}_havoc_{}", n, ctx.next_id());
                 ctx.symbolic_tracker.insert(n.clone(), ctx.mk_var(&f));
+                havoc_names.insert(n.clone(), f);
             }
         }
     }
@@ -60,7 +68,7 @@ pub(crate) fn setup_while_loop_inductive_step(
     if let Ok(z) = crate::codegen::expr::translate_bool_to_z3(ctx, cond, bv, &sc) {
         ctx.z3_solver.assert(&z);
     }
-    Ok(())
+    Ok(havoc_names)
 }
 
 /// Try to auto-infer a loop invariant for simple monotonic while loops.
@@ -169,10 +177,86 @@ fn has_monotonic_increment(body: &[Stmt], var_name: &str) -> bool {
     false
 }
 
-/// Phase C: Pop inductive scope and assert not(cond) for post-loop.
+/// Renames every bare identifier matching a key in `havoc_names` to that
+/// key's havoc'd name (`off` -> `off_havoc_12`). Leaves everything else --
+/// other identifiers, field access, calls -- untouched.
+///
+/// Why this exists: `scoped_facts` entries are raw `syn::Expr`, re-resolved
+/// by NAME at whatever point they're later consulted. `off` is an ordinary,
+/// reusable source name -- a second while loop reusing it (or a plain
+/// `let mut off = ...` shadow) overwrites `symbolic_tracker["off"]` with a
+/// NEW havoc symbol, and an unrenamed post-loop fact from the FIRST loop
+/// would then resolve against that unrelated second symbol instead of the
+/// one it was actually true about. Two sequential loops both touching
+/// `off` produced exactly this: a stale `off <= 3` and a live `off >= 100`
+/// both resolving to the same symbol, a direct contradiction, and every
+/// check after it vacuously "proving" -- caught by test_tier3 empirically
+/// before this rename was added, not by inspection. Anchoring to the
+/// havoc'd name instead sidesteps it the same way Tier 2's fresh
+/// `callres_{id}` identifiers sidestepped the analogous risk for call
+/// results: once a fact names a globally-unique symbol instead of a
+/// reusable one, nothing can ever redefine out from under it.
+struct HavocAnchor<'m> {
+    havoc_names: &'m HashMap<String, String>,
+}
+
+impl syn::visit_mut::VisitMut for HavocAnchor<'_> {
+    fn visit_expr_mut(&mut self, expr: &mut syn::Expr) {
+        if let syn::Expr::Path(p) = expr {
+            if let Some(ident) = p.path.get_ident() {
+                if let Some(havoc_name) = self.havoc_names.get(&ident.to_string()) {
+                    let new_ident = syn::Ident::new(havoc_name, ident.span());
+                    *expr = syn::parse_quote!(#new_ident);
+                    return;
+                }
+            }
+        }
+        syn::visit_mut::visit_expr_mut(self, expr);
+    }
+}
+
+/// Phase C: Pop inductive scope and make the standard Hoare post-loop fact
+/// -- `invariant && !cond` -- available to code after the loop.
+///
+/// Sound, not a judgment call, but the argument has two different legs for
+/// the two conjuncts, and it's worth being precise about which is which.
+/// `!cond` is why the loop exited -- unconditionally true, no caveat.
+/// `invariant` is NOT independently proven true for every iteration at
+/// compile time: only the BASE CASE is (prove_while_loop_base_case, a hard
+/// E009 if it fails). Maintenance across iterations is enforced at RUNTIME
+/// instead -- the `invariant` statement inside the loop body compiles to a
+/// check on every iteration that calls the `noreturn`-attributed
+/// `__salt_contract_violation` (see context.rs's cold+noreturn passthrough
+/// for that symbol) if it's ever false. `noreturn` is load-bearing for this
+/// argument: LLVM assumes that call never returns, so control can only
+/// reach code after the loop if the invariant held on every iteration that
+/// ran. This is the SAME pattern emit_requires_runtime_check and
+/// emit_ensures_runtime_check already rely on elsewhere in this codebase
+/// (a runtime check the compiler can't discharge at compile time, trusted
+/// downstream because failing it doesn't fall through) -- not a new kind of
+/// trust this fix introduces, applied to a place it wasn't reaching before.
+///
+/// This is what was missing, not the per-call-site leniency the reverted
+/// patch tried (see SPEC.md's havoc entry): `off`'s tracked value is
+/// deliberately destroyed on loop entry (havoc'd in
+/// setup_while_loop_inductive_step, named `{var}_havoc_{id}`) so the
+/// inductive step reasons about an arbitrary iteration, and NOTHING
+/// previously re-established anything about it once the loop exited --
+/// not even the loop's own invariant. `off` stayed permanently,
+/// unconditionally free for the rest of the function (and, since
+/// symbolic_tracker isn't reset per function, potentially for functions
+/// compiled after it too) unless the caller happened to re-guard
+/// immediately before every later use. Pushed onto
+/// ctx.emission.scoped_facts (not ctx.z3_solver alone) because
+/// requires/ensures checks build a fresh Solver per call site and never
+/// read ctx.z3_solver -- Tier 1 and Tier 2's fixes both had to work around
+/// the same thing. ctx.z3_solver still gets it too, for nested loops'
+/// own base-case/inductive-step reasoning, which reads it directly.
 pub(crate) fn verify_while_loop_post_body(
     ctx: &mut LoweringContext,
     cond: &syn::Expr,
+    inv: &[syn::Expr],
+    havoc_names: &HashMap<String, String>,
     lv: &HashMap<String, (Type, LocalKind)>,
 ) {
     if ctx.config.no_verify { return; }
@@ -180,6 +264,24 @@ pub(crate) fn verify_while_loop_post_body(
     ctx.z3_solver.pop(1);
     if let Ok(z) = crate::codegen::expr::translate_bool_to_z3(ctx, cond, lv, &sc) {
         ctx.z3_solver.assert(&z.not());
+    }
+    let mut anchor = HavocAnchor { havoc_names };
+
+    let mut negated_cond = syn::Expr::Unary(syn::ExprUnary {
+        attrs: vec![],
+        op: syn::UnOp::Not(syn::token::Not::default()),
+        expr: Box::new(cond.clone()),
+    });
+    syn::visit_mut::VisitMut::visit_expr_mut(&mut anchor, &mut negated_cond);
+    ctx.emission.scoped_facts.push(negated_cond);
+
+    for e in inv {
+        if let Ok(z) = crate::codegen::expr::translate_bool_to_z3(ctx, e, lv, &sc) {
+            ctx.z3_solver.assert(&z);
+        }
+        let mut anchored = e.clone();
+        syn::visit_mut::VisitMut::visit_expr_mut(&mut anchor, &mut anchored);
+        ctx.emission.scoped_facts.push(anchored);
     }
 }
 
@@ -234,7 +336,7 @@ pub(crate) fn emit_while_stmt(ctx: &mut LoweringContext, out: &mut String, w: &c
             };
             let invariant_exprs = prove_while_loop_base_case(ctx, &all_stmts, &body_vars)?;
             let body_to_emit = if auto_inv.is_some() { &all_stmts } else { &w.body.stmts };
-            setup_while_loop_inductive_step(ctx, body_to_emit, &mut body_vars, &w.cond, &invariant_exprs)?;
+            let havoc_names = setup_while_loop_inductive_step(ctx, body_to_emit, &mut body_vars, &w.cond, &invariant_exprs)?;
 
             // Push loop assumptions so callee precondition verification
             // inside the body can use invariants + guard to discharge bounds.
@@ -256,7 +358,7 @@ pub(crate) fn emit_while_stmt(ctx: &mut LoweringContext, out: &mut String, w: &c
                 ctx.emission.loop_assumptions.pop();
             }
 
-            verify_while_loop_post_body(ctx, &w.cond, local_vars);
+            verify_while_loop_post_body(ctx, &w.cond, &invariant_exprs, &havoc_names, local_vars);
             ctx.break_labels_mut().pop();
             ctx.continue_labels_mut().pop();
 

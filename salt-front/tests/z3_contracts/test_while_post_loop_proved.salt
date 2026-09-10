@@ -1,0 +1,28 @@
+// Z3 Contract Test: the standard Hoare post-loop fact (invariant && !cond)
+// must be available to code after a while loop exits.
+// Expected: PASS
+//
+// Base case and !cond are proven/known at compile time; invariant
+// maintenance across iterations is enforced at RUNTIME (the `invariant`
+// statement compiles to a check on every iteration, calling the
+// `noreturn`-attributed __salt_contract_violation if ever false) --
+// control can only reach code after the loop if it held throughout, so
+// asserting `invariant && !cond` there states nothing not already
+// established. Before this fix, NOTHING was re-established about a
+// loop-mutated variable once the loop exited (not even its own
+// invariant): `i` stayed permanently, unconditionally free for the rest
+// of the function.
+package test_while_post_loop_proved
+
+fn need_nonneg(y: i64) requires { y >= 0 } { }
+
+pub fn f(n: i64) {
+    let mut i: i64 = 0;
+    while i < n {
+        invariant i >= 0;
+        i = i + 1;
+    }
+    // Needs invariant (i >= 0) AND !cond (i >= n) together: i >= 0 alone
+    // covers it here, but proves via the post-loop fact, not by accident.
+    need_nonneg(i);
+}

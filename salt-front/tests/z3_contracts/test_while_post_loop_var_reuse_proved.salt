@@ -1,0 +1,25 @@
+// Z3 Contract Test: reusing a variable name across two sequential while
+// loops must not confuse the two loops' post-loop facts with each other.
+// Expected: PASS
+//
+// The second loop's own post-loop fact (off >= 100) must still be usable
+// after it, undisturbed by the first loop's separate, unrelated fact about
+// a same-named-but-different variable.
+package test_while_post_loop_var_reuse_proved
+
+fn need_ge_100(y: i64) requires { y >= 100 } { }
+
+pub fn f(n: i64) {
+    let mut off: i64 = 0;
+    while off < n {
+        invariant off >= 0 && off <= 3;
+        off = off + 1;
+    }
+
+    let mut off: i64 = 100;
+    while off < n + 200 {
+        invariant off >= 100;
+        off = off + 1;
+    }
+    need_ge_100(off);
+}

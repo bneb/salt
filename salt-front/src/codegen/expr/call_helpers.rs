@@ -50,7 +50,7 @@ impl syn::visit_mut::VisitMut for EnsuresSubst<'_> {
 /// symbol nothing downstream ever referenced -- and asserted only into
 /// `ctx.z3_solver`, which while-loop invariant proving reads directly but
 /// which `requires`/`ensures` checks never do (each builds a fresh
-/// `Solver`). The AST-substituted copy pushed onto `emission.let_bindings`
+/// `Solver`). The AST-substituted copy pushed onto `emission.scoped_facts`
 /// below is what actually reaches those checks; scoping (truncated when the
 /// call's enclosing block ends) is inherited from that existing mechanism,
 /// which is sound here for the same reason it's sound for a `let`: the
@@ -82,7 +82,7 @@ pub(crate) fn apply_ensures_to_solver(
             &mut EnsuresSubst { result_name: &result_name, param_subs: &param_subs },
             &mut substituted,
         );
-        ctx.emission.let_bindings.push(substituted);
+        ctx.emission.scoped_facts.push(substituted);
     }
 
     // Build local_vars: map param names to SSA-friendly entries,
@@ -125,7 +125,7 @@ pub(crate) fn apply_ensures_to_solver(
         let Some(actual_ens) = crate::codegen::verification::unwrap_contract_expr(ens) else { continue };
 
         // Feeds ctx.z3_solver directly -- read by while-loop invariant
-        // proving. The AST-substituted copy pushed onto let_bindings above
+        // proving. The AST-substituted copy pushed onto scoped_facts above
         // is what reaches requires/ensures checks, which build a fresh
         // Solver per call site and never read ctx.z3_solver.
         if let Ok(z3_ens) = crate::codegen::expr::translate_bool_to_z3(

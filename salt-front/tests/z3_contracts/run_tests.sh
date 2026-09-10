@@ -942,6 +942,65 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# ── The Hoare post-loop fact (invariant && !cond) must be usable after a while loop ──
+echo -n "  test_while_post_loop_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_while_post_loop_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_wpl_proved > /tmp/z3_out_wpl_proved.txt 2>&1; then
+    echo "PASS (post-loop invariant reached the later requires check)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (post-loop fact still not reaching the solver)"
+    cat /tmp/z3_out_wpl_proved.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+echo -n "  test_while_post_loop_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_while_post_loop_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_wpl_rejected > /tmp/z3_out_wpl_rejected.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_wpl_rejected.txt; then
+        echo "PASS (unjustified post-loop claim still rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_wpl_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (unjustified claim ACCEPTED — soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
+echo -n "  test_while_post_loop_var_reuse_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_while_post_loop_var_reuse_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_wplr_proved > /tmp/z3_out_wplr_proved.txt 2>&1; then
+    echo "PASS (second loop's own post-fact usable despite name reuse)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (name-reuse anchoring broke a legitimate proof)"
+    cat /tmp/z3_out_wplr_proved.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+echo -n "  test_while_post_loop_var_reuse_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_while_post_loop_var_reuse_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_wplr_rejected > /tmp/z3_out_wplr_rejected.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_wplr_rejected.txt; then
+        echo "PASS (stale fact from a same-named earlier loop did not leak)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_wplr_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (absurd claim ACCEPTED — stale fact contradiction, soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then
