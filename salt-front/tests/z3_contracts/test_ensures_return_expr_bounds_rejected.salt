@@ -1,0 +1,9 @@
+// Z3 Contract Test: a genuinely false postcondition over the return
+// expression must still be rejected -- confirms the bounds-scoping fix
+// doesn't waive real violations, only supplies a missing true fact.
+// Expected: FAIL (verification error)
+package test_ensures_return_expr_bounds_rejected
+
+fn g(n: u64) -> u64 ensures { result > 100 } {
+    return n + 1;
+}

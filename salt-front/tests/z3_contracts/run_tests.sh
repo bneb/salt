@@ -852,6 +852,96 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# ── A function's own requires must be assumed for calls it makes ──
+echo -n "  test_composability_requires_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_composability_requires_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_cr_proved > /tmp/z3_out_cr_proved.txt 2>&1; then
+    echo "PASS (own requires justified the call it makes)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (caller_preconditions still not reaching the solver)"
+    cat /tmp/z3_out_cr_proved.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+echo -n "  test_composability_requires_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_composability_requires_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_cr_rejected > /tmp/z3_out_cr_rejected.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_cr_rejected.txt; then
+        echo "PASS (looser caller bound did not over-justify the call)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_cr_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (looser bound ACCEPTED — soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── A callee's ensures must be assumed at its own call site ──
+echo -n "  test_composability_ensures_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_composability_ensures_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_ce_proved > /tmp/z3_out_ce_proved.txt 2>&1; then
+    echo "PASS (callee ensures propagated to the caller's later call)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (apply_ensures_to_solver still not reaching the solver)"
+    cat /tmp/z3_out_ce_proved.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+echo -n "  test_composability_ensures_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_composability_ensures_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_ce_rejected > /tmp/z3_out_ce_rejected.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_ce_rejected.txt; then
+        echo "PASS (propagated ensures did not over-justify an unrelated call)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_ce_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (unrelated stronger requirement ACCEPTED — soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── Postcondition type-bounds scoping must reach the return expression ──
+echo -n "  test_ensures_return_expr_bounds_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_ensures_return_expr_bounds_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_erb_proved > /tmp/z3_out_erb_proved.txt 2>&1; then
+    echo "PASS (n's u64 bound reached the postcondition via the WP binding)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (return-expression identifiers still invisible to type bounds)"
+    cat /tmp/z3_out_erb_proved.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+echo -n "  test_ensures_return_expr_bounds_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_ensures_return_expr_bounds_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_erb_rejected > /tmp/z3_out_erb_rejected.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_erb_rejected.txt; then
+        echo "PASS (genuinely false postcondition still rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_erb_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (false postcondition ACCEPTED — soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then

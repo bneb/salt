@@ -2,11 +2,60 @@ use crate::types::Type;
 use crate::codegen::context::{LoweringContext, LocalKind};
 use std::collections::HashMap;
 
-/// Assert callee postconditions into the caller's Z3 solver.
+/// Rewrites a callee's `ensures` expression into a fact stated in the
+/// caller's terms: `result` becomes the fresh identifier standing for this
+/// specific call's return value, and each parameter becomes the actual
+/// argument expression passed at this call site (parenthesized, so operator
+/// precedence survives the substitution).
+struct EnsuresSubst<'s> {
+    result_name: &'s syn::Ident,
+    param_subs: &'s HashMap<String, syn::Expr>,
+}
+
+impl syn::visit_mut::VisitMut for EnsuresSubst<'_> {
+    fn visit_expr_mut(&mut self, expr: &mut syn::Expr) {
+        if let syn::Expr::Path(p) = expr {
+            if let Some(ident) = p.path.get_ident() {
+                if ident == "result" {
+                    let name = self.result_name;
+                    *expr = syn::parse_quote!(#name);
+                    return;
+                }
+                if let Some(replacement) = self.param_subs.get(&ident.to_string()) {
+                    *expr = syn::parse_quote!((#replacement));
+                    return;
+                }
+            }
+        }
+        syn::visit_mut::visit_expr_mut(self, expr);
+    }
+}
+
+/// Assert callee postconditions into the caller's Z3 solver, and record them
+/// as facts the caller can rely on for its OWN `requires`/`ensures` checks.
 ///
 /// After `y = f(x)`, if f has `#ensures { result > 0 }`, this asserts
 /// `y > 0` into the caller's solver so subsequent verification can
 /// rely on the postcondition.
+///
+/// `result` is tied to a fresh, globally-unique identifier (minted from
+/// ctx.next_id(), never reused) registered in `symbolic_tracker` under the
+/// KEY `result_ssa` -- the call's own MLIR value -- so that `let y = f(x)`,
+/// which gives `y` that SAME LocalKind::SSA, resolves `y` to this same Z3
+/// symbol via `translate_to_z3`'s `get_symbolic_int(ssa)` lookup, rather
+/// than falling back to a fresh symbol named plain "y" with no connection
+/// to `f`'s contract. Previously this used the literal name "result" --
+/// colliding across every call site with an ensures clause, and never
+/// substituted to anything, so the postcondition was asserted about a
+/// symbol nothing downstream ever referenced -- and asserted only into
+/// `ctx.z3_solver`, which while-loop invariant proving reads directly but
+/// which `requires`/`ensures` checks never do (each builds a fresh
+/// `Solver`). The AST-substituted copy pushed onto `emission.let_bindings`
+/// below is what actually reaches those checks; scoping (truncated when the
+/// call's enclosing block ends) is inherited from that existing mechanism,
+/// which is sound here for the same reason it's sound for a `let`: the
+/// identifier is single-assignment and globally unique, so leaking past
+/// this fix's actual usefulness window is harmless, never wrong.
 pub(crate) fn apply_ensures_to_solver(
     ctx: &mut LoweringContext,
     ensures: &[syn::Expr],
@@ -19,6 +68,22 @@ pub(crate) fn apply_ensures_to_solver(
     }
     let sym_ctx = crate::codegen::verification::SymbolicContext::new(ctx.z3_ctx);
     use crate::z3_shim::ast::Ast;
+
+    let result_name = syn::Ident::new(&format!("callres_{}", ctx.next_id()), proc_macro2::Span::call_site());
+    ctx.symbolic_tracker.insert(result_ssa.to_string(), ctx.mk_var(&result_name.to_string()));
+
+    let param_subs: HashMap<String, syn::Expr> = param_names.iter().enumerate()
+        .filter_map(|(i, p_name)| args_vec.get(i).map(|a| (p_name.clone(), a.clone())))
+        .collect();
+    for ens in ensures {
+        let Some(actual_ens) = crate::codegen::verification::unwrap_contract_expr(ens) else { continue };
+        let mut substituted = actual_ens.clone();
+        syn::visit_mut::VisitMut::visit_expr_mut(
+            &mut EnsuresSubst { result_name: &result_name, param_subs: &param_subs },
+            &mut substituted,
+        );
+        ctx.emission.let_bindings.push(substituted);
+    }
 
     // Build local_vars: map param names to SSA-friendly entries,
     // plus "result" → the call's return SSA value.
@@ -57,16 +122,12 @@ pub(crate) fn apply_ensures_to_solver(
         from_vec.iter().zip(to_vec.iter()).collect();
 
     for ens in ensures {
-        let actual_ens = if let syn::Expr::Block(block) = ens {
-            if let Some(syn::Stmt::Expr(inner, _)) = block.block.stmts.first() {
-                inner
-            } else {
-                continue;
-            }
-        } else {
-            ens
-        };
+        let Some(actual_ens) = crate::codegen::verification::unwrap_contract_expr(ens) else { continue };
 
+        // Feeds ctx.z3_solver directly -- read by while-loop invariant
+        // proving. The AST-substituted copy pushed onto let_bindings above
+        // is what reaches requires/ensures checks, which build a fresh
+        // Solver per call site and never read ctx.z3_solver.
         if let Ok(z3_ens) = crate::codegen::expr::translate_bool_to_z3(
             ctx, actual_ens, &locals, &sym_ctx,
         ) {

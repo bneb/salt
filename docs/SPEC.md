@@ -540,18 +540,37 @@ Contracts cannot prove all properties. Known limitations of the current implemen
   the postcondition is checked against a single symbolic `result` rather than
   against the struct's fields. Constrain the field through a scalar the function
   already returns, or check it at runtime.
-- A callee's `ensures` is not assumed at the call site. Preconditions propagate
-  outward -- a `requires` is checked wherever the function is called, including
-  across module boundaries -- but a caller cannot rely on a callee's
-  postcondition to discharge its own obligation. Establish the property from the
-  caller's own parameters and locals instead.
-- A function's own `requires` clause is not assumed as a fact for reasoning
-  inside its own body -- only for checking calls made INTO it from elsewhere.
-  A caller cannot write `requires { x <= LIMIT }` and rely on that clause
-  alone to justify a call it makes using `x`; the same fact re-stated as a
-  path-sensitive `if` guard, written directly in the body, does work. This
-  holds even across a `while` loop with a mutated induction variable, as
-  long as the guard is immediately adjacent to the call it protects.
+- ~~A callee's `ensures` is not assumed at the call site.~~ **Fixed for named
+  results.** After `let y = f(x);`, `f`'s `ensures` clause (params
+  substituted with the actual arguments, `result` tied to `y`) is now a fact
+  available to any later `requires`/`ensures` check in `y`'s scope. Two prior
+  bugs made this a no-op despite the plumbing (`apply_ensures_to_solver`,
+  called from every call site) looking complete: `result` lowered to a
+  symbol literally named `"result"` -- the same name at every call site with
+  an ensures clause, colliding across all of them -- with no substitution
+  rule ever pointing it at the value this specific call produced; and the
+  resulting fact was asserted only into `ctx.z3_solver`, which
+  `requires`/`ensures` checks never read (each builds a fresh `Solver`; only
+  while-loop invariant proving reads it directly). `test_cross_fn_chain.salt`
+  -- already in the suite, already claimed as a working example of this --
+  measurably improved from this fix (1/2 checks proven to 2/2) once it was
+  actually true rather than aspirational. Still doesn't reach an UNNAMED call
+  result (`h(g(x))` -- `g`'s value is never bound to an identifier, so
+  nothing carries the fact forward) or a recursive call's own inductive
+  hypothesis (no ranking/induction machinery exists for that).
+- ~~A function's own `requires` clause is not assumed as a fact for
+  reasoning inside its own body.~~ **Fixed for calls it makes.** `f(x)
+  requires { x <= LIMIT } { g(x); }`, where `g` also requires `x <= LIMIT`,
+  now proves without re-guarding. The mechanism (`caller_preconditions`,
+  pushed/popped around the function body, consumed at the callee's
+  requires-check site) already existed and was already wired correctly --
+  `requires { expr }` just parses as `Expr::Block`, and the Z3 translator
+  has no arm for that, so every entry silently failed to translate and
+  never reached the solver. `requires(expr)` (paren form) was never
+  affected, which is why this stayed hidden. This specifically covers calls
+  the function makes; a path-sensitive `if` guard, re-stating the same fact
+  directly in the body, is still the way to help checks that aren't a call
+  (e.g. an inline array index) discharge against a `requires` clause.
 - ~~Unsigned integer types carry no non-negativity constraint.~~ **Fixed.**
   `u8/u16/u32/u64/usize` (and the signed narrow types `i8/i16`) now carry
   their type's range as an implicit fact wherever a value of that type is in
@@ -636,6 +655,17 @@ a contract lowered to a fresh unconstrained symbol rather than its value, so
 counter-example. The identical contract written with a literal proved fine,
 which made the failure look like a limit of the solver. Constants now lower to
 their values; see `tests/z3_contracts/test_const_in_contract_proved.salt`.
+
+A postcondition's type-bounds scoping used to look only at identifiers written
+in the `ensures` clause's own text, not at the RETURN expression `result` is
+bound to. `fn g(n: u64) -> u64 ensures { result > 0 } { return n + 1; }` --
+obviously true for real `u64` arithmetic -- failed to prove, because the
+scoping never saw `n` (it appears only inside `result == n + 1`, the
+Hoare/WP binding, not inside `result > 0` itself), so `n`'s non-negativity
+was never available and Z3 was free to pick `n = -1`. Found while testing
+the composability fixes above and confirmed to predate both of them.
+Type-bounds scoping now also collects from the return expression; see
+`tests/z3_contracts/test_ensures_return_expr_bounds_proved.salt`.
 
 ---
 

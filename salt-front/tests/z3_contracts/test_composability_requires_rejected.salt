@@ -1,0 +1,13 @@
+// Z3 Contract Test: a caller's own `requires` must not over-justify a call
+// it makes -- a looser bound on the caller must not discharge a tighter
+// bound on the callee.
+// Expected: FAIL (verification error)
+package test_composability_requires_rejected
+
+const LIMIT: u64 = 100;
+
+fn g(x: u64) requires { x <= LIMIT } { }
+
+pub fn f(x: u64) requires { x <= 200 } {
+    g(x);
+}

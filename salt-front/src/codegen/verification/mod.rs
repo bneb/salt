@@ -284,12 +284,20 @@ impl VerificationEngine {
                  
                  // Assert the caller's preconditions (this function's requires)
                  // to narrow the argument domain. Enabled when the caller has
-                 // its own requires clauses that constrain parameters.
+                 // its own requires clauses that constrain parameters. Was a
+                 // silent no-op until now: `requires { x <= LIMIT }` parses as
+                 // Expr::Block, and translate_bool_to_z3 has no arm for that,
+                 // so every entry here failed to translate and got dropped by
+                 // the `if let Ok(..)` below -- caller_preconditions was
+                 // populated and consumed correctly, just never successfully
+                 // translated. `requires(x <= LIMIT)` (paren form) was never
+                 // affected, which is why this stayed hidden.
                  let caller_pcs = ctx.emission.caller_preconditions.clone();
                  for pc in &caller_pcs {
+                     let Some(actual_pc) = unwrap_contract_expr(pc) else { continue };
                      let dummy_locals_for_caller = local_vars.clone();
                      if let Ok(z3_pc) = crate::codegen::expr::translate_bool_to_z3(
-                         ctx, pc, &dummy_locals_for_caller, &sym_ctx,
+                         ctx, actual_pc, &dummy_locals_for_caller, &sym_ctx,
                      ) {
                          solver.assert(&z3_pc);
                      }
@@ -762,9 +770,16 @@ impl VerificationEngine {
                     // check never had this at all before. Also scoped to
                     // let_bindings' free variables (e.g. `ptr`/`len` behind
                     // `end == ptr + len`), the same reasoning as `verify`'s
-                    // requires-check scoping above.
+                    // requires-check scoping above -- AND to return_expr's
+                    // free variables: `binding` ties `result` to `ret_val`
+                    // (return_expr, translated), so a postcondition over
+                    // `result` alone (`ensures { result > 0 }` on
+                    // `return n + 1`) needs `n`'s bound to derive anything,
+                    // even though `n` never appears in `actual_ens` itself.
+                    // Without this, `n: u64`'s non-negativity was invisible
+                    // to this check and Z3 could pick n = -1.
                     let relevant = collect_ident_names_from(
-                        std::iter::once(actual_ens).chain(let_bindings.iter()),
+                        std::iter::once(actual_ens).chain(let_bindings.iter()).chain(std::iter::once(return_expr)),
                     );
                     assert_scope_type_bounds(ctx, &ens_locals, &relevant, &solver);
                     *ctx.total_checks += 1;
@@ -998,6 +1013,22 @@ fn assert_type_bounds<'ctx>(
     for (i, arg_val) in call_vals_z3.iter().enumerate() {
         if i >= param_tys.len() { continue; }
         assert_bound_for_type(ctx, arg_val, &param_tys[i], solver);
+    }
+}
+
+/// Grammar parses `requires { expr }` / `ensures { expr }` as `Expr::Block`;
+/// unwrap it to the inner expression for Z3 translation (the paren form,
+/// `requires(expr)`, needs no unwrapping). Returns `None` for a block that
+/// isn't exactly one bare expression -- callers should skip the fact rather
+/// than hard-fail, since every call site this is used from is an auxiliary
+/// constraint (caller_preconditions, callee ensures), not the primary check.
+pub(crate) fn unwrap_contract_expr(expr: &syn::Expr) -> Option<&syn::Expr> {
+    match expr {
+        syn::Expr::Block(block) => match block.block.stmts.first() {
+            Some(syn::Stmt::Expr(inner, _)) => Some(inner),
+            _ => None,
+        },
+        _ => Some(expr),
     }
 }
 

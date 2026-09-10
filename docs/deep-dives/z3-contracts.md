@@ -558,7 +558,7 @@ cases within its 100ms timeout window.
 | Case splitting (data-dependent loops) | Z3 sub-frames for each exit condition |
 | Array store tracking | Versioned UF + update axioms + bounded frame axioms |
 | Array preservation (frame axioms) | Concrete expansion + ForAll quantifier per array version |
-| Cross-function contract chaining | `caller_preconditions` → callee verify; callee `ensures` → caller solver |
+| Cross-function contract chaining (named results only) | `caller_preconditions` → callee verify; callee `ensures` (result tied to a fresh identifier, params substituted with the actual arguments) → `emission.let_bindings`, consulted at every later `requires`/`ensures` check |
 | `let`-expression handling | Defensive translation in `translate_to_z3` / `translate_bool_to_z3` |
 | Nested array access scanning | `scan_expr_depth` recurses into Binary, Call, MethodCall, etc. |
 | `&&` condition auto-inference | `try_infer_while_invariant` tries each conjunct independently |

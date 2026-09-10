@@ -1,0 +1,16 @@
+// Z3 Contract Test: a propagated callee `ensures` must not over-justify a
+// later call -- the fact must be exactly what the callee promised, not
+// waved through to satisfy an unrelated, stronger requirement.
+// Expected: FAIL (verification error)
+package test_composability_ensures_rejected
+
+fn g() -> u64 ensures { result == 5 } {
+    return 5;
+}
+
+fn h(y: u64) requires { y == 6 } { }
+
+pub fn f() {
+    let y = g();
+    h(y);
+}
