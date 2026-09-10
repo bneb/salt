@@ -1,0 +1,43 @@
+// Z3 Contract Test: a non-`mut` local must be constrained to its defining
+// expression for verification.
+// Expected: PASS
+//
+// Before this fix, `let end = ptr + len;` gave `end` no relationship to
+// `ptr + len` in the solver -- they were two unrelated symbols. A guard
+// stated over `end` could never discharge an obligation stated over
+// `ptr + len`, or vice versa, forcing every contract to repeat the raw
+// expression instead of naming it (see test_bool_postcondition_proved.salt's
+// is_valid_user_ptr, and docs/SPEC.md's now-fixed "Locals are not
+// constrained to their defining expressions" entry).
+//
+// This is sound unconditionally for non-`mut` locals: a single-assignment
+// binding has exactly one value for its whole lifetime, so there is no
+// branch to merge and no havoc semantics to fight (contrast a `mut` local
+// reassigned later, which is NOT covered by this fix -- see SPEC.md's havoc
+// entry).
+package test_let_binding_proved
+
+const USER_ADDR_LIMIT: u64 = 0x0000800000000000;
+
+// Guards are stated over the let-bound `end`; the postcondition is stated
+// over the raw expression `ptr + len`. Proving this requires the solver to
+// know `end == ptr + len`.
+pub fn is_valid_user_ptr(ptr: u64, len: u64) -> bool
+    ensures { !result || (ptr + len) <= USER_ADDR_LIMIT }
+{
+    let end = ptr + len;
+    if ptr >= USER_ADDR_LIMIT { return false; }
+    if end < ptr { return false; }
+    if end > USER_ADDR_LIMIT { return false; }
+    return true;
+}
+
+// The reverse direction: the guard is stated over the raw expression, and a
+// callee's `requires` is stated over the let-bound name.
+fn requires_in_limit(x: u64) requires { x <= USER_ADDR_LIMIT } { }
+
+pub fn checks_via_callee(ptr: u64, len: u64) {
+    let end = ptr + len;
+    if (ptr + len) > USER_ADDR_LIMIT { return; }
+    requires_in_limit(end);
+}

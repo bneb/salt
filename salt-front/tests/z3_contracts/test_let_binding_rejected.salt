@@ -1,0 +1,19 @@
+// Z3 Contract Test: a let-bound name must not absorb an unrelated, unproven
+// fact -- constraining `end` to `ptr + len` must not make genuinely wrong
+// code pass.
+// Expected: FAIL (postcondition violation)
+//
+// Same shape as test_let_binding_proved.salt's is_valid_user_ptr, but the
+// `end > USER_ADDR_LIMIT` guard is dropped. A genuinely wrong validator.
+package test_let_binding_rejected
+
+const USER_ADDR_LIMIT: u64 = 0x0000800000000000;
+
+pub fn is_valid_user_ptr(ptr: u64, len: u64) -> bool
+    ensures { !result || (ptr + len) <= USER_ADDR_LIMIT }
+{
+    let end = ptr + len;
+    if ptr >= USER_ADDR_LIMIT { return false; }
+    if end < ptr { return false; }
+    return true;
+}

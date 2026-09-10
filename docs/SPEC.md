@@ -567,11 +567,26 @@ Contracts cannot prove all properties. Known limitations of the current implemen
   returned: two occurrences of the same `set[0].count` are two unrelated
   symbols to the solver, even with nothing mutated between them. Bind the
   read to a local once and use the local everywhere the fact is needed.
-- Locals are not constrained to their defining expressions. After
-  `let end = ptr + len;` a guard on `end` does not discharge an obligation
-  stated over `ptr + len`; the two are unrelated to the solver. Write path
-  conditions over the parameters the contract mentions, or state the contract
-  over a value the function returns.
+- ~~Locals are not constrained to their defining expressions.~~ **Fixed for
+  non-`mut` locals.** After `let end = ptr + len;`, `end` and `ptr + len` are
+  now the same fact to the solver: a guard on one now discharges an
+  obligation stated over the other, in either direction. Sound
+  unconditionally for a non-`mut` binding -- it has exactly one value for
+  its whole lifetime, so there is no branch to merge and no havoc semantics
+  to fight. Implemented as a new `ctx.emission.let_bindings` fact list
+  (`name == init`, one entry per non-`mut` local in scope), asserted
+  alongside `path_conditions` at both the `requires` and `ensures` check
+  sites; kept as its own list rather than pushed onto `path_conditions`
+  itself because that Vec's push/pop pairs assume strict LIFO nesting by the
+  if/else branch that owns each entry, and a let's scope (to the end of its
+  enclosing block) doesn't nest that way. `emit_block` and `emit_block_expr`
+  each snapshot-and-truncate it, so a let declared inside a branch or loop
+  body doesn't leak its fact past that block. See
+  `tests/z3_contracts/test_let_binding_proved.salt` and
+  `test_let_binding_rejected.salt`. Still open: a `mut` local's own
+  defining expression is unconstrained (stays on the literal-only
+  `assert_local_lit_int_in_z3` path below it) -- extending this to `mut`
+  locals hits the havoc entry two bullets down, not this one.
 - A `mut` local reassigned anywhere -- not only inside a branch -- loses its
   tracked value for the solver. This is deliberate: the same "havoc" semantics
   that make while-loop verification sound (a loop's induction variable must be

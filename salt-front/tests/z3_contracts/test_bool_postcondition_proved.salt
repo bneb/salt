@@ -28,9 +28,9 @@ pub fn mirrors_its_guard(x: u32) -> bool
 // The shape this was actually wanted for: a validator whose true result must
 // imply the range it accepted is inside the user half.
 //
-// Note the guards read `ptr + len` rather than binding it to a local. Locals
-// are not constrained to their defining expressions, so a guard on `let end =
-// ptr + len` cannot discharge a postcondition stated over `ptr + len`.
+// Guards read `ptr + len` rather than binding it to a local -- this
+// predates the let-binding fix (see test_let_binding_proved.salt) and is
+// left as-is so this file's regression scope stays on bool postconditions.
 pub fn is_valid_user_ptr(ptr: u64, len: u64) -> bool
     ensures { !result || (ptr + len) <= USER_ADDR_LIMIT }
 {

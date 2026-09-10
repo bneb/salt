@@ -314,6 +314,17 @@ impl VerificationEngine {
                      }
                  }
 
+                 // Also add `name == init` for every non-`mut` local in
+                 // scope (see assert_local_expr_in_z3 in codegen/stmt/mod.rs)
+                 // so a requires stated over a let-bound name's defining
+                 // expression -- or vice versa -- can be related to it.
+                 let let_bindings = ctx.emission.let_bindings.clone();
+                 for lb in &let_bindings {
+                     if let Ok(z3_lb) = crate::codegen::expr::translate_bool_to_z3(ctx, lb, &locals_snapshot, &sym_ctx) {
+                         solver.assert(&z3_lb);
+                     }
+                 }
+
                  // Inject type-based bounds so Z3 proves contracts
                  // implied by the type system (e.g., u8 ∈ [0, 255]).
                  assert_type_bounds(ctx, &call_vals_z3, param_tys, &solver);
@@ -330,7 +341,8 @@ impl VerificationEngine {
                      std::iter::once(actual_req)
                          .chain(caller_pcs.iter())
                          .chain(path_conditions.iter())
-                         .chain(loop_assumptions.iter()),
+                         .chain(loop_assumptions.iter())
+                         .chain(let_bindings.iter()),
                  );
                  assert_scope_type_bounds(ctx, local_vars, &relevant, &solver);
 
@@ -649,6 +661,17 @@ impl VerificationEngine {
             }
         }
 
+        // 2c. Assume `name == init` for every non-`mut` local in scope (see
+        // assert_local_expr_in_z3 in codegen/stmt/mod.rs), so an ensures
+        // clause stated over a let-bound name's defining expression -- or
+        // vice versa, as in is_valid_user_ptr's `end`/`ptr + len` -- proves.
+        let let_bindings = ctx.emission.let_bindings.clone();
+        for lb in &let_bindings {
+            if let Ok(z3_lb) = crate::codegen::expr::translate_bool_to_z3(ctx, lb, &z3_locals, &sym_ctx) {
+                solver.assert(&z3_lb);
+            }
+        }
+
         // Inject Pointer State Tokens for ensures
         for p_name in params.iter() {
             if let Some(state) = ctx.pointer_tracker.get_state(p_name) {
@@ -736,8 +759,13 @@ impl VerificationEngine {
                     // Every typed value the postcondition itself mentions,
                     // INCLUDING result now that it carries its real type,
                     // gets its type's range asserted -- the postcondition
-                    // check never had this at all before.
-                    let relevant = collect_ident_names(actual_ens);
+                    // check never had this at all before. Also scoped to
+                    // let_bindings' free variables (e.g. `ptr`/`len` behind
+                    // `end == ptr + len`), the same reasoning as `verify`'s
+                    // requires-check scoping above.
+                    let relevant = collect_ident_names_from(
+                        std::iter::once(actual_ens).chain(let_bindings.iter()),
+                    );
                     assert_scope_type_bounds(ctx, &ens_locals, &relevant, &solver);
                     *ctx.total_checks += 1;
 

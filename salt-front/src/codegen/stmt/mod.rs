@@ -27,6 +27,11 @@ pub fn emit_block(ctx: &mut LoweringContext, out: &mut String, stmts: &[Stmt], l
     // 1. Preamble Pass: Hoist all allocas to function entry
     hoist_allocas_in_block(ctx, stmts, local_vars)?;
 
+    // Non-`mut` lets declared directly in this block (assert_local_expr_in_z3)
+    // record `name == init` here; scoped to this block's lifetime by
+    // truncating back to the pre-loop length on every exit path below.
+    let let_bindings_base = ctx.emission.let_bindings.len();
+
     let mut emitted_terminator = false;
     let mut pushed_guards: usize = 0;
     for stmt in stmts {
@@ -54,6 +59,7 @@ pub fn emit_block(ctx: &mut LoweringContext, out: &mut String, stmts: &[Stmt], l
     for _ in 0..pushed_guards {
         ctx.emission.path_conditions.pop();
     }
+    ctx.emission.let_bindings.truncate(let_bindings_base);
 
     // If block is empty and not terminated, it must have at least one instruction
     // or a branch to merge to be MLIR-valid.
@@ -273,10 +279,38 @@ fn assert_local_lit_int_in_z3(ctx: &mut LoweringContext, name: &str, init: &Opti
     ctx.z3_solver.assert(&z3_var._eq(&z3_val));
 }
 
+/// Constrain a non-`mut` local to its full defining expression:
+/// `sym(name) == translate(init)`. Sound unconditionally -- an immutable,
+/// single-assignment binding has exactly one value for its entire lifetime,
+/// so there is no branch to merge and no havoc semantics to fight (contrast
+/// `mut` locals, which stay on `assert_local_lit_int_in_z3`'s literal-only
+/// treatment; see docs/SPEC.md's havoc entry for why that case isn't this
+/// simple). Mirrors the equivalent block in `emit_hoisted_local_init`, and
+/// additionally records the fact in `ctx.emission.let_bindings` -- the
+/// requires/ensures checkers build a fresh solver at each check site rather
+/// than reading `ctx.z3_solver`'s accumulated state, so asserting here alone
+/// only reaches while-loop invariant proving, not contract checks.
+fn assert_local_expr_in_z3(ctx: &mut LoweringContext, name: &str, init: &Option<syn::LocalInit>, local_vars: &HashMap<String, (Type, LocalKind)>) {
+    let Some(init) = init else { return };
+    let Ok(z3_val) = crate::codegen::expr::translate_to_z3(ctx, &init.expr, local_vars) else { return };
+    use crate::z3_shim::ast::Ast;
+    let z3_var = ctx.mk_var(name);
+    ctx.z3_solver.assert(&z3_var._eq(&z3_val));
+
+    let name_ident = syn::Ident::new(name, proc_macro2::Span::call_site());
+    let expr_ref: &syn::Expr = &init.expr;
+    ctx.emission.let_bindings.push(syn::parse_quote!(#name_ident == (#expr_ref)));
+}
+
 fn emit_unhoisted_local_init(ctx: &mut LoweringContext, out: &mut String, local: &syn::Local, name: &str, local_vars: &mut HashMap<String, (Type, LocalKind)>) -> Result<(), String> {
     let type_hint: Option<Type> = match &local.pat {
         syn::Pat::Type(pt) => Some(resolve_type(ctx, &crate::grammar::SynType::from_std(*pt.ty.clone()).map_err(|e| e.to_string())?)),
         _ => None,
+    };
+    let is_mut = match &local.pat {
+        syn::Pat::Type(pt) => matches!(&*pt.pat, syn::Pat::Ident(id) if id.mutability.is_some()),
+        syn::Pat::Ident(id) => id.mutability.is_some(),
+        _ => false,
     };
 
     let (val, actual_ty) = if let Some(init) = &local.init {
@@ -293,11 +327,21 @@ fn emit_unhoisted_local_init(ctx: &mut LoweringContext, out: &mut String, local:
     };
 
     let target_ty = type_hint.unwrap_or_else(|| actual_ty.clone());
-    emit_pattern(ctx, out, &local.pat, val, actual_ty, target_ty.clone(), local_vars)?;
 
+    // Must run BEFORE emit_pattern below inserts `name` into local_vars, so
+    // an init expression referencing an outer binding of the same name
+    // (`let x = 1; let x = x + 1;`) resolves that reference against the
+    // OUTER binding -- matching the order emit_expr already resolved
+    // identifiers in when it computed `val` above.
     if !ctx.config.no_verify && !name.is_empty() && target_ty.is_integer() {
-        assert_local_lit_int_in_z3(ctx, name, &local.init);
+        if is_mut {
+            assert_local_lit_int_in_z3(ctx, name, &local.init);
+        } else {
+            assert_local_expr_in_z3(ctx, name, &local.init, local_vars);
+        }
     }
+
+    emit_pattern(ctx, out, &local.pat, val, actual_ty, target_ty.clone(), local_vars)?;
     // Track string literal lengths for Z3 constant folding
     if !ctx.config.no_verify && !name.is_empty() {
         if let Some(init) = &local.init {

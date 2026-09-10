@@ -822,6 +822,36 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# ── A non-mut local must be constrained to its defining expression ──
+echo -n "  test_let_binding_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_let_binding_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_letb_proved > /tmp/z3_out_letb_proved.txt 2>&1; then
+    echo "PASS (let-bound name related to its defining expression)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (let binding still unrelated to its defining expression)"
+    cat /tmp/z3_out_letb_proved.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+echo -n "  test_let_binding_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_let_binding_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_letb_rejected > /tmp/z3_out_letb_rejected.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_letb_rejected.txt; then
+        echo "PASS (genuinely wrong validator still rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_letb_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (wrong validator ACCEPTED — soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then

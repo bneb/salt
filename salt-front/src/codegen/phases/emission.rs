@@ -173,6 +173,19 @@ pub struct EmissionState {
     /// Popped when leaving the loop body. Sound because invariants are
     /// proven at loop entry and the guard is asserted before body execution.
     pub loop_assumptions: Vec<syn::Expr>,
+    /// Equalities (`name == init_expr`) for non-`mut` locals currently in
+    /// scope, one entry per `let name = init_expr;` encountered so far in
+    /// the enclosing block chain. Deliberately separate from
+    /// `path_conditions` rather than pushed onto it: that Vec assumes every
+    /// push is popped in strict LIFO order by the if/else branch that
+    /// pushed it, and a let-binding's scope doesn't nest that way (it lives
+    /// until its enclosing BLOCK ends, not around a single branch). Reusing
+    /// it would risk popping someone else's guard. `emit_block` and
+    /// `emit_block_expr` each snapshot this Vec's length on entry and
+    /// truncate back to it on exit, which is sound because a non-`mut`
+    /// binding has exactly one value for its whole lifetime -- see
+    /// `assert_local_expr_in_z3` in codegen/stmt/mod.rs.
+    pub let_bindings: Vec<syn::Expr>,
 }
 
 impl EmissionState {

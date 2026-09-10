@@ -197,7 +197,10 @@ pub(crate) fn emit_if_as_select(ctx: &mut LoweringContext, out: &mut String, if_
 pub fn emit_block_expr(ctx: &mut LoweringContext, out: &mut String, b: &syn::Block, local_vars: &mut HashMap<String, (Type, LocalKind)>, expected_ty: Option<&Type>) -> Result<(String, Type), String> {
     let mut block_vars = local_vars.clone();
     let mut last_res = ("%unit".to_string(), Type::Unit);
-    
+    // See emit_block's matching truncate: scopes any `let` fact recorded by
+    // a non-`mut` local declared directly in this block to its lifetime.
+    let let_bindings_base = ctx.emission.let_bindings.len();
+
     for (i, stmt) in b.stmts.iter().enumerate() {
         // Check if this is the final expression which determines the block's value
         if i == b.stmts.len() - 1 {
@@ -215,9 +218,11 @@ pub fn emit_block_expr(ctx: &mut LoweringContext, out: &mut String, b: &syn::Blo
         // Otherwise emit as a statement (declarations, expressions with semi, etc.)
         let grammar_stmt = crate::grammar::Stmt::Syn(stmt.clone());
         if crate::codegen::stmt::emit_stmt(ctx, out, &grammar_stmt, &mut block_vars)? {
+             ctx.emission.let_bindings.truncate(let_bindings_base);
              return Ok(("%unreachable".to_string(), Type::Never));
         }
     }
+    ctx.emission.let_bindings.truncate(let_bindings_base);
     Ok(last_res)
 }
 
