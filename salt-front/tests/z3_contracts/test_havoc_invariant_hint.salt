@@ -1,0 +1,25 @@
+// Z3 Contract Test: a requires check failing on a havoc'd (loop-mutated)
+// argument must suggest adding an `invariant`, not the generic
+// requires/assert hints -- and the suggestion must be phrased in the
+// CALLER's own terms (the actual argument expression), not the callee's
+// parameter name, since the latter is out of scope at the call site.
+// Expected: FAIL (verification error) with the AddInvariant hint present,
+// substituted correctly, and the generic requires/assert hints absent.
+//
+// Adding `invariant y > 0;` to this loop (matching the suggestion) makes
+// it compile -- see docs/deep-dives or SPEC.md's havoc entry for the
+// worked example this test is drawn from.
+package test_havoc_invariant_hint
+
+fn need_positive(y: i64) requires { y > 0 } { }
+
+pub fn f(n: i64) {
+    let mut i: i64 = 0;
+    let mut y: i64 = 5;
+    while i < n {
+        invariant i >= 0;
+        need_positive(y);
+        y = y + 1;
+        i = i + 1;
+    }
+}

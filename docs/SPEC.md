@@ -680,6 +680,36 @@ Contracts cannot prove all properties. Known limitations of the current implemen
   the loop (unlike a `while` loop's condition variable, a pre-declared
   `mut` local that outlives it), so whether there's anything left to
   propagate is unclear without a closer look.
+
+  The still-open within-loop problem two paragraphs up turned out to be
+  smaller than it looked: tested directly, `need_positive(y)` inside a
+  loop that mutates `y` fails with no invariant covering it, and
+  compiles clean the moment `invariant y > 0;` is added -- no leniency,
+  no runtime fallback, 100% proven. So this was never "impossible to
+  verify without real invariant inference"; it's "the compiler doesn't
+  tell you which invariant to add," and a bare `y_havoc_14` in the
+  counterexample doesn't point at `invariant` the way a plain English
+  hint could. `test_slice_cursor_rejected` stays correctly rejected
+  either way -- no invariant rescues a genuinely wrong guard. Fixed with
+  a new `ProofHint::AddInvariant` (`proof_witness.rs`), triggered by a
+  `_havoc_` substring in the failing constraint and replacing the
+  generic `AddRequires`/`AddAssert` hints entirely rather than
+  supplementing them (those reference a `requires` clause on the
+  function signature or a bare `assert` -- Salt has no `assert`
+  statement at all, and a `requires` clause can't refer to a local
+  variable's value; both would send the developer at the wrong fix for
+  a loop-local). The suggested condition is rewritten into the caller's
+  own terms (the callee's parameter names replaced with the actual
+  argument expressions at this call site) rather than shown verbatim in
+  the callee's names, which would reference identifiers out of scope at
+  the call site whenever the argument isn't a bare variable matching
+  the parameter's own name. Diagnostics only -- doesn't change what's
+  provable, so it carries none of the soundness risk the reverted
+  leniency patch had. Automatically trying a failing call's `requires`
+  clause as a candidate invariant (Houdini-style, rather than requiring
+  the developer to type it after reading the hint) would remove the
+  manual step entirely for this shape; not attempted, deliberately, to
+  see how much friction the hint alone removes first.
 - Conditionally-assigned `mut` locals lose their constraints. After
   `let mut x = a; if c { x = b; }` the solver does not merge the branches, so a
   guard on `x` will not discharge a later obligation about it. Where this

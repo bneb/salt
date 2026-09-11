@@ -1001,6 +1001,30 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# ── A havoc'd-argument requires failure must suggest 'invariant', not requires/assert ──
+echo -n "  test_havoc_invariant_hint: "
+if ! "$SALTC" "$SCRIPT_DIR/test_havoc_invariant_hint.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_hih > /tmp/z3_out_hih.txt 2>&1; then
+    if grep -q "add 'invariant y > 0;' to that loop" /tmp/z3_out_hih.txt; then
+        if grep -q "to the function signature\|before this line" /tmp/z3_out_hih.txt; then
+            echo "FAIL (misleading requires/assert hint present alongside the invariant one)"
+            cat /tmp/z3_out_hih.txt | head -8
+            FAIL=$((FAIL + 1))
+        else
+            echo "PASS (suggested the correct invariant, in the caller's own terms)"
+            PASS=$((PASS + 1))
+            show_evidence
+        fi
+    else
+        echo "FAIL (havoc'd argument failure did not suggest an invariant)"
+        cat /tmp/z3_out_hih.txt | head -8
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (should have been rejected — no invariant was ever added)"
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then

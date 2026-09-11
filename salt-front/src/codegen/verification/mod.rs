@@ -426,7 +426,7 @@ impl VerificationEngine {
                              }
                          }
 
-                         let failure = if counterexample_values.is_empty() {
+                         let mut failure = if counterexample_values.is_empty() {
                              proof_witness::VerificationFailure::new(
                                  constraint_str,
                                  format!("precondition check ({})", source_info),
@@ -438,6 +438,15 @@ impl VerificationEngine {
                                  counterexample_values,
                              )
                          };
+                         // classify_constraint already caught the havoc'd-argument
+                         // shape generically (AddInvariant(None)) from the "_havoc_"
+                         // substring alone; upgrade to the specific suggestion now
+                         // that actual_req/params/arg_exprs are in scope to rewrite
+                         // the callee's clause into the caller's own terms.
+                         if failure.hints.iter().any(|h| matches!(h, proof_witness::ProofHint::AddInvariant(None))) {
+                             let suggestion = rewrite_requires_in_caller_terms(actual_req, params, arg_exprs);
+                             failure.hints = vec![proof_witness::ProofHint::AddInvariant(Some(suggestion))];
+                         }
                          return Err(failure.format_error());
                      }
                      crate::z3_shim::SatResult::Unsat => {
@@ -1030,6 +1039,49 @@ pub(crate) fn unwrap_contract_expr(expr: &syn::Expr) -> Option<&syn::Expr> {
         },
         _ => Some(expr),
     }
+}
+
+/// Rewrites a callee's `requires` clause into the caller's own terms --
+/// each parameter name replaced by the actual argument expression at this
+/// call site -- for use in the AddInvariant diagnostic hint. Without this,
+/// suggesting the clause verbatim (in the callee's own parameter names)
+/// would reference names not in scope at the call site whenever an
+/// argument isn't a bare variable of the same name as the parameter.
+fn rewrite_requires_in_caller_terms(expr: &syn::Expr, params: &[String], arg_exprs: &[syn::Expr]) -> String {
+    struct ParamSubst<'a> {
+        param_subs: &'a HashMap<String, syn::Expr>,
+    }
+    impl syn::visit_mut::VisitMut for ParamSubst<'_> {
+        fn visit_expr_mut(&mut self, expr: &mut syn::Expr) {
+            if let syn::Expr::Path(p) = expr {
+                if let Some(ident) = p.path.get_ident() {
+                    if let Some(replacement) = self.param_subs.get(&ident.to_string()) {
+                        // Bare identifiers and literals never need the
+                        // parens; anything else might, for precedence.
+                        *expr = if matches!(replacement, syn::Expr::Path(_) | syn::Expr::Lit(_)) {
+                            replacement.clone()
+                        } else {
+                            syn::parse_quote!((#replacement))
+                        };
+                        return;
+                    }
+                }
+            }
+            syn::visit_mut::visit_expr_mut(self, expr);
+        }
+    }
+
+    let param_subs: HashMap<String, syn::Expr> = params.iter().enumerate()
+        .filter_map(|(i, p)| arg_exprs.get(i).map(|a| (p.clone(), a.clone())))
+        .collect();
+    let mut rewritten = expr.clone();
+    syn::visit_mut::VisitMut::visit_expr_mut(&mut ParamSubst { param_subs: &param_subs }, &mut rewritten);
+    // quote!'s token-by-token join isn't a real pretty-printer -- it has no
+    // opinion on spacing, just spaces between tokens by default. Only "."
+    // is cleaned up: it's by far the most common punctuation in a contract
+    // (field/method access), and "self . len" reads as broken in a way
+    // "off + 1" doesn't.
+    quote::quote!(#rewritten).to_string().replace(" . ", ".")
 }
 
 /// Assert type-derived bounds for EVERY typed value in scope, not only the
