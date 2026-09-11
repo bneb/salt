@@ -1025,6 +1025,50 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# ── Houdini-lite: a call's requires must be tried as a candidate invariant automatically ──
+echo -n "  test_houdini_call_requires_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_houdini_call_requires_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_hcr_proved > /tmp/z3_out_hcr_proved.txt 2>&1; then
+    echo "PASS (call's requires auto-discharged with no hand-written invariant)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (Houdini-lite candidate not discharging the call automatically)"
+    cat /tmp/z3_out_hcr_proved.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+echo -n "  test_houdini_call_requires_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_houdini_call_requires_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_hcr_rejected > /tmp/z3_out_hcr_rejected.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_hcr_rejected.txt; then
+        echo "PASS (candidate that fails the base case was correctly dropped, call still rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_hcr_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (a base-case-failing candidate was trusted anyway — soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── symbolic_tracker must not leak a havoc'd name across functions ──
+echo -n "  test_cross_fn_symbolic_tracker_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_cross_fn_symbolic_tracker_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_cfst_proved > /tmp/z3_out_cfst_proved.txt 2>&1; then
+    echo "PASS (same-named loop variables in different functions did not contaminate each other)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (cross-function symbolic_tracker leak reintroduced)"
+    cat /tmp/z3_out_cfst_proved.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then

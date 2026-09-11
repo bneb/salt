@@ -1041,13 +1041,14 @@ pub(crate) fn unwrap_contract_expr(expr: &syn::Expr) -> Option<&syn::Expr> {
     }
 }
 
-/// Rewrites a callee's `requires` clause into the caller's own terms --
-/// each parameter name replaced by the actual argument expression at this
-/// call site -- for use in the AddInvariant diagnostic hint. Without this,
-/// suggesting the clause verbatim (in the callee's own parameter names)
-/// would reference names not in scope at the call site whenever an
-/// argument isn't a bare variable of the same name as the parameter.
-fn rewrite_requires_in_caller_terms(expr: &syn::Expr, params: &[String], arg_exprs: &[syn::Expr]) -> String {
+/// Rewrites an expression by replacing each bare identifier matching a
+/// parameter name with the actual argument expression at some call site
+/// (`params[i]` -> `arg_exprs[i]`). Used to turn a callee's `requires`
+/// clause into a fact stated in a CALLER's own terms -- required whenever
+/// that fact is going to be used or displayed somewhere the callee's
+/// parameter names aren't in scope (the diagnostic hint below, and
+/// while_stmt.rs's call-requires candidate invariants).
+pub(crate) fn substitute_params_with_args(expr: &syn::Expr, params: &[String], arg_exprs: &[syn::Expr]) -> syn::Expr {
     struct ParamSubst<'a> {
         param_subs: &'a HashMap<String, syn::Expr>,
     }
@@ -1076,6 +1077,17 @@ fn rewrite_requires_in_caller_terms(expr: &syn::Expr, params: &[String], arg_exp
         .collect();
     let mut rewritten = expr.clone();
     syn::visit_mut::VisitMut::visit_expr_mut(&mut ParamSubst { param_subs: &param_subs }, &mut rewritten);
+    rewritten
+}
+
+/// Rewrites a callee's `requires` clause into the caller's own terms --
+/// each parameter name replaced by the actual argument expression at this
+/// call site -- for use in the AddInvariant diagnostic hint. Without this,
+/// suggesting the clause verbatim (in the callee's own parameter names)
+/// would reference names not in scope at the call site whenever an
+/// argument isn't a bare variable of the same name as the parameter.
+fn rewrite_requires_in_caller_terms(expr: &syn::Expr, params: &[String], arg_exprs: &[syn::Expr]) -> String {
+    let rewritten = substitute_params_with_args(expr, params, arg_exprs);
     // quote!'s token-by-token join isn't a real pretty-printer -- it has no
     // opinion on spacing, just spaces between tokens by default. Only "."
     // is cleaned up: it's by far the most common punctuation in a contract

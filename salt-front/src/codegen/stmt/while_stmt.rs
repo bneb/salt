@@ -71,6 +71,92 @@ pub(crate) fn setup_while_loop_inductive_step(
     Ok(havoc_names)
 }
 
+/// Scans a while loop's body for statement-position calls to a function
+/// with a `requires` clause (`need_positive(y);` -- NOT `let x = f(y);` or
+/// a method call like `buf.set(off, v)`; both are out of scope for now,
+/// see the module-level note on this Houdini-lite mechanism) and returns
+/// each requires clause rewritten into the loop's own variable names (the
+/// callee's parameters replaced by the actual argument expressions at
+/// that call site) as a candidate loop invariant. Callers must still test
+/// each candidate against the base case before trusting it -- this only
+/// proposes, it doesn't verify.
+///
+/// Method calls are excluded because resolving one to the right `requires`
+/// clause needs the receiver's type to pick the right `impl` block, which
+/// this pass -- run before the body is otherwise processed -- doesn't have
+/// available. It's also lower value: a method call's bounds-shaped
+/// requires (like `Slice::set`'s) is usually already covered by
+/// `loop_assumptions` matching the guard directly (test_slice_cursor_proved
+/// needs no help from this).
+fn collect_call_requires_candidates(ctx: &LoweringContext, stmts: &[Stmt]) -> Vec<syn::Expr> {
+    let mut candidates = Vec::new();
+    for stmt in stmts {
+        // A bare call statement can surface as either grammar shape,
+        // depending on which parse path produced it (grammar::Stmt::Expr
+        // when the statement parser handled it directly, Stmt::Syn(syn::
+        // Stmt::Expr(..)) when it fell through to syn's own parser) --
+        // confirmed by inspecting actual parse output, not assumed.
+        let call = match stmt {
+            Stmt::Expr(syn::Expr::Call(c), _) => c,
+            Stmt::Syn(syn::Stmt::Expr(syn::Expr::Call(c), _)) => c,
+            _ => continue,
+        };
+        let syn::Expr::Path(p) = call.func.as_ref() else { continue };
+        let Some(fn_name) = p.path.get_ident().map(|i| i.to_string()) else { continue };
+        let found = ctx.config.file.items.iter().find_map(|item| {
+            if let crate::grammar::Item::Fn(f) = item {
+                if f.name == fn_name {
+                    let params: Vec<String> = f.args.iter().map(|a| a.name.to_string()).collect();
+                    return Some((f.requires.clone(), params));
+                }
+            }
+            None
+        });
+        let Some((requires, params)) = found else { continue };
+        let arg_exprs: Vec<syn::Expr> = call.args.iter().cloned().collect();
+        for req in &requires {
+            let Some(actual_req) = crate::codegen::verification::unwrap_contract_expr(req) else { continue };
+            candidates.push(crate::codegen::verification::substitute_params_with_args(actual_req, &params, &arg_exprs));
+        }
+    }
+    candidates
+}
+
+/// Keeps only the candidates (from `collect_call_requires_candidates`)
+/// that hold at the loop's base case, permanently asserting each survivor
+/// before testing the next -- the same accumulation
+/// `prove_while_loop_base_case` already relies on for explicit invariants,
+/// so a later candidate can lean on an earlier one already having been
+/// established. Silently drops a candidate that doesn't hold rather than
+/// failing the compile: unlike a user-written `invariant`, nothing
+/// promised this one holds, so a wrong guess is a missed optimization,
+/// not an error -- the call it came from still gets checked for real,
+/// with its actual concrete arguments, by the normal requires-check path
+/// during body emission; this pass only ever adds information, and only
+/// after confirming it's true, so it cannot turn that later check from a
+/// correct rejection into a wrongly-accepted one.
+fn filter_call_requires_candidates(
+    ctx: &mut LoweringContext,
+    candidates: Vec<syn::Expr>,
+    bv: &HashMap<String, (Type, LocalKind)>,
+) -> Vec<syn::Expr> {
+    if ctx.config.no_verify { return vec![]; }
+    let sc = crate::codegen::verification::SymbolicContext::new(ctx.z3_ctx);
+    let mut survivors = Vec::new();
+    for c in candidates {
+        let Ok(z) = crate::codegen::expr::translate_bool_to_z3(ctx, &c, bv, &sc) else { continue };
+        ctx.z3_solver.push();
+        ctx.z3_solver.assert(&z.not());
+        let holds = ctx.z3_solver.check() == crate::z3_shim::SatResult::Unsat;
+        ctx.z3_solver.pop(1);
+        if holds {
+            ctx.z3_solver.assert(&z);
+            survivors.push(c);
+        }
+    }
+    survivors
+}
+
 /// Try to auto-infer a loop invariant for simple monotonic while loops.
 ///
 /// Supported patterns:
@@ -327,15 +413,29 @@ pub(crate) fn emit_while_stmt(ctx: &mut LoweringContext, out: &mut String, w: &c
             // If the loop is `let mut i = K; while i < N { ... i = i + 1; }`,
             // synthesize `invariant i >= K && i < N` automatically.
             let auto_inv = try_infer_while_invariant(&w.cond, &w.body.stmts, local_vars);
-            let all_stmts: Vec<Stmt> = if let Some(ref ai) = auto_inv {
+            // Houdini-lite: propose each body call's requires clause,
+            // substituted into this loop's own variable names, as a
+            // further candidate, and keep only the ones that hold at the
+            // base case. See docs/SPEC.md's havoc entry for why this is
+            // sound: dropping a candidate that doesn't hold changes
+            // nothing (the call it came from is still checked for real,
+            // with concrete arguments, during body emission below), and
+            // keeping one that does only ever adds a true fact.
+            let call_candidates = collect_call_requires_candidates(ctx, &w.body.stmts);
+            let surviving_candidates = filter_call_requires_candidates(ctx, call_candidates, &body_vars);
+            let mut synthesized: Vec<syn::Expr> = auto_inv.iter().cloned().collect();
+            synthesized.extend(surviving_candidates);
+            let all_stmts: Vec<Stmt> = if !synthesized.is_empty() {
                 let mut s = w.body.stmts.clone();
-                s.insert(0, Stmt::Invariant(ai.clone()));
+                for inv in synthesized.iter().rev() {
+                    s.insert(0, Stmt::Invariant(inv.clone()));
+                }
                 s
             } else {
                 w.body.stmts.clone()
             };
             let invariant_exprs = prove_while_loop_base_case(ctx, &all_stmts, &body_vars)?;
-            let body_to_emit = if auto_inv.is_some() { &all_stmts } else { &w.body.stmts };
+            let body_to_emit = if !synthesized.is_empty() { &all_stmts } else { &w.body.stmts };
             let havoc_names = setup_while_loop_inductive_step(ctx, body_to_emit, &mut body_vars, &w.cond, &invariant_exprs)?;
 
             // Push loop assumptions so callee precondition verification

@@ -1,0 +1,38 @@
+// Z3 Contract Test: two functions in the same file, each with a while
+// loop that havocs a same-named induction variable, must not contaminate
+// each other's verification.
+// Expected: PASS
+//
+// symbolic_tracker maps a SOURCE NAME (not a unique id) to a Z3 term, and
+// a while loop's havoc mechanism mints a fresh term under a variable's
+// plain name whenever it mutates it. Found while building the
+// Houdini-lite candidates below: `first`'s own base-case check for its
+// (unrelated) explicit invariant failed when compiled AFTER a function
+// using the same variable name, purely from symbolic_tracker's leftover
+// entry -- not from anything either function's own code did wrong.
+// emit_fn now clears symbolic_tracker per function (codegen/mod.rs);
+// this compiles clean because of that, not because of anything in this
+// file's own contracts. Uses only explicit invariants and the Tier 3
+// post-loop fact -- no Houdini-lite candidates -- to isolate this fix
+// from that one.
+package test_cross_fn_symbolic_tracker_proved
+
+fn need_nonneg(x: i64) requires { x >= 0 } { }
+
+pub fn first(n: i64) {
+    let mut i: i64 = 0;
+    while i < n {
+        invariant i >= 0;
+        i = i + 1;
+    }
+    need_nonneg(i);
+}
+
+pub fn second(n: i64) {
+    let mut i: i64 = 0;
+    while i < n {
+        invariant i >= 0;
+        i = i + 1;
+    }
+    need_nonneg(i);
+}

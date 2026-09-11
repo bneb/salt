@@ -1324,6 +1324,23 @@ pub fn emit_fn(ctx: &CodegenContext, func: &crate::grammar::SaltFn, override_nam
     ctx.consumed_vars_mut().clear();
     ctx.consumption_locs_mut().clear();
     ctx.devoured_vars_mut().clear();
+    // symbolic_tracker maps a SOURCE NAME (not a unique id) to a Z3 term,
+    // and a while loop's havoc mechanism (while_stmt.rs) mints a fresh
+    // term under a variable's plain name whenever it mutates it -- so an
+    // entry left over from a previous function's own "y" or "i" is
+    // silently picked up by this function's identically-named local,
+    // making an otherwise-valid base-case check (an explicit invariant,
+    // or a Houdini-lite candidate) fail against a symbol it was never
+    // actually about. Found via test_houdini_isolated.salt: identical
+    // function bodies pass alone and fail back-to-back in the same file,
+    // solely from this leftover state. Clearing here scopes the map to a
+    // single function, matching consumed_vars/consumption_locs/
+    // devoured_vars just above -- ctx.z3_solver's own accumulated
+    // assertions are left alone: they're keyed by these same
+    // never-reused names, so they go inert rather than harmful once
+    // nothing can look them up by name anymore, and resetting the solver
+    // itself is a larger, less-understood change than clearing this cache.
+    ctx.symbolic_tracker.borrow_mut().clear();
     *ctx.mutated_vars_mut() = crate::codegen::stmt::collect_mutations(&func.body.stmts);
 
     // Record array stores (arr[i] = val) for postcondition verification.

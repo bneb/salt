@@ -705,11 +705,53 @@ Contracts cannot prove all properties. Known limitations of the current implemen
   the call site whenever the argument isn't a bare variable matching
   the parameter's own name. Diagnostics only -- doesn't change what's
   provable, so it carries none of the soundness risk the reverted
-  leniency patch had. Automatically trying a failing call's `requires`
-  clause as a candidate invariant (Houdini-style, rather than requiring
-  the developer to type it after reading the hint) would remove the
-  manual step entirely for this shape; not attempted, deliberately, to
-  see how much friction the hint alone removes first.
+  leniency patch had.
+
+  ~~Automatically trying a failing call's `requires` clause as a
+  candidate invariant would remove the manual step entirely; not
+  attempted, deliberately, to see how much friction the hint alone
+  removes first.~~ **Built anyway, same session, on request rather than
+  waiting for real usage to answer that question.** For every
+  statement-position call in a while loop's body (`need_positive(y);` --
+  not `let x = f(y);`, not a method call like `buf.set(off, v)`; both
+  need more than a name-based lookup and are out of scope for now),
+  `collect_call_requires_candidates` (`while_stmt.rs`) proposes the
+  callee's own `requires` clause, substituted into the loop's variable
+  names, as a candidate invariant; `filter_call_requires_candidates`
+  keeps only the ones that hold at the base case, silently dropping the
+  rest. A dropped candidate changes nothing -- the call it came from
+  still gets checked for real, with concrete arguments, during body
+  emission, by the same path that already existed. A kept candidate is
+  inserted as a genuine `Stmt::Invariant`, which means it gets the exact
+  same treatment a hand-written one does: included in `loop_assumptions`
+  for other calls inside the loop, in `scoped_facts` after it (the
+  paragraph above), and -- not incidental, load-bearing -- a real
+  per-iteration runtime check via the normal `Stmt::Invariant` codegen.
+  Without that last part, a wrongly-kept candidate would have no safety
+  net at all, unlike an explicit invariant, which at least gets caught
+  at runtime if it's wrong; this mechanism inherits the exact same
+  guarantee rather than a weaker one, by reusing the exact same
+  insertion point `try_infer_while_invariant`'s existing single-pattern
+  auto-invariant already uses.
+
+  Building this immediately surfaced a real, separate, pre-existing bug
+  it doesn't cause but reliably triggers: `symbolic_tracker` maps a
+  variable's SOURCE NAME (not a unique id) to its current Z3 term, and
+  is never reset between functions. Two functions in the same file each
+  using "y" as a loop variable meant the second function's base-case
+  check -- for a HAND-WRITTEN invariant, not just a synthesized
+  candidate -- silently resolved against the first function's leftover
+  havoc symbol and failed for a reason that had nothing to do with
+  either function's own code. Reproduces with two copies of the exact
+  same, individually-correct function body compiled together
+  (`test_cross_fn_symbolic_tracker_proved.salt`). Fixed by clearing
+  `symbolic_tracker` at the start of `emit_fn` (`codegen/mod.rs`),
+  alongside the existing per-function clears of `consumed_vars`/
+  `consumption_locs`/`devoured_vars`. `ctx.z3_solver`'s own accumulated
+  assertions are left alone -- they're keyed by these same never-reused
+  names, so once nothing can look them up by name anymore they go inert
+  rather than harmful, and resetting the solver itself is a larger,
+  less-understood change than clearing this one cache.
 - Conditionally-assigned `mut` locals lose their constraints. After
   `let mut x = a; if c { x = b; }` the solver does not merge the branches, so a
   guard on `x` will not discharge a later obligation about it. Where this
