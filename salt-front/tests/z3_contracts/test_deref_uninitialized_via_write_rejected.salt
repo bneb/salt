@@ -1,0 +1,16 @@
+// Z3 Contract Test: writing through an Uninitialized pointer via .write()
+// must be rejected.
+// Expected: REJECTED
+//
+// Coverage companion to test_use_after_free_via_read_rejected.salt: same
+// fixed try_emit_special_method / check_deref path, Uninitialized branch
+// instead of Freed, .write() instead of .read().
+package test_deref_uninitialized_via_write_rejected
+
+use std.core.ptr.Ptr
+
+pub fn uninitialized_state_via_write() -> i32 {
+    let p: Ptr<i32>;
+    p.write(1);
+    return 0;
+}

@@ -1103,6 +1103,40 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# ── same fixed path, Optional state instead of Freed ──
+echo -n "  test_deref_optional_via_read_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_deref_optional_via_read_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_dor_rejected > /tmp/z3_out_dor_rejected.txt 2>&1; then
+    if grep -q "Cannot dereference 'Optional'" /tmp/z3_out_dor_rejected.txt; then
+        echo "PASS (unnarrowed Optional-state read correctly rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_dor_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (unnarrowed Optional-state read ACCEPTED — check_deref's rejection is being swallowed again)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── same fixed path, Uninitialized state via .write() instead of .read() ──
+echo -n "  test_deref_uninitialized_via_write_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_deref_uninitialized_via_write_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_duw_rejected > /tmp/z3_out_duw_rejected.txt 2>&1; then
+    if grep -q "Cannot dereference 'Uninitialized'" /tmp/z3_out_duw_rejected.txt; then
+        echo "PASS (write through an uninitialized pointer correctly rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_duw_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (write through an uninitialized pointer ACCEPTED — check_deref's rejection is being swallowed again)"
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then
