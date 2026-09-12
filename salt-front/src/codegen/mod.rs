@@ -1341,6 +1341,27 @@ pub fn emit_fn(ctx: &CodegenContext, func: &crate::grammar::SaltFn, override_nam
     // nothing can look them up by name anymore, and resetting the solver
     // itself is a larger, less-understood change than clearing this cache.
     ctx.symbolic_tracker.borrow_mut().clear();
+    // pointer_tracker has the same shape as ownership_tracker/malloc_tracker/
+    // arena_escape_tracker below (PointerStateTracker::states is keyed by
+    // plain variable name), and those three are correctly swapped for a
+    // fresh instance per function -- but pointer_tracker was the odd one
+    // out, never swapped at all. A name marked Valid/Freed/etc. in one
+    // function was still sitting in the map when a later function declared
+    // its own local of the same name. Confirmed via
+    // test_cross_fn_pointer_tracker_rejected.salt: a bare-alias local
+    // (`let p = other;`) never re-marks its own tracker entry (see
+    // emit_local_pointer_tracking), so it silently inherited a prior
+    // function's leftover Valid marking and a `requires { valid(p) }` check
+    // on it was PROVEN with 0 deferred to runtime -- for a pointer this
+    // function never actually validated. Swapped here (not down with its
+    // siblings below) because process_fn_arguments -- which marks pointer
+    // parameters Valid -- runs before that block; swapping in fresh state
+    // after it would wipe out this function's own parameter marks. The
+    // restore is still grouped with the other three, near the end of this
+    // function: restore timing isn't ordering-sensitive the way swap-in is,
+    // since nothing here checks pointer_tracker as a whole the way
+    // malloc_tracker.verify() does.
+    let saved_pointer_tracker = ctx.pointer_tracker.replace(crate::codegen::verification::PointerStateTracker::new());
     *ctx.mutated_vars_mut() = crate::codegen::stmt::collect_mutations(&func.body.stmts);
 
     // Record array stores (arr[i] = val) for postcondition verification.
@@ -1462,6 +1483,7 @@ pub fn emit_fn(ctx: &CodegenContext, func: &crate::grammar::SaltFn, override_nam
     ctx.ownership_tracker.replace(saved_ownership);
     ctx.malloc_tracker.replace(saved_malloc_tracker);
     ctx.arena_escape_tracker.replace(saved_arena_escape);
+    ctx.pointer_tracker.replace(saved_pointer_tracker);
     
     *ctx.alloca_out_mut() = saved_alloca;
 

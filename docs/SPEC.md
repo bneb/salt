@@ -752,6 +752,61 @@ Contracts cannot prove all properties. Known limitations of the current implemen
   names, so once nothing can look them up by name anymore they go inert
   rather than harmful, and resetting the solver itself is a larger,
   less-understood change than clearing this one cache.
+
+  `symbolic_tracker` living on `CodegenContext` -- constructed once per
+  compilation, not once per function -- rather than being reset per call
+  is one instance of a general shape: any `RefCell` field there keyed by
+  plain, reusable source-level name is a candidate for the same class of
+  bug. Prompted an audit of the others. `ownership_tracker`
+  (`Z3StateTracker`), `malloc_tracker`, and `arena_escape_tracker` turned
+  out to already be correctly scoped, just via a different mechanism --
+  `emit_fn` swaps each for a fresh instance and restores the caller's on
+  the way out (`ctx.malloc_tracker.replace(MallocTracker::new())`, etc.,
+  `codegen/mod.rs`), rather than clearing in place. `pointer_tracker` was
+  the one actual miss: `PointerStateTracker::states` is keyed by plain
+  variable name exactly like `symbolic_tracker`, ships its own `clear()`
+  explicitly documented "for new function scope"
+  (`verification/pointer_state.rs`), and was simply never wired up.
+  Confirmed with an adversarial two-function case
+  (`test_cross_fn_pointer_tracker_rejected.salt`): a bare-alias local
+  (`let p = other;`) never re-marks its own tracker entry (see
+  `emit_local_pointer_tracking`, `stmt/mod.rs` -- it only handles a
+  recognized constructor call or no initializer at all), so it silently
+  inherited an unrelated earlier function's leftover `Valid` marking for
+  the name `p`, and `requires { valid(p) }` on a call using it was PROVEN
+  -- "0 deferred to runtime" -- for a pointer this function never
+  actually validated. Unlike the `symbolic_tracker` fix, this one is
+  wired in as a swap-and-restore, matching its three siblings above, not
+  a bare clear: `process_fn_arguments`, which marks pointer-typed
+  parameters `Valid` on entry, runs before the point where those three
+  swap in fresh state, so the swap-in for `pointer_tracker` sits earlier
+  in `emit_fn`, right next to `symbolic_tracker`'s clear -- clearing
+  after parameter processing would have wiped out this function's own
+  parameter marks. The restore stays grouped with the other three near
+  the end of `emit_fn`; that ordering isn't sensitive the way swap-in is,
+  since nothing checks `pointer_tracker` as a whole the way
+  `malloc_tracker.verify()` does. Swap-and-restore over a bare clear
+  everywhere it was available (not just for consistency): if `emit_fn`
+  is ever reentered mid-body for nested specialization, clearing would
+  permanently discard the outer call's in-progress state, where
+  swap-and-restore recovers it.
+
+  Two adjacent, separate findings surfaced while constructing the
+  adversarial test above, deliberately left unfixed pending their own
+  decision -- neither is a `CodegenContext`-persistence bug, so both are
+  outside this audit's scope: (1) `process_fn_arguments` marks every
+  pointer-typed parameter `Valid` on function entry unconditionally, not
+  only when the function's own `requires` actually says so -- a
+  parameter with no stated precondition about validity is still treated
+  as dereferenceable inside the body. (2) any call to an extern (or
+  configured freeing) function marks its own pointer arguments
+  `Optional` as a post-emission side effect (`emit_low_level_call`,
+  `call_helpers.rs`) -- correct for code that runs *after* that call,
+  but if a single call site's own `requires { valid(...) }` is checked
+  against tracker state read *after* this side effect rather than
+  before, the precondition check would be validated against the wrong
+  snapshot. Neither was confirmed to change a real outcome in the cases
+  tried here; both are plausible enough to be worth their own look.
 - Conditionally-assigned `mut` locals lose their constraints. After
   `let mut x = a; if c { x = b; }` the solver does not merge the branches, so a
   guard on `x` will not discharge a later obligation about it. Where this

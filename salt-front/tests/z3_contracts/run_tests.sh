@@ -1069,6 +1069,23 @@ else
     show_evidence
 fi
 
+# ── pointer_tracker must not leak a Valid marking across functions ──
+echo -n "  test_cross_fn_pointer_tracker_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_cross_fn_pointer_tracker_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_cfpt_rejected > /tmp/z3_out_cfpt_rejected.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_cfpt_rejected.txt; then
+        echo "PASS (unrelated function's leftover Valid state did not leak)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_cfpt_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (an unproven pointer was ACCEPTED — cross-function pointer_tracker leak reintroduced, soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then

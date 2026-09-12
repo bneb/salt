@@ -1,0 +1,43 @@
+// Z3 Contract Test: pointer_tracker must not leak a Valid marking across
+// functions.
+// Expected: REJECTED (a real soundness hole if this ever compiles clean)
+//
+// PointerStateTracker::states is keyed by plain variable name and lives on
+// CodegenContext (once per compilation), so a name marked Valid in one
+// function is still sitting there when a later function declares its own
+// local of the same name. A bare-alias local (`let p = other;`) never
+// re-marks its own tracker entry (see emit_local_pointer_tracking), so it
+// silently inherits whatever the map already holds for that name.
+//
+// `second`'s own `p` here is never actually validated by anything in
+// `second` -- it is just an alias of `forward(seed)`, an unconstrained
+// caller-supplied parameter round-tripped through an identity function.
+// Before pointer_tracker was cleared per function (codegen/mod.rs, next to
+// the existing symbolic_tracker.clear()), `first`'s leftover Valid entry
+// for "p" let the `requires { valid(p) }` check on the call below succeed
+// with "0 deferred to runtime" -- a compile-time proof with no actual
+// basis, for a genuinely-freed-or-arbitrary pointer at runtime. That is
+// the same class of bug as test_cross_fn_symbolic_tracker_proved.salt, in
+// the dangerous (false-accept) direction instead of the false-reject one.
+package test_cross_fn_pointer_tracker_rejected
+
+use std.core.ptr.Ptr
+
+extern fn malloc(size: i64) -> Ptr<i32>;
+extern fn use_valid_ptr(p: Ptr<i32>) requires { valid(p) };
+
+fn forward(x: Ptr<i32>) -> Ptr<i32> {
+    return x;
+}
+
+pub fn first() -> Ptr<i32> {
+    let p: Ptr<i32> = malloc(4);
+    return p;
+}
+
+pub fn second(seed: Ptr<i32>) -> i32 {
+    let other: Ptr<i32> = forward(seed);
+    let p = other;
+    use_valid_ptr(p);
+    return 0;
+}
