@@ -792,21 +792,61 @@ Contracts cannot prove all properties. Known limitations of the current implemen
   swap-and-restore recovers it.
 
   Two adjacent, separate findings surfaced while constructing the
-  adversarial test above, deliberately left unfixed pending their own
-  decision -- neither is a `CodegenContext`-persistence bug, so both are
-  outside this audit's scope: (1) `process_fn_arguments` marks every
-  pointer-typed parameter `Valid` on function entry unconditionally, not
-  only when the function's own `requires` actually says so -- a
-  parameter with no stated precondition about validity is still treated
-  as dereferenceable inside the body. (2) any call to an extern (or
-  configured freeing) function marks its own pointer arguments
-  `Optional` as a post-emission side effect (`emit_low_level_call`,
-  `call_helpers.rs`) -- correct for code that runs *after* that call,
-  but if a single call site's own `requires { valid(...) }` is checked
-  against tracker state read *after* this side effect rather than
-  before, the precondition check would be validated against the wrong
-  snapshot. Neither was confirmed to change a real outcome in the cases
-  tried here; both are plausible enough to be worth their own look.
+  adversarial test above; both since resolved. (1) `process_fn_arguments`
+  marks every pointer-typed parameter `Valid` on function entry
+  unconditionally, not only when the function's own `requires` actually
+  says so about it. Investigated as a possible bug matching
+  `pointer_state.rs`'s own doc comment ("Optional... function args"), but
+  it's the load-bearing ergonomic default, not an oversight: `check_deref`
+  treats untracked (`None`) identically to `Valid`, so an ordinary
+  function that dereferences its own pointer parameter with no `requires`
+  at all -- the common case -- compiles clean today
+  (`buf.write(val)` with no contract on `buf`), and `requires { valid(p) }`
+  doesn't mark `p` in `pointer_tracker` either (`emit_requires_verification`
+  only asserts into the Z3 solver), so there's no opt-in path to a
+  stricter default even for a function that states one. Defaulting
+  raw-pointer parameters to `Optional` instead would break that common
+  case outright with no fallback -- a design change requiring its own
+  buy-in, not a fix, and out of scope here. (2) Any call to an extern (or
+  configured freeing) function marks its own pointer arguments `Optional`
+  as a post-emission side effect (`emit_low_level_call`, `call_helpers.rs`)
+  -- correct for code that runs *after* that call. Checked directly
+  whether a single call site's own `requires { valid(...) }` could be
+  validated against tracker state read *after* this side effect: it
+  isn't -- verification happens before `emit_low_level_call` runs for that
+  same call, confirmed by tracing `pointer_tracker.get_state` at the
+  point of injection, and a plain user-function call in between two
+  checks doesn't trigger the downgrade at all (only extern/freeing calls
+  do). No bug.
+
+  A third, unrelated, considerably more serious bug turned up by accident
+  while building an adversarial case for (1)/(2) above: a dereference
+  safety check that was already computing the right answer was being
+  silently discarded before it could ever reject anything.
+  `try_emit_special_method` (`special_methods.rs`) calls `check_deref` for
+  unsafe `Ptr<T>` methods (`.read()`/`.write()`/`.offset()`/etc.) and
+  correctly returns `Err` on a real violation -- Freed, Uninitialized,
+  Empty, or Optional -- distinct from `Ok(None)` when the method name
+  isn't a special method at all. Its caller, `emit_method_call`
+  (`calls.rs`), matched `if let Ok(Some(res)) = try_emit_special_method(...)`,
+  which treats those two outcomes identically: a genuine `Err` silently
+  fell through to ordinary, unchecked method resolution instead of
+  aborting. `free(p); p.read();` -- one function, no contracts, no
+  cross-function state whatsoever -- compiled clean with zero error and
+  zero runtime check. Confirmed by tracing `check_deref`'s own return
+  value directly at the call site: it correctly computed `Freed`, and the
+  compiler emitted the read anyway. Fixed by propagating with `?` instead
+  of matching on `Ok(Some(_))`, so `Ok(None)` still falls through but
+  `Err` now aborts with the real message. See
+  `test_use_after_free_via_read_rejected.salt`. The identical shape
+  appeared twice more, both wrapping `ctx.emit_intrinsic(...)` (`calls.rs`,
+  `method_resolution.rs`) -- lower severity (a real intrinsic-argument
+  error there gets a confusing generic-method-resolution error instead of
+  its own specific one, rather than silently compiling), but same fix,
+  applied for the same reason. All three fixes are a five-line diff
+  total; the full test suite (2025 Rust tests, 69 z3_contracts fixtures)
+  passes unchanged before and after, meaning nothing was relying on the
+  swallowed behavior.
 - Conditionally-assigned `mut` locals lose their constraints. After
   `let mut x = a; if c { x = b; }` the solver does not merge the branches, so a
   guard on `x` will not discharge a later obligation about it. Where this

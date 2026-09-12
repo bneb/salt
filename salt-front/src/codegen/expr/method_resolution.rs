@@ -478,10 +478,11 @@ fn try_resolve_atomic_intrinsic(
     expected_ty: Option<&Type>,
     method_name: &str,
 ) -> Result<Option<(String, Type)>, String> {
-    // 1. Try Intrinsic (e.g. popcount)
+    // 1. Try Intrinsic (e.g. popcount). `?` propagates a real error instead
+    // of silently falling through to atomic-intrinsic handling below on it.
     let mut intrinsic_args = vec![*m.receiver.clone()];
     intrinsic_args.extend(m.args.iter().cloned());
-    if let Ok(Some(res)) = ctx.emit_intrinsic(out, method_name, &intrinsic_args, local_vars, expected_ty) {
+    if let Some(res) = ctx.emit_intrinsic(out, method_name, &intrinsic_args, local_vars, expected_ty)? {
          return Ok(Some(res));
     }
 

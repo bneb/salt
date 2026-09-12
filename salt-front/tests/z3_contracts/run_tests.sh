@@ -1086,6 +1086,23 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# ── check_deref's rejection must not be silently swallowed by its caller ──
+echo -n "  test_use_after_free_via_read_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_use_after_free_via_read_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_uafr_rejected > /tmp/z3_out_uafr_rejected.txt 2>&1; then
+    if grep -q "Cannot dereference 'Freed'" /tmp/z3_out_uafr_rejected.txt; then
+        echo "PASS (use-after-free via .read() correctly rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_uafr_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (use-after-free via .read() ACCEPTED — check_deref's rejection is being swallowed again, soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then

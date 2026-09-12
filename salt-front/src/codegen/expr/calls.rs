@@ -176,11 +176,14 @@ pub fn emit_method_call(ctx: &mut LoweringContext, out: &mut String, m: &syn::Ex
         }
     }
     
-    // 0. Try Intrinsic (Primitive Methods like popcount)
+    // 0. Try Intrinsic (Primitive Methods like popcount). `?` propagates a
+    // real error (e.g. wrong arg count) instead of silently falling
+    // through to generic method resolution on it -- see the identical fix
+    // just below for try_emit_special_method.
     let mut intrinsic_args = Vec::new();
     intrinsic_args.push(*m.receiver.clone());
     intrinsic_args.extend(m.args.iter().cloned());
-    if let Ok(Some(res)) = ctx.emit_intrinsic(out, &m.method.to_string(), &intrinsic_args, local_vars, expected_ty) {
+    if let Some(res) = ctx.emit_intrinsic(out, &m.method.to_string(), &intrinsic_args, local_vars, expected_ty)? {
          return Ok(res);
     }
     
@@ -251,10 +254,18 @@ pub fn emit_method_call(ctx: &mut LoweringContext, out: &mut String, m: &syn::Ex
     // Canonicalize receiver type to prevent raw Struct("Node")
     cached_receiver_ty = crate::codegen::type_bridge::resolve_codegen_type(ctx, &cached_receiver_ty);
 
-    // Try special methods
-    if let Ok(Some(res)) = crate::codegen::expr::special_methods::try_emit_special_method(
+    // Try special methods. `?` here is load-bearing: try_emit_special_method
+    // returns Err for a real violation (e.g. check_deref rejecting a
+    // freed/uninitialized/empty/optional receiver on an unsafe Ptr method
+    // like .read()/.write()/.offset()), and Ok(None) only when this method
+    // name isn't a special method at all. `if let Ok(Some(res)) = ...`
+    // used to treat those two outcomes identically, silently falling
+    // through to generic method resolution on a real error -- which meant
+    // check_deref's rejection was discarded and the call compiled as an
+    // ordinary, unchecked method call. See test_use_after_free_via_read_rejected.salt.
+    if let Some(res) = crate::codegen::expr::special_methods::try_emit_special_method(
         ctx, out, m, local_vars, expected_ty, &cached_receiver_val, &cached_receiver_ty
-    ) {
+    )? {
         return Ok(res);
     }
 
