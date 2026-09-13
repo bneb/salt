@@ -879,6 +879,70 @@ the composability fixes above and confirmed to predate both of them.
 Type-bounds scoping now also collects from the return expression; see
 `tests/z3_contracts/test_ensures_return_expr_bounds_proved.salt`.
 
+`assert_bound_for_type` -- the single function every type-bounds path above
+funnels through -- had explicit arms for u8/u16/i8/i16/bool, but none at all
+for i32 or i64: they fell through to the match's `_ => {}` and Z3 treated
+them as unconstrained mathematical integers, no ceiling or floor. u32/u64/
+usize had a floor (`>= 0`) but no ceiling at all, correct in spirit for
+u64/usize (their real ceiling is astronomically unlikely to bind) but wrong
+for u32, whose ceiling (2^32 - 1) is well within range of ordinary
+arithmetic. Found by accident while investigating why `test_bv.salt`'s
+proof/timeout outcome was flaky under machine load (see the determinism
+work above): giving Z3 a far larger resource budget than its normal
+~100ms turned a "proven" bitwise contract on `i32` parameters into a hard
+rejection, with a counterexample of `x = 2^37` -- physically impossible
+for a real `i32`. The exact same class of gap reproduces instantly under
+the compiler's normal, default settings with nothing but a single
+unconstrained variable and a linear bound (`ensures(result <= 2147483647)`
+on an `i32` identity function) -- no special budget needed; see
+`test_i32_i64_full_range_proved.salt` and `test_u32_upper_bound_proved.salt`.
+Fixed by adding the missing i32/i64 arms and splitting u32 from u64/usize
+so each gets its own real ceiling (u64::MAX exceeds what `Int::from_i64`
+can represent, so its ceiling uses `Int::from_u64` instead).
+
+This produced a real, informative side effect rather than a clean win:
+with i32 properly bounded, `test_bv.salt`'s three bitwise facts (all
+true, none contrived) stopped being provable within 100ms at all --
+every one of them now hits the timeout and gets a real runtime check
+instead, with an explicit warning, every single time. Correctly modeling
+a bitwise operation against a *bounded* domain is measurably more
+solver work than the (unsound) unbounded-integer shortcut was; the old
+"proof" was fast because it was skipping the hard part, not because the
+fact was easy. `proof_gate.sh`'s baseline was regenerated
+(`--update-baseline`) to record this fixture's honest count (0/5 proven,
+down from a baseline of 1) rather than treating the correction as a
+regression to revert. The previously-flaky determinism failures on
+`test_bv.salt`/`test_bv_shifts.salt` (intermittent drift under load,
+investigated separately, root-caused to the 100ms watchdog being
+wall-clock rather than resource-based) also stopped reproducing as a
+side effect: a query that now *consistently* exceeds budget is stable
+regardless of load; the earlier flakiness was specifically the symptom
+of a query sitting right at the edge. The general wall-clock-vs-resource
+question is not resolved by this -- only no longer forced by a concrete
+failure on hand -- and is more clearly motivated now: if `requires`/
+`ensures` proofs are the actual goal over runtime checks, a compiler
+that structurally can't finish proving true bitwise facts about bounded
+integers within budget is leaving real, provable guarantees on the
+table. Worth revisiting rlimit-based bounding on its own, now that it
+would be tuning genuinely-hard-but-sound queries rather than papering
+over an unsound one.
+
+Separately, not fixed here: contract literals at or near u64::MAX
+(`18446744073709551615`) don't translate at all inside `requires`/
+`ensures` -- the check silently reports 0/0 rather than erroring or
+proving -- while the identical literal outside a contract parses fine.
+At least two of the three integer-literal-parsing call sites in the
+verification path use `base10_parse::<i64>().ok()`, which returns `None`
+(silently, not an error) for anything above `i64::MAX`; a `u64` literal
+between `i64::MAX` and `u64::MAX` written directly in a contract likely
+hits this. Not chased further here -- rare in practice (how often does
+a real contract need the literal value of `u64::MAX` written out?) and
+orthogonal to the bounds-assertion gap above -- but it's the same
+swallowed-error shape as the `check_deref` bug two entries up, just in
+the arithmetic path instead of the pointer-safety one, which suggests
+it's worth a dedicated look rather than being assumed to be the only
+instance.
+
 ---
 
 ## 8. Memory Model

@@ -989,8 +989,17 @@ fn assert_bound_for_type<'ctx>(
             solver.assert(&val.ge(&zero));
             solver.assert(&val.le(&max));
         }
-        Type::U32 | Type::U64 | Type::Usize => {
+        Type::U32 => {
+            let max = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, 4294967295);
             solver.assert(&val.ge(&zero));
+            solver.assert(&val.le(&max));
+        }
+        // u64::MAX (18446744073709551615) exceeds i64's range, so from_i64
+        // can't represent it -- from_u64 can.
+        Type::U64 | Type::Usize => {
+            let max = crate::z3_shim::ast::Int::from_u64(ctx.z3_ctx, u64::MAX);
+            solver.assert(&val.ge(&zero));
+            solver.assert(&val.le(&max));
         }
         Type::I8 => {
             let min = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, -128);
@@ -1001,6 +1010,25 @@ fn assert_bound_for_type<'ctx>(
         Type::I16 => {
             let min = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, -32768);
             let max = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, 32767);
+            solver.assert(&val.ge(&min));
+            solver.assert(&val.le(&max));
+        }
+        // Previously missing entirely: an i32 (arguably the single most
+        // common integer type in real code) had no bounds asserted at all,
+        // so the solver treated it as fully unbounded -- see
+        // test_i32_i64_full_range_proved.salt for the concrete,
+        // reliably-reproduced consequence (a trivially-true fact about
+        // real i32 values gets a "counterexample" outside i32's actual
+        // range).
+        Type::I32 => {
+            let min = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, i32::MIN as i64);
+            let max = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, i32::MAX as i64);
+            solver.assert(&val.ge(&min));
+            solver.assert(&val.le(&max));
+        }
+        Type::I64 => {
+            let min = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, i64::MIN);
+            let max = crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, i64::MAX);
             solver.assert(&val.ge(&min));
             solver.assert(&val.le(&max));
         }

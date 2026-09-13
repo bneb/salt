@@ -1,0 +1,37 @@
+// Z3 Contract Test: i32 and i64 must carry their type's full range
+// (not just u32/u64's missing upper bound -- these had NO bound at all).
+// Expected: PASS
+//
+// Distinct from test_unsigned_bound_proved.salt (which covers bounds
+// existing but not being applied to every verification path). This is
+// about assert_bound_for_type itself: it had explicit arms for
+// u8/u16/i8/i16/bool, but none at all for i32 or i64 -- not a narrower
+// bound, no bound whatsoever, falling through to the match's `_ => {}`.
+// Z3 treated an i32 exactly like an unconstrained mathematical integer.
+//
+// Found chasing an unrelated determinism investigation: giving Z3 a much
+// larger resource budget than its normal ~100ms turned a "proven" bitwise
+// contract on i32 parameters into a hard rejection, with a counterexample
+// of x = 2^37 -- physically impossible for a real i32, reachable only
+// because nothing told the solver i32 has a ceiling at all. The fixture
+// below doesn't need a bigger budget to show the same root gap: a
+// single-variable linear bound is trivial for Z3 to falsify the instant
+// the variable is unconstrained, so this reproduces under the compiler's
+// normal, default settings.
+package test_i32_i64_full_range_proved
+
+pub fn identity_i32(x: i32) -> i32
+    requires(x >= 0)
+    ensures(result <= 2147483647)
+{ return x; }
+
+pub fn identity_i64(x: i64) -> i64
+    requires(x >= 0)
+    ensures(result <= 9223372036854775807)
+{ return x; }
+
+pub fn main() -> i32 {
+    let _a = identity_i32(5);
+    let _b = identity_i64(5);
+    return 0;
+}

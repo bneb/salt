@@ -1137,6 +1137,32 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# ── i32/i64 must carry their full range, not just be entirely unbounded ──
+echo -n "  test_i32_i64_full_range_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_i32_i64_full_range_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_i32i64_proved > /tmp/z3_out_i32i64_proved.txt 2>&1; then
+    echo "PASS (trivially-true i32/i64 range facts proved or safely deferred)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (an always-true fact about real i32/i64 values was rejected — unbounded-integer regression)"
+    cat /tmp/z3_out_i32i64_proved.txt | head -8
+    FAIL=$((FAIL + 1))
+fi
+
+# ── u32 must carry its actual ceiling (2^32 - 1), not just non-negativity ──
+echo -n "  test_u32_upper_bound_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_u32_upper_bound_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_u32ub_proved > /tmp/z3_out_u32ub_proved.txt 2>&1; then
+    echo "PASS (trivially-true u32 range fact proved or safely deferred)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (an always-true fact about real u32 values was rejected — missing upper bound regression)"
+    cat /tmp/z3_out_u32ub_proved.txt | head -8
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then
