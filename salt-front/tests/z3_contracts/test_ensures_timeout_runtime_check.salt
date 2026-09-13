@@ -1,24 +1,34 @@
-// Z3 Contract Test: an ensures clause Z3 cannot decide within 100ms must
-// still be enforced -- by a runtime check, not by silence.
-// Expected: compiles (Z3 defers this one check), AND the emitted MLIR must
-// contain a real call to __salt_contract_violation.
+// Z3 Contract Test: a deliberately weakened, genuinely-wrong bound must be
+// caught, not compiled in silence.
+// Expected: REJECTED at compile time, with the planted bug as the
+// counterexample.
 //
-// verify_postcondition's SatResult::Unknown branch, and the Sat branch's
-// "return expression uses an untracked local" sub-case, were both empty.
-// The comments in both said "deferred to runtime"; neither called anything.
-// requires' own Unknown branch calls emit_requires_runtime_check; ensures
-// had no equivalent function at all -- not a missed call, the function did
-// not exist. Every ensures clause complex enough to time out compiled
-// clean with zero enforcement: not proven, not checked at runtime, no
-// warning printed.
+// This fixture's history is the interesting part. Originally: neither
+// verify_postcondition's SatResult::Unknown branch nor its Sat branch's
+// "return expression uses an untracked local" sub-case called anything --
+// both said "deferred to runtime" in a comment and did nothing. Every
+// ensures clause complex enough to time out compiled clean with zero
+// enforcement: not proven, not checked at runtime, no warning. Found on a
+// real function (kernel/core/syscall_ipc.salt's validate_shm_request in
+// KeuOS) where an astronomically wrong bound compiled silently. Fixed by
+// adding the missing runtime-check emission, and this fixture -- several
+// early-return branches feeding an OR-of-AND postcondition on the last
+// one, reliably driving the *old*, wall-clock 100ms Z3 timeout to Unknown
+// -- became the regression test for "deferred still means enforced."
 //
-// Found on a real function (kernel/core/syscall_ipc.salt's
-// validate_shm_request in KeuOS): an astronomically wrong bound on its
-// final return's postcondition compiled silently before this fix. This
-// fixture reproduces the same shape that reliably drives Z3 to Unknown --
-// several early-return branches feeding an OR-of-AND postcondition on the
-// last one -- rather than relying on a single hard-to-predict query, so the
-// test does not depend on exactly which expression happens to time out.
+// Then the compiler's proof budget moved from a 100ms wall-clock timeout
+// to a resource-based Z3 rlimit (see the commit that changed the two
+// solver_params.set_u32 call sites in verification/mod.rs). Deterministic,
+// regardless of machine speed or load -- and, for this specific query,
+// generous enough that Z3 now decides it in well under a second rather
+// than timing out: it finds the planted bug directly and rejects at
+// compile time. That's strictly better than deferring to a runtime check
+// that only fires if this exact path executes, so the fixture's outcome
+// was updated rather than the query being made artificially harder to
+// preserve the original "must defer" premise. Runtime-check emission
+// itself still has dedicated coverage: see
+// test_ensures_deferred_runtime_check.salt, using a query (bitwise-OR
+// monotonicity) that stays genuinely undecided at this same budget.
 package test_ensures_timeout_runtime_check
 
 const LIMIT: u64 = 0x0000800000000000;

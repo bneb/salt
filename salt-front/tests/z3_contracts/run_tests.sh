@@ -115,8 +115,8 @@ else
 fi
 
 # ── Test 6: Real (exact rational) contracts — KNOWN FLAKY ──────
-# Z3's Real theory is incomplete (per FAQ). The 100ms timeout is not
-# always sufficient on CI hardware. Accept both pass and timeout.
+# Z3's Real theory is incomplete (per FAQ). The proof budget is not
+# always sufficient. Accept both pass and timeout.
 echo -n "  test_real: "
 if "$SALTC" "$SCRIPT_DIR/test_real.salt" \
     --lib --disable-alias-scopes -o /tmp/z3_test_real > /tmp/z3_out_real.txt 2>&1; then
@@ -798,12 +798,33 @@ else
     FAIL=$((FAIL + 1))
 fi
 
-# ── A deferred (timed-out) ensures MUST still emit a runtime check ──
+# ── A deliberately weakened bound must be rejected, not compiled in
+# silence -- this query used to time out under the old 100ms wall-clock
+# watchdog (deferred to a runtime check); the rlimit-based budget decides
+# it directly instead. See the fixture's own header for the full history.
 echo -n "  test_ensures_timeout_runtime_check: "
-if "$SALTC" "$SCRIPT_DIR/test_ensures_timeout_runtime_check.salt" \
+if ! "$SALTC" "$SCRIPT_DIR/test_ensures_timeout_runtime_check.salt" \
     --lib --disable-alias-scopes -o /tmp/z3_test_etrc > /tmp/z3_out_etrc.txt 2>&1; then
-    if grep -q '__salt_contract_violation' /tmp/z3_test_etrc; then
-        if grep -qi 'WARNING: Z3 could not prove' /tmp/z3_out_etrc.txt; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_etrc.txt; then
+        echo "PASS (weakened bound caught at compile time, not deferred or silent)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_etrc.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (weakened bound ACCEPTED — soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── A genuinely-undecided-within-budget ensures MUST still emit a
+# runtime check, not compile in silence ──
+echo -n "  test_ensures_deferred_runtime_check: "
+if "$SALTC" "$SCRIPT_DIR/test_ensures_deferred_runtime_check.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_edrc > /tmp/z3_out_edrc.txt 2>&1; then
+    if grep -q '__salt_contract_violation' /tmp/z3_test_edrc; then
+        if grep -qi 'WARNING: Z3 could not prove' /tmp/z3_out_edrc.txt; then
             echo "PASS (deferred ensures got a real runtime check + warning)"
             PASS=$((PASS + 1))
             show_evidence
@@ -813,12 +834,12 @@ if "$SALTC" "$SCRIPT_DIR/test_ensures_timeout_runtime_check.salt" \
         fi
     else
         echo "FAIL (compiled with ZERO enforcement — the original silent bug)"
-        cat /tmp/z3_out_etrc.txt | head -5
+        cat /tmp/z3_out_edrc.txt | head -5
         FAIL=$((FAIL + 1))
     fi
 else
-    echo "FAIL (unexpected compile error)"
-    cat /tmp/z3_out_etrc.txt | head -5
+    echo "FAIL (unexpected compile error — was this supposed to stay undecided?)"
+    cat /tmp/z3_out_edrc.txt | head -5
     FAIL=$((FAIL + 1))
 fi
 

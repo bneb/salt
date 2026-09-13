@@ -82,6 +82,31 @@ impl<'ctx> SymbolicContext<'ctx> {
     }
 }
 
+/// Z3 proof budget for both `requires` and `ensures` checks, as an
+/// `rlimit` (Z3-internal resource units) rather than a wall-clock
+/// millisecond timeout. Same proof decision every time regardless of
+/// machine speed or load -- a wall-clock "timeout" made the compiler's
+/// output depend on how busy the machine happened to be at build time:
+/// a borderline check could be proven on an idle box and silently
+/// deferred to a runtime check on a loaded one, so identical source
+/// could produce different binaries. Confirmed directly (see the commit
+/// that introduced this constant): rebuilding an earlier, wall-clock-
+/// timeout commit and running mlir_determinism_gate.sh under the same
+/// conditions reproduced the same intermittent drift; switching to
+/// rlimit here did not, across a much larger sample.
+///
+/// 2,000,000 was chosen empirically, not derived: high enough that the
+/// full z3_contracts suite (76 fixtures) still compiles in ~20s total
+/// with no fixture individually slow, low enough to avoid a cliff this
+/// investigation found by testing larger values directly -- a single
+/// bitwise-monotonicity query (test_bv.salt's or_monotonic) that returns
+/// in well under a second at this budget took over a minute and was
+/// killed, unfinished, at 25x more. Rlimit cost does not scale linearly
+/// with problem difficulty for every query shape; treat "just raise the
+/// number" as a real compile-time-cost risk, not a free knob, if this
+/// ever needs retuning.
+const Z3_PROOF_RLIMIT: u32 = 2_000_000;
+
 pub struct VerificationEngine;
 
 impl VerificationEngine {
@@ -257,7 +282,7 @@ impl VerificationEngine {
                  //        → requirement CAN BE VIOLATED
                  //        → COMPILE ERROR ✗ (counterexample reported)
                  //
-                 //   UNKNOWN → Z3 timed out (100ms default)
+                 //   UNKNOWN → Z3 exceeded its proof budget (Z3_PROOF_RLIMIT)
                  //          → Emit runtime assertion as safe fallback
                  //
                  // REGRESSION GUARD: salt-front/tests/z3_contracts/run_tests.sh
@@ -279,7 +304,7 @@ impl VerificationEngine {
                  // If NOT(req) is UNSAT, then req is ALWAYS TRUE (proven).
                  let solver = crate::z3_shim::Solver::new(ctx.z3_ctx);
                  let mut solver_params = crate::z3_shim::Params::new(ctx.z3_ctx);
-                 solver_params.set_u32("timeout", 100);
+                 solver_params.set_u32("rlimit", Z3_PROOF_RLIMIT);
                  solver.set_params(&solver_params);
                  
                  // Assert the caller's preconditions (this function's requires)
@@ -457,7 +482,7 @@ impl VerificationEngine {
                          // Z3 could not determine satisfiability (timeout / incomplete theory)
                          let constraint_str = format!("{}", z3_req_subst);
                          eprintln!(
-                             "WARNING: Z3 could not prove `requires({})` within 100ms. \
+                             "WARNING: Z3 could not prove `requires({})` within budget. \
                               Emitting runtime check.",
                              constraint_str
                          );
@@ -630,10 +655,10 @@ impl VerificationEngine {
         let mut verified = false;
         use crate::z3_shim::ast::Ast;
 
-        // Create a fresh solver with timeout for postcondition proofs
+        // Create a fresh solver with a bounded proof budget for postcondition proofs
         let solver = crate::z3_shim::Solver::new(ctx.z3_ctx);
         let mut solver_params = crate::z3_shim::Params::new(ctx.z3_ctx);
-        solver_params.set_u32("timeout", 100); // 100ms Z3 watchdog
+        solver_params.set_u32("rlimit", Z3_PROOF_RLIMIT);
         solver.set_params(&solver_params);
 
         // 1. Create symbolic constants for function parameters
@@ -851,19 +876,20 @@ impl VerificationEngine {
                             }
                         }
                         crate::z3_shim::SatResult::Unknown => {
-                            // TIMEOUT: Z3 couldn't determine. The comment here
-                            // matched requires' handling in wording, but not in
+                            // BUDGET EXCEEDED: Z3 couldn't determine within
+                            // Z3_PROOF_RLIMIT. The comment here matched
+                            // requires' handling in wording, but not in
                             // behavior -- requires' Unknown branch calls
                             // emit_requires_runtime_check; this one called
                             // nothing. Every ensures clause complex enough to
-                            // time out (100ms) was therefore COMPLETELY
+                            // exceed budget was therefore COMPLETELY
                             // unenforced: not proven, not checked at runtime,
                             // no warning printed. Confirmed directly: an
                             // astronomically-wrong bound on a multi-branch
                             // function's postcondition compiled clean with zero
                             // indication anything was ever verified.
                             eprintln!(
-                                "WARNING: Z3 could not prove `ensures({:?})` for '{}' within 100ms. \
+                                "WARNING: Z3 could not prove `ensures({:?})` for '{}' within budget. \
                                  Emitting runtime check.",
                                 actual_ens, fn_name
                             );
@@ -1182,7 +1208,7 @@ fn collect_ident_names_from<'e>(
 /// for variables the constraint under check does not even mention only adds
 /// solver work, and on at least one existing fixture (test_bv.salt, a
 /// bitvector-heavy proof) that extra work was enough to push a previously
-/// UNSAT-in-time check past the 100ms watchdog into an UNKNOWN/timeout --
+/// UNSAT-in-budget check past the proof budget into an UNKNOWN/timeout --
 /// still sound, but a real loss of what proves. Confirmed by measurement,
 /// not assumed: unscoped, proof_gate regressed by exactly this fixture;
 /// scoped to free variables, it does not.

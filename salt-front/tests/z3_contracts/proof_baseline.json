@@ -1,7 +1,7 @@
 {
   "aggregate": {
-    "proven": 98,
-    "total": 160
+    "proven": 91,
+    "total": 153
   },
   "rows": [
     {
@@ -31,7 +31,7 @@
     },
     {
       "name": "test_bv.salt",
-      "proven": 0,
+      "proven": 1,
       "total": 5
     },
     {
@@ -85,6 +85,11 @@
       "total": 2
     },
     {
+      "name": "test_ensures_deferred_runtime_check.salt",
+      "proven": 0,
+      "total": 2
+    },
+    {
       "name": "test_ensures_forall_body.salt",
       "proven": 2,
       "total": 2
@@ -98,11 +103,6 @@
       "name": "test_ensures_return_expr_bounds_proved.salt",
       "proven": 1,
       "total": 1
-    },
-    {
-      "name": "test_ensures_timeout_runtime_check.salt",
-      "proven": 8,
-      "total": 9
     },
     {
       "name": "test_exists.salt",

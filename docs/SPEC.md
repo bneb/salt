@@ -493,7 +493,7 @@ Contracts are checked at compile time using an SMT solver. The process for each 
 3. If constant folding fails, the compiler checks whether the negation of the expression is satisfiable.
 4. **Proved:** No input can violate the condition. The check is elided.
 5. **Counterexample:** A violating input exists. The compiler reports the specific values and stops with an error.
-6. **Timeout:** The solver cannot decide within a fixed time budget (100ms). The compiler emits a runtime assertion as a fallback. The program compiles and runs, but will trap if the condition is violated at runtime.
+6. **Timeout:** The solver cannot decide within a fixed proof budget (a Z3 `rlimit` of resource units, not a wall-clock timeout — deterministic regardless of machine speed or load; see `Z3_PROOF_RLIMIT` in `verification/mod.rs`). The compiler emits a runtime assertion as a fallback. The program compiles and runs, but will trap if the condition is violated at runtime.
 
 Postconditions are checked similarly at each return site, with `result` bound to the returned expression.
 
@@ -935,6 +935,67 @@ either direction, proven or honestly deferred, rather than a coin flip
 builds. Worth doing on its own now that it's tuning a genuinely
 hard-but-sound query rather than papering over an unsound one; not
 attempted here.
+
+**Update: the switch is done.** Both `solver_params.set_u32("timeout", 100)`
+call sites (`VerificationEngine::verify` and `verify_postcondition`,
+`verification/mod.rs`) now set `"rlimit"` instead, via a shared
+`Z3_PROOF_RLIMIT` constant. `rlimit` counts Z3-internal resource units --
+a deterministic function of the query itself, not of wall-clock time --
+confirmed directly with a throwaway test before touching real code: a
+trivial UNSAT proves fine at a generous limit, and a starved one (`1`)
+bails out to `Unknown` every time, same as a real hard case would, with
+no machine-speed dependency either way.
+
+Calibration turned out to be the real work, and not the "just raise the
+number" kind. The instinct that a bigger budget would let more true
+bitwise facts (like `test_bv.salt`'s `or_monotonic`) actually prove
+turned out to be only partly right: 2,000,000 lets one more of its five
+checks prove that couldn't before, but pushing further doesn't buy more
+of them -- 10,000,000 (5x) made that same query run past 15 seconds
+without finishing, and 50,000,000 (25x) ran past a minute of CPU time
+before being killed, still undecided. Rlimit cost is not proportional to
+problem difficulty for every query shape; past a point, more budget buys
+nothing but compile time. `or_monotonic` specifically stays a deferred
+runtime check, and that's the correct outcome, not a shortfall -- the
+Int<->BV<->Int encoding this compiler uses for bitwise ops apparently
+makes this particular monotonicity property disproportionately expensive
+to decide directly, and forcing a proof through sheer resource budget
+would trade a fast, honest runtime check for an impractically slow
+compiler. `Z3_PROOF_RLIMIT = 2_000_000` was chosen empirically as the
+point that stays fast (the full 76-fixture z3_contracts suite compiles
+in ~20s total, no fixture individually slow) while still proving what it
+practically can.
+
+One fixture's premise broke as a direct, foreseeable consequence and was
+handled deliberately rather than patched around:
+`test_ensures_timeout_runtime_check.salt` was built specifically to
+reliably drive the *old* wall-clock timeout to `Unknown`, to test that
+deferral actually emits a real runtime check. Under the new budget, its
+exact query -- the deliberately weakened bound modeled on the KeuOS bug
+that motivated the fixture -- is no longer hard to decide at all: Z3
+finds the planted violation directly and rejects at compile time,
+in well under a second. That's strictly better (a real bug caught at
+compile time beats a runtime check that only fires if that exact path
+executes), so the fixture's expected outcome was updated to REJECTED
+instead of the query being artificially made harder to preserve the
+original "must defer" premise -- see the fixture's own header for the
+full history. Runtime-check-emission coverage didn't just get dropped,
+though: `test_ensures_deferred_runtime_check.salt` takes over that role,
+built on `or_monotonic`'s shape specifically because it was already
+confirmed, empirically, to still exceed budget rather than picked
+because it looks hard.
+
+Verified properly this time, learning from the correction two paragraphs
+up: `mlir_determinism_gate.sh` run 15 times (not 4) on an otherwise idle
+machine came back 15/15 clean. If the true failure rate were still
+anywhere near the ~50% measured for the wall-clock timeout, 15
+consecutive clean runs would happen by chance under 1 in 30,000 times --
+this is a real fix, not a lucky sample. `proof_gate.sh`'s baseline was
+regenerated for the fixture changes above (`test_ensures_timeout_runtime_check.salt`
+dropping out of the compiled/proof-tracked set entirely,
+`test_ensures_deferred_runtime_check.salt` entering at 0/2 proven, and
+`test_bv.salt` gaining one more proven check) -- all deliberate, all
+explained above, none a regression to chase.
 
 The other item flagged when this fix first landed -- contract literals
 at or near u64::MAX (`18446744073709551615`) silently reporting 0/0
