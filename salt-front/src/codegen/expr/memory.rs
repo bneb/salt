@@ -1011,8 +1011,23 @@ pub fn translate_to_z3<'a, 'ctx>(
 ) -> Result<crate::z3_shim::ast::Int<'a>, String> {
     match expr {
         syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(li), .. }) => {
-            let val = li.base10_parse::<i64>().map_err(|e| e.to_string())?;
-            Ok(ctx.mk_int(val))
+            // A bare integer token is never negative (syn/Rust syntax has no
+            // negative literal token; `-5` parses as Unary(Neg, Lit(5))), so
+            // anything base10_parse::<i64> rejects for being too large is a
+            // legitimate value between i64::MAX+1 and u64::MAX, not a
+            // malformed literal -- try u64 before giving up. Without this,
+            // a contract literal in that range (u64::MAX itself, written
+            // out, is the case that surfaced it) failed this parse, the
+            // error correctly propagated via `?`, and the caller's
+            // `if let Ok(z3_ens) = ...` silently treated the whole ensures
+            // clause as nothing to check: 0/0 checks, no warning, no error.
+            match li.base10_parse::<i64>() {
+                Ok(val) => Ok(ctx.mk_int(val)),
+                Err(_) => {
+                    let val = li.base10_parse::<u64>().map_err(|e| e.to_string())?;
+                    Ok(crate::z3_shim::ast::Int::from_u64(ctx.z3_ctx, val))
+                }
+            }
         }
         syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Bool(b), .. }) => {
             // Bools are carried as 0/1 in the integer encoding. Without this a

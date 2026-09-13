@@ -911,37 +911,58 @@ solver work than the (unsound) unbounded-integer shortcut was; the old
 fact was easy. `proof_gate.sh`'s baseline was regenerated
 (`--update-baseline`) to record this fixture's honest count (0/5 proven,
 down from a baseline of 1) rather than treating the correction as a
-regression to revert. The previously-flaky determinism failures on
-`test_bv.salt`/`test_bv_shifts.salt` (intermittent drift under load,
-investigated separately, root-caused to the 100ms watchdog being
-wall-clock rather than resource-based) also stopped reproducing as a
-side effect: a query that now *consistently* exceeds budget is stable
-regardless of load; the earlier flakiness was specifically the symptom
-of a query sitting right at the edge. The general wall-clock-vs-resource
-question is not resolved by this -- only no longer forced by a concrete
-failure on hand -- and is more clearly motivated now: if `requires`/
-`ensures` proofs are the actual goal over runtime checks, a compiler
-that structurally can't finish proving true bitwise facts about bounded
-integers within budget is leaving real, provable guarantees on the
-table. Worth revisiting rlimit-based bounding on its own, now that it
-would be tuning genuinely-hard-but-sound queries rather than papering
-over an unsound one.
+regression to revert.
 
-Separately, not fixed here: contract literals at or near u64::MAX
-(`18446744073709551615`) don't translate at all inside `requires`/
-`ensures` -- the check silently reports 0/0 rather than erroring or
-proving -- while the identical literal outside a contract parses fine.
-At least two of the three integer-literal-parsing call sites in the
-verification path use `base10_parse::<i64>().ok()`, which returns `None`
-(silently, not an error) for anything above `i64::MAX`; a `u64` literal
-between `i64::MAX` and `u64::MAX` written directly in a contract likely
-hits this. Not chased further here -- rare in practice (how often does
-a real contract need the literal value of `u64::MAX` written out?) and
-orthogonal to the bounds-assertion gap above -- but it's the same
-swallowed-error shape as the `check_deref` bug two entries up, just in
-the arithmetic path instead of the pointer-safety one, which suggests
-it's worth a dedicated look rather than being assumed to be the only
-instance.
+**Correction to the paragraph above, written minutes later against a
+bigger sample:** the initial check (4 clean runs of
+`mlir_determinism_gate.sh` right after this fix) was reported here as
+the flakiness having "stopped reproducing as a side effect." Ten more
+runs on an otherwise idle machine came back 5 pass / 5 fail on the same
+fixture. Four clean runs was luck, not a fix -- the honest read is that
+this query still sits close enough to the 100ms line that ordinary
+run-to-run timing noise (no competing process required) decides it
+about half the time. The underlying diagnosis stands: this is the
+100ms watchdog being wall-clock rather than resource-based, and fixing
+it for real means switching to something like Z3's `rlimit` (resource
+units, deterministic regardless of machine speed or load -- prototyped
+and confirmed working during the investigation that found this, see the
+git history around this fix) rather than tuning the wall-clock number.
+That switch is still not done. If `requires`/`ensures` proofs over
+runtime checks is the actual goal, a compiler that can't reliably
+finish proving true bitwise facts about bounded integers -- reliably in
+either direction, proven or honestly deferred, rather than a coin flip
+-- is leaving real guarantees on the table AND shipping non-reproducible
+builds. Worth doing on its own now that it's tuning a genuinely
+hard-but-sound query rather than papering over an unsound one; not
+attempted here.
+
+The other item flagged when this fix first landed -- contract literals
+at or near u64::MAX (`18446744073709551615`) silently reporting 0/0
+checks instead of proving, erroring, or deferring, while the identical
+literal outside a contract parsed fine -- is fixed. `translate_to_z3`'s
+integer-literal arm parsed every literal via `base10_parse::<i64>()`
+and correctly propagated a parse failure with `?` for anything above
+`i64::MAX` -- correct handling of a real error, except the caller of
+the whole ensures translation (`verify_postcondition`) gated on
+`if let Ok(z3_ens) = translate_bool_to_z3(...)`, which treated that
+propagated `Err` identically to "nothing to check." Same swallowed-error
+shape as the `check_deref` bug two entries up, just in the arithmetic
+path instead of the pointer-safety one, and just as silent: no compile
+error, no runtime check, no warning, `0/0 checks` printed as if nothing
+was ever there to verify. Fixed at the source rather than patching the
+one caller: the literal arm now tries `i64` first (every ordinary
+literal, unchanged) and falls back to `u64` only when that fails --
+`syn`/Rust literal tokens are never negative (`-5` parses as
+`Unary(Neg, Lit(5))`), so anything `i64` rejects for being too large is
+a legitimate value up to `u64::MAX`, not a malformed one. Verified the
+fix isn't also over-permissive: an off-by-one-too-tight bound one below
+`u64::MAX` is still correctly rejected, with `u64::MAX` itself as the
+genuine counterexample. See `test_u64_max_literal_proved.salt` and
+`test_u64_max_literal_rejected.salt`. The other two `base10_parse::<i64>().ok()`
+call sites (array-index bounds, loop-bounds evaluation) are intentionally
+i64-scoped for their own domains, where a value this large is
+astronomically implausible rather than a real contract value -- left
+as-is, not the same bug.
 
 ---
 

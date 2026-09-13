@@ -1163,6 +1163,41 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# ── a contract literal at u64::MAX must actually be checked, not skipped ──
+echo -n "  test_u64_max_literal_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_u64_max_literal_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_u64max_proved > /tmp/z3_out_u64max_proved.txt 2>&1; then
+    if grep -q "0/0 checks" /tmp/z3_out_u64max_proved.txt; then
+        echo "FAIL (compiled clean but 0 checks ran — silently skipped again, not actually verified)"
+        FAIL=$((FAIL + 1))
+    else
+        echo "PASS (u64::MAX literal actually verified, not silently skipped)"
+        PASS=$((PASS + 1))
+        show_evidence
+    fi
+else
+    echo "FAIL (u64::MAX literal in a contract was wrongly rejected)"
+    cat /tmp/z3_out_u64max_proved.txt | head -8
+    FAIL=$((FAIL + 1))
+fi
+
+# ── an off-by-one-too-tight bound below u64::MAX must still be rejected ──
+echo -n "  test_u64_max_literal_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_u64_max_literal_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_u64max_rejected > /tmp/z3_out_u64max_rejected.txt 2>&1; then
+    if grep -q "VERIFICATION ERROR\|Postcondition violation" /tmp/z3_out_u64max_rejected.txt; then
+        echo "PASS (genuinely false near-max claim still rejected — literal fix isn't over-permissive)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_u64max_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (a genuinely false near-u64::MAX claim was ACCEPTED)"
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then

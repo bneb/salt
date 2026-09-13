@@ -1,0 +1,14 @@
+// Z3 Contract Test: an off-by-one-too-tight bound right below u64::MAX
+// must still be rejected, with u64::MAX itself as the counterexample --
+// confirms the literal-parsing fix didn't also make this over-permissive.
+// Expected: REJECTED
+package test_u64_max_literal_rejected
+
+pub fn identity_u64(x: u64) -> u64
+    ensures(result <= 18446744073709551614)
+{ return x; }
+
+pub fn main() -> i32 {
+    let _a = identity_u64(5);
+    return 0;
+}

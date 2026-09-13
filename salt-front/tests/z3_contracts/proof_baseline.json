@@ -1,7 +1,7 @@
 {
   "aggregate": {
-    "proven": 96,
-    "total": 158
+    "proven": 98,
+    "total": 160
   },
   "rows": [
     {
@@ -218,6 +218,11 @@
       "name": "test_u32_upper_bound_proved.salt",
       "proven": 1,
       "total": 1
+    },
+    {
+      "name": "test_u64_max_literal_proved.salt",
+      "proven": 2,
+      "total": 2
     },
     {
       "name": "test_unsigned_bound_proved.salt",
