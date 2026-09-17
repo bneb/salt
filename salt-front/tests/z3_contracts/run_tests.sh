@@ -1219,6 +1219,51 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# ── try_elide_overflow_check: proven-safe arithmetic must have its
+# runtime check elided entirely (zero-cost), across each operator and
+# signedness try_elide_overflow_check's own match distinguishes ──
+for elide_case in overflow_elide_add_proved overflow_elide_sub_proved overflow_elide_mul_proved overflow_elide_unsigned_proved; do
+    echo -n "  test_${elide_case}: "
+    if "$SALTC" "$SCRIPT_DIR/test_${elide_case}.salt" \
+        --lib --disable-alias-scopes -o "/tmp/z3_test_${elide_case}" > "/tmp/z3_out_${elide_case}.txt" 2>&1; then
+        if grep -q '__salt_overflow_panic' "/tmp/z3_test_${elide_case}"; then
+            echo "FAIL (proven-safe arithmetic still emitted a runtime check — elision regressed)"
+            FAIL=$((FAIL + 1))
+        else
+            echo "PASS (runtime overflow check elided — proven safe at compile time)"
+            PASS=$((PASS + 1))
+            show_evidence
+        fi
+    else
+        echo "FAIL (unexpected compile error)"
+        cat "/tmp/z3_out_${elide_case}.txt" | head -5
+        FAIL=$((FAIL + 1))
+    fi
+done
+
+# ── The three cases elision must decline: unconstrained operands, a
+# provable violation (never a hard error -- see the fixture's own
+# header), and an untranslatable operand. All three must compile clean
+# with the runtime check still present, identical to pre-elision
+# behavior ──
+for keep_case in overflow_check_kept_unconstrained overflow_check_kept_provable_violation overflow_elide_untranslatable_operand; do
+    echo -n "  test_${keep_case}: "
+    if "$SALTC" "$SCRIPT_DIR/test_${keep_case}.salt" \
+        --lib --disable-alias-scopes -o "/tmp/z3_test_${keep_case}" > "/tmp/z3_out_${keep_case}.txt" 2>&1; then
+        if grep -q '__salt_overflow_panic' "/tmp/z3_test_${keep_case}"; then
+            echo "PASS (runtime check correctly kept, not over-elided)"
+            PASS=$((PASS + 1))
+        else
+            echo "FAIL (check missing — elision fired when it should have declined)"
+            FAIL=$((FAIL + 1))
+        fi
+    else
+        echo "FAIL (unexpected compile error — should compile clean with a runtime check)"
+        cat "/tmp/z3_out_${keep_case}.txt" | head -5
+        FAIL=$((FAIL + 1))
+    fi
+done
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then

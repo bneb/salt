@@ -520,7 +520,27 @@ The compiler verifies two properties:
 
 If either check fails, the compiler reports a counterexample. Invariants that constrain an index variable to a known range enable Z3 to prove array bounds safety inside while loops — the same way `for`-loop induction variables do automatically.
 
-### 7.5 Limitations
+### 7.5 Arithmetic Overflow
+
+Outside release builds (and inside any function marked to force it), every `+`/`-`/`*` on a fixed-width integer type is runtime-checked by default: the operation is redone in a wider type, truncated back, and re-widened; a mismatch means information was lost, and the program traps rather than silently wrapping. This is unconditional today — it costs a real branch and a wider redundant computation on every checked arithmetic operation, whether or not that operation could ever actually overflow.
+
+Before emitting that check, the compiler now first attempts to prove it unnecessary, the same proof-or-panic shape used for `requires`/`ensures` everywhere else in this section, applied to arithmetic itself as an implicit contract rather than one the programmer wrote out. Concretely: translate both operands to Z3, assert their type's range (plus this function's own `requires` clauses, so a stated precondition can narrow the operands enough to prove safety that the bare types alone don't establish), and check whether the operation's true mathematical result can fall outside the target type's range. UNSAT — impossible — elides the runtime check entirely, zero cost. Anything else (a real counterexample, an undecidable result, or an operand the translator can't handle) keeps the exact runtime check that would have been emitted anyway.
+
+This is deliberately a pure optimization, never a new way to reject code: a proven violation is treated identically to an undecidable one. An unconstrained `a + b` has a trivial counterexample (the type's own max, plus one) for nearly any function that doesn't bound its inputs, so promoting "Z3 found a way this could overflow" to a compile error would turn most ordinary, unannotated arithmetic in the language into a compile failure. Only a genuine, explicit `requires`/`ensures` claim gets that treatment elsewhere in this document; an operation's implicit non-overflow obligation does not.
+
+```salt
+pub fn safe_add(a: i32, b: i32) -> i32
+    requires(a >= 0 && a <= 100 && b >= 0 && b <= 100)
+{ return a + b; }  // sum is at most 200 -- runtime check proven unnecessary, elided
+
+pub fn unsafe_add(a: i32, b: i32) -> i32 { return a + b; }  // no bound on a, b -- check kept, unchanged from before this feature existed
+```
+
+Cost was measured, not assumed, before this shipped: nonlinear arithmetic (multiplication of two unconstrained variables) does not exhibit the scaling cliff this session found for bitwise operators (Int↔BV↔Int conversion specifically) — a 25x larger proof budget on the same multiplication query showed no blowup, same answer, same order of magnitude of time. The one real, consistently-reproduced cost found: a function already exercising compound nonlinear reasoning (`x*x + y*y`, in a fixture literally named for being a hard case) went from ~45ms to ~1.3-1.9s once its arithmetic sub-expressions also got elision attempts — real and attributable, but bounded to that narrow class of already-complex expressions, confined entirely to debug/checked builds (release builds never attempt elision, since they never emit the check it would be eliding), and not visible as a whole-suite regression across repeated full runs (which showed no aggregate slowdown outside ordinary run-to-run rlimit timing variance). If this cost profile becomes a practical problem on real, arithmetic-heavy code, the documented next step is a cheap interval/range analysis pass that filters out the obviously-safe cases before ever invoking Z3 — matching how SPARK's `gnatprove` avoids full SMT dispatch on every operation — rather than accepting a Z3 round-trip per arithmetic operation as the steady state.
+
+Only this function's own `requires` clauses are consulted for now (`caller_preconditions`); `path_conditions`, `loop_assumptions`, and `scoped_facts` use the identical translate-and-assert pattern elsewhere in `VerificationEngine::verify` and would extend elision the same way, just not needed for the cases this was built to cover yet. See `try_elide_overflow_check` in `verification/mod.rs`, and `test_overflow_elide_add_proved.salt` / `_sub_proved` / `_mul_proved` / `_unsigned_proved` / `test_overflow_check_kept_unconstrained.salt` / `_provable_violation` / `test_overflow_elide_untranslatable_operand.salt`.
+
+### 7.6 Limitations
 
 Contracts cannot prove all properties. Known limitations of the current implementation:
 

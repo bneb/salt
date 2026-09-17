@@ -991,8 +991,9 @@ impl VerificationEngine {
 /// derivable. This was previously inlined into assert_type_bounds and applied
 /// ONLY to the direct arguments of one call-site check; factored out so the
 /// same true-by-construction facts can be asserted anywhere a typed Z3 value
-/// is in scope (see assert_scope_type_bounds).
-fn assert_bound_for_type<'ctx>(
+/// is in scope (see assert_scope_type_bounds, and try_elide_overflow_check
+/// below which reuses it to bound arithmetic operands).
+pub(crate) fn assert_bound_for_type<'ctx>(
     ctx: &mut LoweringContext<'_, '_>,
     val: &crate::z3_shim::ast::Int<'ctx>,
     ty: &Type,
@@ -1226,6 +1227,111 @@ fn assert_scope_type_bounds<'ctx>(
         let val = crate::z3_shim::ast::Int::new_const(ctx.z3_ctx, name);
         assert_bound_for_type(ctx, &val, &ty, solver);
     }
+}
+
+/// The (min, max) an integer TYPE guarantees -- same cases as
+/// assert_bound_for_type, but returned rather than asserted, since
+/// try_elide_overflow_check needs the bound as a value to compare an
+/// operation's result against, not just as a fact about one variable.
+/// Kept as a small, separate duplication of the same constants rather
+/// than refactoring assert_bound_for_type's signature to return them:
+/// lower risk to an already-tested function, and the numbers themselves
+/// never change independent of the type system.
+fn type_min_max<'ctx>(ctx: &LoweringContext<'_, 'ctx>, ty: &Type) -> Option<(crate::z3_shim::ast::Int<'ctx>, crate::z3_shim::ast::Int<'ctx>)> {
+    let mk = |v: i64| crate::z3_shim::ast::Int::from_i64(ctx.z3_ctx, v);
+    // Same unwrap as assert_bound_for_type: Atomic<T>'s MLIR type is T's
+    // own (atomicity is a load/store property, not a distinct value
+    // representation), so emit_overflow_check's widen-check already
+    // fires for atomic arithmetic -- this needs to match, or atomics
+    // would silently never even be considered for elision.
+    let ty = match ty {
+        Type::Atomic(inner) => inner.as_ref(),
+        other => other,
+    };
+    match ty {
+        Type::U8 => Some((mk(0), mk(255))),
+        Type::U16 => Some((mk(0), mk(65535))),
+        Type::U32 => Some((mk(0), mk(4294967295))),
+        Type::U64 | Type::Usize => Some((mk(0), crate::z3_shim::ast::Int::from_u64(ctx.z3_ctx, u64::MAX))),
+        Type::I8 => Some((mk(-128), mk(127))),
+        Type::I16 => Some((mk(-32768), mk(32767))),
+        Type::I32 => Some((mk(i32::MIN as i64), mk(i32::MAX as i64))),
+        Type::I64 => Some((mk(i64::MIN), mk(i64::MAX))),
+        _ => None,
+    }
+}
+
+/// Attempts to prove that an Add/Sub/Mul on a fixed-width integer type
+/// cannot overflow, so emit_overflow_check's runtime widen-check can be
+/// skipped entirely -- zero-cost, not a weaker check. Pure optimization,
+/// never a rejection: if this can't prove safety (translation failure,
+/// Z3 finds a real counterexample, or the budget runs out undecided),
+/// the caller keeps emitting the exact runtime check it always has.
+/// There is deliberately no "provably overflows -> hard error" branch --
+/// an ordinary, unconstrained `a + b` has a trivial counterexample
+/// (i32::MAX + 1) for nearly any function that doesn't happen to state a
+/// requires bounding its inputs, so treating a found counterexample as a
+/// compile error would turn most ordinary arithmetic in the language
+/// into a compile failure. A provable overflow is treated exactly like
+/// an undecidable one: the existing runtime check stays, silently, same
+/// as if this function had never run.
+///
+/// Only consults this function's own `requires` clauses for now
+/// (caller_preconditions) -- path_conditions, loop_assumptions and
+/// scoped_facts are the same translate-and-assert pattern used in verify
+/// and verify_postcondition above and would extend this the same way,
+/// just not needed for the cases this was built to cover yet.
+pub(crate) fn try_elide_overflow_check(
+    ctx: &mut LoweringContext<'_, '_>,
+    b: &syn::ExprBinary,
+    common_ty: &Type,
+    local_vars: &HashMap<String, (Type, crate::codegen::context::LocalKind)>,
+) -> bool {
+    let Some((type_min, type_max)) = type_min_max(ctx, common_ty) else { return false };
+
+    let Ok(lhs_z3) = crate::codegen::expr::translate_to_z3(ctx, &b.left, local_vars) else { return false };
+    let Ok(rhs_z3) = crate::codegen::expr::translate_to_z3(ctx, &b.right, local_vars) else { return false };
+
+    let solver = crate::z3_shim::Solver::new(ctx.z3_ctx);
+    let mut solver_params = crate::z3_shim::Params::new(ctx.z3_ctx);
+    solver_params.set_u32("rlimit", Z3_PROOF_RLIMIT);
+    solver.set_params(&solver_params);
+
+    assert_bound_for_type(ctx, &lhs_z3, common_ty, &solver);
+    assert_bound_for_type(ctx, &rhs_z3, common_ty, &solver);
+
+    let sym_ctx = SymbolicContext::new(ctx.z3_ctx);
+    let caller_pcs = ctx.emission.caller_preconditions.clone();
+    for pc in &caller_pcs {
+        let Some(actual_pc) = unwrap_contract_expr(pc) else { continue };
+        if let Ok(z3_pc) = crate::codegen::expr::translate_bool_to_z3(ctx, actual_pc, local_vars, &sym_ctx) {
+            solver.assert(&z3_pc);
+        }
+    }
+
+    let result = match b.op {
+        syn::BinOp::Add(_) => &lhs_z3 + &rhs_z3,
+        syn::BinOp::Sub(_) => &lhs_z3 - &rhs_z3,
+        syn::BinOp::Mul(_) => &lhs_z3 * &rhs_z3,
+        _ => return false,
+    };
+
+    // Negation of "no overflow": does a satisfying assignment exist
+    // where the operation's true mathematical result falls outside the
+    // type's range? UNSAT means no such assignment exists anywhere in
+    // the search space -- overflow is impossible, not just untested.
+    let out_of_range = crate::z3_shim::ast::Bool::or(ctx.z3_ctx, &[
+        &result.lt(&type_min),
+        &result.gt(&type_max),
+    ]);
+    solver.assert(&out_of_range);
+
+    *ctx.total_checks += 1;
+    let elided = matches!(solver.check(), crate::z3_shim::SatResult::Unsat);
+    if elided {
+        *ctx.elided_checks += 1;
+    }
+    elided
 }
 
 /// Emit a runtime assertion for an `ensures` clause that Z3 could not

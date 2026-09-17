@@ -453,7 +453,12 @@ pub fn emit_binary(ctx: &mut LoweringContext, out: &mut String, b: &syn::ExprBin
             ctx.emit_binop(out, &res, &op, &lhs_prom, &rhs_prom, &mlir_ty);
         }
         if !is_fp && (ctx.config.debug_overflow_checks || ctx.emission.in_checked_fn) && matches!(b.op, syn::BinOp::Add(_) | syn::BinOp::Sub(_) | syn::BinOp::Mul(_)) {
-            emit_overflow_check(ctx, out, &b.op, &lhs_prom, &rhs_prom, &mlir_ty, &common_ty);
+            // Try to prove the runtime check unnecessary before paying for
+            // it -- zero-cost when it can, exactly today's runtime check
+            // when it can't (never a rejection; see try_elide_overflow_check).
+            if !crate::codegen::verification::try_elide_overflow_check(ctx, b, &common_ty, local_vars) {
+                emit_overflow_check(ctx, out, &b.op, &lhs_prom, &rhs_prom, &mlir_ty, &common_ty);
+            }
         }
         Ok((res.to_string(), common_ty))
     }
