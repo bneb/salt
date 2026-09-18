@@ -1,0 +1,38 @@
+// Z3 Contract Test: a pointer tainted at arena-depth in one function
+// must not contaminate an unrelated, untainted pointer of the same
+// variable name in another function.
+// Expected: PASS
+//
+// Closes out the audit flagged (and left dangling) earlier this
+// session: arena_escape_tracker was noted as structurally identical to
+// the confirmed pointer_tracker bug (a HashMap keyed by plain, reusable
+// variable name) but never actually tested. Traced through emit_fn
+// (codegen/mod.rs) and confirmed it is already swapped for a fresh
+// instance per function
+// (ctx.arena_escape_tracker.replace(ArenaEscapeTracker::new())),
+// matching ownership_tracker/malloc_tracker/pointer_tracker. Verified
+// directly, not just by reading the swap: with temporary tracing,
+// second()'s `p` (an ordinary malloc'd pointer, never registered with
+// any arena) showed check_return_escape resolving taint.get("p") to
+// None -- not first()'s leftover depth-2 arena taint on the same name.
+// A tracker that leaked state the way pointer_tracker originally did
+// would have wrongly rejected this return.
+package test_cross_fn_arena_escape_proved
+
+use std.core.ptr;
+use std.core.arena;
+
+extern fn malloc(size: i64) -> Ptr<i32>;
+
+pub fn first() -> i32 {
+    let arena = Arena::new(4096);
+    let p = arena.alloc_array::<i32>(4);
+    return 0;
+}
+
+pub fn second() -> Ptr<i32> {
+    let arena = Arena::new(4096);
+    let q = arena.alloc_array::<i32>(4);
+    let p: Ptr<i32> = malloc(4);
+    return p;
+}

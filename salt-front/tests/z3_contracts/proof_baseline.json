@@ -1,7 +1,7 @@
 {
   "aggregate": {
     "proven": 100,
-    "total": 221
+    "total": 222
   },
   "rows": [
     {
@@ -75,9 +75,19 @@
       "total": 8
     },
     {
+      "name": "test_cross_fn_arena_escape_proved.salt",
+      "proven": 0,
+      "total": 1
+    },
+    {
       "name": "test_cross_fn_chain.salt",
       "proven": 2,
       "total": 3
+    },
+    {
+      "name": "test_cross_fn_malloc_tracker_proved.salt",
+      "proven": 0,
+      "total": 0
     },
     {
       "name": "test_cross_fn_symbolic_tracker_proved.salt",

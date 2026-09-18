@@ -811,6 +811,32 @@ Contracts cannot prove all properties. Known limitations of the current implemen
   permanently discard the outer call's in-progress state, where
   swap-and-restore recovers it.
 
+  The "already correctly scoped" claim above for `malloc_tracker` and
+  `arena_escape_tracker` sat unverified by an actual adversarial test for
+  a while -- noted as structurally identical to the `pointer_tracker`
+  bug and flagged for the same two-function testing, but the audit
+  moved on (to the `check_deref` swallowing bug, a different discovery
+  entirely) before it happened. Closed out later the same session:
+  confirmed by tracing both with temporary instrumentation rather than
+  trusting the swap-restore code alone. For `malloc_tracker`,
+  `second()`'s own malloc/free pair is unaffected by `first()` leaking
+  the same variable name (`test_cross_fn_malloc_tracker_proved.salt`),
+  and the leak itself is still caught despite that unrelated reuse
+  (`test_cross_fn_malloc_leak_still_caught.salt`) -- a narrower
+  adversarial angle than `pointer_tracker`'s bare-alias gap, since
+  `malloc_tracker.track()` unconditionally overwrites its key regardless
+  of scoping, so a leaked (never freed or returned) entry is the only
+  state shape that could conceivably survive into another function's
+  fresh activity. For `arena_escape_tracker`
+  (`test_cross_fn_arena_escape_proved.salt`), traced directly: a plain
+  malloc'd pointer named `p` in `second()`, never registered with any
+  arena, resolved `taint.get("p")` to `None` in `check_return_escape` --
+  not `first()`'s leftover depth-2 arena taint on the same name, which a
+  tracker that leaked state the way `pointer_tracker` originally did
+  would have produced instead, wrongly rejecting the return. Also added
+  `test_arena_escape_direct_rejected.salt`: arena escape analysis had no
+  coverage at all in this suite before now, cross-function or otherwise.
+
   Two adjacent, separate findings surfaced while constructing the
   adversarial test above; both since resolved. (1) `process_fn_arguments`
   marks every pointer-typed parameter `Valid` on function entry

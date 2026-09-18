@@ -1264,6 +1264,65 @@ for keep_case in overflow_check_kept_unconstrained overflow_check_kept_provable_
     fi
 done
 
+# ── malloc_tracker cross-function audit: closes the thread left dangling
+# since the pointer_tracker fix -- confirmed already correctly scoped
+# (swap-and-restore in emit_fn), locked in as a permanent regression
+# guard rather than left as an unverified commit-message claim ──
+echo -n "  test_cross_fn_malloc_tracker_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_cross_fn_malloc_tracker_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_cfmt_proved > /tmp/z3_out_cfmt_proved.txt 2>&1; then
+    echo "PASS (same-named malloc/free in two functions did not contaminate each other)"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL (unexpected compile error)"
+    cat /tmp/z3_out_cfmt_proved.txt | head -5
+    FAIL=$((FAIL + 1))
+fi
+
+echo -n "  test_cross_fn_malloc_leak_still_caught: "
+if ! "$SALTC" "$SCRIPT_DIR/test_cross_fn_malloc_leak_still_caught.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_cfml_rejected > /tmp/z3_out_cfml_rejected.txt 2>&1; then
+    if grep -q 'Memory Leak Detected' /tmp/z3_out_cfml_rejected.txt; then
+        echo "PASS (leak in first() still caught despite second()'s unrelated reuse of the name)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_cfml_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (a genuine leak was ACCEPTED — leak detection defeated by unrelated name reuse)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── arena_escape_tracker: same audit, same closing-the-loop rationale ──
+echo -n "  test_arena_escape_direct_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_arena_escape_direct_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_aedr > /tmp/z3_out_aedr.txt 2>&1; then
+    if grep -q 'Arena escape violation' /tmp/z3_out_aedr.txt; then
+        echo "PASS (returning a local-arena pointer correctly rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_aedr.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (a genuine arena escape was ACCEPTED)"
+    FAIL=$((FAIL + 1))
+fi
+
+echo -n "  test_cross_fn_arena_escape_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_cross_fn_arena_escape_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_cfae_proved > /tmp/z3_out_cfae_proved.txt 2>&1; then
+    echo "PASS (unrelated function's leftover arena taint did not leak)"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL (unexpected compile error — cross-function arena taint leak reintroduced)"
+    cat /tmp/z3_out_cfae_proved.txt | head -5
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then
