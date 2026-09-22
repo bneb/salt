@@ -2,8 +2,7 @@
 // Hello, World! — Your first Salt program
 // =============================================================================
 // Build:
-//   salt-front examples/hello_world.salt -o hello
-//   ./hello
+//   saltc examples/hello_world.salt --lib -o /dev/null
 // =============================================================================
 
 package main

@@ -28,7 +28,7 @@ for mod in "${DEPS[@]}"; do
 done
 
 echo "🔧 [HPACK_Diff] Compiling merged Salt source..."
-"$SALT_FRONT/target/release/salt-front" "$MERGED_SALT" --release > "$TMP_DIR/hpack_diff.mlir"
+"$SALT_FRONT/target/release/saltc" "$MERGED_SALT" --release > "$TMP_DIR/hpack_diff.mlir"
 
 echo "🔧 [HPACK_Diff] Optimizing MLIR..."
 mlir-opt "$TMP_DIR/hpack_diff.mlir" --allow-unregistered-dialect \

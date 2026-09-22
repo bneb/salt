@@ -130,7 +130,7 @@ fn compiler_version_hash(project_dir: &Path) -> String {
         .unwrap_or_else(|_| project_dir.to_path_buf());
 
     loop {
-        let bin = dir.join("salt-front/target/release/salt-front");
+        let bin = dir.join("salt-front/target/release/saltc");
         if bin.exists() {
             if let Ok(data) = std::fs::read(&bin) {
                 let mut h = Sha256::new();
@@ -145,7 +145,7 @@ fn compiler_version_hash(project_dir: &Path) -> String {
             break;
         }
 
-        let debug_bin = dir.join("salt-front/target/debug/salt-front");
+        let debug_bin = dir.join("salt-front/target/debug/saltc");
         if debug_bin.exists() {
             if let Ok(data) = std::fs::read(&debug_bin) {
                 let mut h = Sha256::new();

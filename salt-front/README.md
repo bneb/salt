@@ -59,9 +59,9 @@ cargo build --release
 # Run all tests
 cargo test
 
-# Compile a Salt program
-./target/release/salt-front ../examples/hello_world.salt -o hello
-DYLD_LIBRARY_PATH=/opt/homebrew/lib ../hello
+# Compile a Salt program (verification runs by default; --lib skips
+# requiring a main entry point)
+./target/release/saltc ../examples/hello_world.salt --lib -o /dev/null
 ```
 
 > [!TIP]

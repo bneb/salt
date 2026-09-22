@@ -40,10 +40,12 @@ Salt compiles through a 4-stage pipeline: `salt-front` → `mlir-opt` → `mlir-
 
 ### Stage 1: Salt → MLIR
 
-The Salt compiler frontend emits textual MLIR to stdout:
+The Salt compiler frontend emits textual MLIR to a file, never to stdout
+— always pass `-o` explicitly (omitting it doesn't error, it silently
+writes `out.mlir` into the current directory instead):
 
 ```bash
-./salt-front/target/debug/salt-front hello.salt > /tmp/salt_build/hello.mlir
+./salt-front/target/debug/saltc hello.salt -o /tmp/salt_build/hello.mlir
 ```
 
 ### Stage 2: MLIR Lowering
@@ -89,4 +91,4 @@ echo "Exit code: $?"
 
 ## Next Steps
 
-Explore the [**Region Memory Model**](../philosophy/region-model.md) to understand how Salt ensures safety for the KeuOS kernel.
+Explore the [**Arena Safety Model**](../deep-dives/arena-safety.md) to understand how Salt ensures safety for the KeuOS kernel.

@@ -127,7 +127,7 @@ run_basalt_benchmark() {
             grep -v "^package " "$PROJECT_ROOT/$f" | grep -v "^use basalt\." >> "$COMBINED"
         done
 
-        "$SALT_FRONT/target/release/salt-front" "$COMBINED" > "$LOCAL_TMP/basalt.mlir"
+        "$SALT_FRONT/target/release/saltc" "$COMBINED" > "$LOCAL_TMP/basalt.mlir"
 
         mlir-opt "$LOCAL_TMP/basalt.mlir" \
             --allow-unregistered-dialect \
