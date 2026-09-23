@@ -67,6 +67,7 @@ pub(crate) fn apply_ensures_to_solver(
         return;
     }
     let sym_ctx = crate::codegen::verification::SymbolicContext::new(ctx.z3_ctx);
+    #[cfg(feature = "z3-backend")]
     use crate::z3_shim::ast::Ast;
 
     let result_name = syn::Ident::new(&format!("callres_{}", ctx.next_id()), proc_macro2::Span::call_site());

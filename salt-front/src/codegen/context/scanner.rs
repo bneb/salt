@@ -463,6 +463,7 @@ fn z3_prove_atomic_alignment(
     struct_name: &str,
     byte_offset: usize,
 ) -> Result<(), String> {
+    #[cfg(feature = "z3-backend")]
     use crate::z3_shim::ast::Ast;
     let z3_cfg = crate::z3_shim::Config::new();
     let z3_ctx = crate::z3_shim::Context::new(&z3_cfg);

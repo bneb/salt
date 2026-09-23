@@ -815,6 +815,7 @@ impl<'a> CodegenContext<'a> {
     }
 
     fn verify_field_atomic(&self, s_name: &str, f: &crate::grammar::FieldDef, byte_offset: usize) -> Result<(), String> {
+        #[cfg(feature = "z3-backend")]
         use crate::z3_shim::ast::Ast;
         let has_atomic = f.attributes.iter().any(|a| a.name == "atomic");
         if !has_atomic { return Ok(()); }
@@ -844,6 +845,7 @@ impl<'a> CodegenContext<'a> {
     }
 
     fn verify_field_align(&self, s_name: &str, f: &crate::grammar::FieldDef, mut byte_offset: usize) -> Result<usize, String> {
+        #[cfg(feature = "z3-backend")]
         use crate::z3_shim::ast::Ast;
         let align_value = crate::grammar::attr::extract_align(&f.attributes);
         if let Some(n) = align_value {
@@ -885,6 +887,7 @@ impl<'a> CodegenContext<'a> {
     }
 
     fn verify_struct_atomic(&self, s_name: &str, attributes: &[crate::grammar::attr::Attribute], byte_offset: usize) -> Result<(), String> {
+        #[cfg(feature = "z3-backend")]
         use crate::z3_shim::ast::Ast;
         let has_struct_atomic = attributes.iter().any(|a| a.name == "atomic");
         if !has_struct_atomic { return Ok(()); }
@@ -908,6 +911,7 @@ impl<'a> CodegenContext<'a> {
     }
 
     fn verify_struct_packed(&self, s_name: &str, attributes: &[crate::grammar::attr::Attribute], byte_offset: usize, fields: &[crate::grammar::FieldDef]) -> Result<(), String> {
+        #[cfg(feature = "z3-backend")]
         use crate::z3_shim::ast::Ast;
         let has_packed = attributes.iter().any(|a| a.name == "packed");
         if !has_packed { return Ok(()); }

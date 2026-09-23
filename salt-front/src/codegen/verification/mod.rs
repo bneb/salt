@@ -41,6 +41,7 @@ pub use proof_witness::{ProofHint, VerificationFailure};
 use crate::codegen::context::LoweringContext;
 use crate::types::Type;
 use std::collections::HashMap;
+#[cfg(feature = "z3-backend")]
 use crate::z3_shim::ast::Ast;
 use syn::spanned::Spanned;
 
@@ -597,6 +598,7 @@ impl VerificationEngine {
                 crate::codegen::expr::translate_to_z3(ctx, &store.index_expr, local_vars),
                 crate::codegen::expr::translate_to_z3(ctx, &store.value_expr, local_vars),
             ) {
+                #[cfg(feature = "z3-backend")]
                 use crate::z3_shim::ast::Ast;
                 // Update assertion: new_func(store_idx) == store_val
                 let new_at_idx = new_func.apply(&[&s_idx]);
@@ -653,6 +655,7 @@ impl VerificationEngine {
 
         let sym_ctx = SymbolicContext::new(ctx.z3_ctx);
         let mut verified = false;
+        #[cfg(feature = "z3-backend")]
         use crate::z3_shim::ast::Ast;
 
         // Create a fresh solver with a bounded proof budget for postcondition proofs

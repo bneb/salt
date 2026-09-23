@@ -9,7 +9,9 @@
 //! The Coroner's Audit runs BEFORE the function-level solver.pop(), ensuring
 //! all path-sensitive assertions are visible to Z3.
 
-use crate::z3_shim::ast::{Ast, Int, Bool};
+use crate::z3_shim::ast::{Int, Bool};
+#[cfg(feature = "z3-backend")]
+use crate::z3_shim::ast::Ast;
 use std::collections::HashMap;
 
 /// The ownership state of a tracked resource.

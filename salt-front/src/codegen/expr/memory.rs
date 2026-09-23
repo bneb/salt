@@ -1087,6 +1087,7 @@ pub fn translate_to_z3<'a, 'ctx>(
                 // matching the 0/1 encoding used for bool literals above.
                 syn::BinOp::Eq(_) | syn::BinOp::Ne(_) | syn::BinOp::Lt(_)
                 | syn::BinOp::Le(_) | syn::BinOp::Gt(_) | syn::BinOp::Ge(_) => {
+                    #[cfg(feature = "z3-backend")]
                     use crate::z3_shim::ast::Ast;
                     let cond = match b.op {
                         syn::BinOp::Eq(_) => lhs._eq(&rhs),
@@ -1165,6 +1166,7 @@ pub fn translate_to_z3<'a, 'ctx>(
                         translate_to_z3(ctx, &store.index_expr, local_vars),
                         translate_to_z3(ctx, &store.value_expr, local_vars),
                     ) {
+                        #[cfg(feature = "z3-backend")]
                         use crate::z3_shim::ast::Ast;
                         let new_at_idx = new_func.apply(&[&s_idx]);
                         if let Some(new_int) = new_at_idx.as_int() {
@@ -1363,6 +1365,7 @@ fn translate_z3_exists<'a, 'ctx>(
         if hi_val <= lo_val {
             return Ok(crate::z3_shim::ast::Bool::from_bool(ctx.z3_ctx, false));
         }
+        #[cfg(feature = "z3-backend")]
         use crate::z3_shim::ast::Ast;
         let mut disjuncts: Vec<crate::z3_shim::ast::Bool<'_>> = Vec::new();
         for val in lo_val..hi_val {
@@ -1434,6 +1437,7 @@ fn translate_z3_forall<'a, 'ctx>(
         if hi_val <= lo_val {
             return Ok(crate::z3_shim::ast::Bool::from_bool(ctx.z3_ctx, true));
         }
+        #[cfg(feature = "z3-backend")]
         use crate::z3_shim::ast::Ast;
         let mut conjuncts: Vec<crate::z3_shim::ast::Bool<'_>> = Vec::new();
         for val in lo_val..hi_val {
@@ -1469,6 +1473,7 @@ pub fn translate_bool_to_z3<'a, 'ctx>(
     local_vars: &HashMap<String, (Type, LocalKind)>,
     sym_ctx: &crate::codegen::verification::SymbolicContext<'a>
 ) -> Result<crate::z3_shim::ast::Bool<'a>, String> {
+    #[cfg(feature = "z3-backend")]
     use crate::z3_shim::ast::Ast;
     match expr {
         syn::Expr::Binary(b) => {
@@ -1527,6 +1532,7 @@ pub fn translate_bool_to_z3<'a, 'ctx>(
         // and was skipped without a word. Bools carry as 0/1 in the integer
         // encoding, so the predicate is "not zero".
         syn::Expr::Path(_) => {
+            #[cfg(feature = "z3-backend")]
             use crate::z3_shim::ast::Ast;
             let as_int = translate_to_z3(ctx, expr, local_vars)?;
             let zero = ctx.mk_int(0);

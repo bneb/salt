@@ -203,6 +203,7 @@ fn emit_hoisted_local_init(ctx: &mut LoweringContext, out: &mut String, local: &
 
         if !ctx.config.no_verify && ty.is_integer() {
             if let Ok(z3_val) = crate::codegen::expr::translate_to_z3(ctx, &init.expr, local_vars) {
+                #[cfg(feature = "z3-backend")]
                 use crate::z3_shim::ast::Ast;
                 let z3_var = ctx.mk_var(name);
                 ctx.z3_solver.assert(&z3_var._eq(&z3_val));
@@ -273,6 +274,7 @@ fn assert_local_lit_int_in_z3(ctx: &mut LoweringContext, name: &str, init: &Opti
     let init_expr = match init { Some(i) => &i.expr, None => return };
     let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(li), .. }) = &**init_expr else { return; };
     let Ok(int_val) = li.base10_parse::<i64>() else { return; };
+    #[cfg(feature = "z3-backend")]
     use crate::z3_shim::ast::Ast;
     let z3_var = ctx.mk_var(name);
     let z3_val = ctx.mk_int(int_val);
@@ -293,6 +295,7 @@ fn assert_local_lit_int_in_z3(ctx: &mut LoweringContext, name: &str, init: &Opti
 fn assert_local_expr_in_z3(ctx: &mut LoweringContext, name: &str, init: &Option<syn::LocalInit>, local_vars: &HashMap<String, (Type, LocalKind)>) {
     let Some(init) = init else { return };
     let Ok(z3_val) = crate::codegen::expr::translate_to_z3(ctx, &init.expr, local_vars) else { return };
+    #[cfg(feature = "z3-backend")]
     use crate::z3_shim::ast::Ast;
     let z3_var = ctx.mk_var(name);
     ctx.z3_solver.assert(&z3_var._eq(&z3_val));

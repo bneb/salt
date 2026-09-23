@@ -13,6 +13,7 @@
 //! returns a value, Z3 receives the invariant that the return value
 //! is <= buf.length, enabling downstream slice elision.
 
+#[cfg(feature = "z3-backend")]
 use crate::z3_shim::ast::Ast;
 
 /// Result of a Z3 slice verification attempt
