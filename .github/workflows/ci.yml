@@ -23,8 +23,85 @@ jobs:
         run: SALTC=./target/release/saltc bash tests/z3_contracts/run_tests.sh
         working-directory: salt-front
       - name: Proof-ratio gate
-        run: SALTC=./target/release/saltc bash scripts/proof_gate.sh
+        run: SALTC=./target/release/saltc bash ../scripts/proof_gate.sh
+        working-directory: salt-front
         env:
           MIN_PROVEN_PCT: "45"
       - name: MLIR determinism gate
-        run: SALTC=./target/release/saltc bash scripts/mlir_determinism_gate.sh
+        run: SALTC=./target/release/saltc bash ../scripts/mlir_determinism_gate.sh
+        working-directory: salt-front
+      - name: Swallowed-error gate
+        run: bash scripts/no_swallowed_errors_gate.sh
+      - name: Spelling-goldens gate
+        run: SALTC=./target/release/saltc bash ../scripts/spelling_goldens_gate.sh
+        working-directory: salt-front
+
+  # salt-front compiled WITHOUT the z3-backend feature -- the path used by
+  # tools/salt-wasm. Exercised here as its own job (rather than assumed) because
+  # this configuration had never been built in CI before 2026-09; it had quietly
+  # bitrotted (dead z3-sys dependency plus 9 compile errors in z3_stub.rs).
+  salt-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - name: Build
+        run: cargo build --release --target wasm32-unknown-unknown
+        working-directory: tools/salt-wasm
+      - name: Clippy
+        run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
+        working-directory: tools/salt-wasm
+
+  salt-lsp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install Z3
+        run: sudo apt-get update && sudo apt-get install -y libz3-dev
+      - name: Build
+        run: cargo build --release
+        working-directory: tools/salt-lsp
+      - name: Test
+        run: cargo test --release
+        working-directory: tools/salt-lsp
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+        working-directory: tools/salt-lsp
+
+  # No Clippy step: cargo clippy -D warnings currently fails on a
+  # pre-existing dead-code finding (local_path in src/manifest.rs, only
+  # called from a #[cfg(test)] block in this bin-only crate) that needs a
+  # real look, not a rushed deletion -- tracked separately, not papered
+  # over here.
+  salt-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --release
+        working-directory: tools/salt-build
+      - name: Test
+        run: cargo test --release
+        working-directory: tools/salt-build
+
+  # No Clippy step: cargo clippy -D warnings currently fails on 10
+  # pre-existing dead-code findings (unused fns/fields) that need a real
+  # look, not a rushed deletion -- tracked separately, not papered over here.
+  sp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --release
+        working-directory: tools/sp
+      - name: Test
+        run: cargo test --release
+        working-directory: tools/sp

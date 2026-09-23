@@ -78,7 +78,7 @@ fn main() {
     }
 }
 
-fn cmd_build(path: &PathBuf, release: bool) -> Result<(), String> {
+fn cmd_build(path: &Path, release: bool) -> Result<(), String> {
     let manifest_path = path.join("salt.toml");
     let manifest = manifest::load(&manifest_path)?;
 
@@ -102,7 +102,7 @@ fn cmd_build(path: &PathBuf, release: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn cmd_run(path: &PathBuf, args: &[String]) -> Result<(), String> {
+fn cmd_run(path: &Path, args: &[String]) -> Result<(), String> {
     cmd_build(path, false)?;
 
     let manifest_path = path.join("salt.toml");
@@ -137,7 +137,7 @@ fn find_test_files(path: &Path, filter: Option<&str>) -> Result<Vec<PathBuf>, St
     Ok(files)
 }
 
-fn cmd_test(path: &PathBuf, filter: Option<&str>) -> Result<(), String> {
+fn cmd_test(path: &Path, filter: Option<&str>) -> Result<(), String> {
     let manifest = manifest::load(&path.join("salt.toml"))?;
     let test_files = find_test_files(path, filter)?;
     if test_files.is_empty() {

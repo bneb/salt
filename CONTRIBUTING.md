@@ -229,9 +229,12 @@ Each unsafe operation needs a `requires` clause. The engine uses Weakest Precond
    ```
 
 4. **CI checks** (`.github/workflows/ci.yml`):
-   - `cargo build --release`
-   - `cargo test --release`
-   - `cargo clippy -- -D warnings`
+   - `build-and-test` (salt-front): `cargo build --release`, `cargo test --release`,
+     `cargo clippy -- -D warnings`, Z3 contracts, proof-ratio gate (45% proven floor),
+     MLIR determinism gate, swallowed-error gate, spelling-goldens gate.
+   - `salt-wasm`, `salt-lsp`, `salt-build`, `sp` (`tools/*`): build + test, plus
+     clippy for the crates that are currently clean (see each job's comments in
+     `ci.yml` for the ones that aren't yet).
 
 5. **Atomic changes:** Public API changes must update the corresponding `docs/` spec files in the same PR.
 
