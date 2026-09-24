@@ -2,9 +2,19 @@
 //!
 //! Handles path dependencies and version dependencies resolved from the
 //! local publish directory (~/.salt/publish/).
+//!
+//! Resolution is greedy and never backtracks. The graph is walked
+//! depth-first in sorted order, and each package is selected at its first
+//! visit from the requirements known then: the visiting one, and the root
+//! manifest's requirement on the package, which is known from the start, so
+//! a version pinned there always holds. A path requirement selects its
+//! directory; otherwise the highest published version they all accept is
+//! selected. Every later requirement must accept that selection, or
+//! resolution fails with a conflict.
 
 use crate::manifest::{Manifest, Dependency};
-use std::collections::HashSet;
+use crate::semver::{self, Constraint, Version};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Resolved dependency information.
@@ -30,12 +40,12 @@ pub fn resolve(
 ) -> Result<(Vec<PathBuf>, Vec<PathBuf>, Vec<ResolvedDep>), String> {
     let mut build_order = Vec::new();
     let mut search_roots = Vec::new();
-    let mut resolved_names = HashSet::new();
     let mut resolved_deps = Vec::new();
+    let mut resolver = Resolver::new(manifest, project_dir)?;
 
     // Resolve each dependency
-    for (dep_name, dep) in &manifest.dependencies {
-        let resolved = resolve_single(dep_name, dep, project_dir, &mut resolved_names)?;
+    for dep_name in manifest.dependencies.keys() {
+        let resolved = resolver.resolve_root_dep(dep_name)?;
 
         for r in &resolved {
             // Add the dep's src/ directory (or root) as a search root
@@ -89,101 +99,255 @@ pub fn resolve(
     Ok((build_order, search_roots, resolved_deps))
 }
 
-/// Resolve a single dependency.
-fn resolve_single(
-    name: &str,
-    dep: &Dependency,
-    project_dir: &Path,
-    resolved: &mut HashSet<String>,
-) -> Result<Vec<ResolvedDep>, String> {
-    if resolved.contains(name) {
-        return Ok(vec![]); // Already resolved
-    }
-    resolved.insert(name.to_string());
+/// One package's requirement on another, from its salt.toml.
+struct Requirement {
+    /// The package that declares it, as "<name> <version>".
+    dependent: String,
+    /// The path or version constraint as written.
+    text: String,
+    kind: RequirementKind,
+}
 
-    match dep {
-        Dependency::Path { path } => {
-            let dep_dir = project_dir.join(path);
-            if !dep_dir.exists() {
-                return Err(format!(
-                    "dependency '{}' path not found: {}",
-                    name,
-                    dep_dir.display()
-                ));
-            }
+enum RequirementKind {
+    /// The canonical directory of `{ path = "..." }`.
+    Path(PathBuf),
+    Version(Vec<Constraint>),
+}
 
-            let dep_manifest_path = dep_dir.join("salt.toml");
-            let mut result = vec![];
-
-            // If the dependency has its own salt.toml, recursively resolve its deps
-            if dep_manifest_path.exists() {
-                let dep_manifest = crate::manifest::load(&dep_manifest_path)?;
-
-                // Recurse into transitive dependencies
-                for (trans_name, trans_dep) in &dep_manifest.dependencies {
-                    let trans_resolved = resolve_single(trans_name, trans_dep, &dep_dir, resolved)?;
-                    result.extend(trans_resolved);
+impl Requirement {
+    fn new(name: &str, dep: &Dependency, base_dir: &Path, dependent: &str) -> Result<Self, String> {
+        let (text, kind) = match dep {
+            Dependency::Path { path } => {
+                let dep_dir = base_dir.join(path);
+                if !dep_dir.exists() {
+                    return Err(format!(
+                        "dependency '{}' path not found: {}",
+                        name,
+                        dep_dir.display()
+                    ));
                 }
+                (path, RequirementKind::Path(dep_dir.canonicalize().unwrap_or(dep_dir)))
             }
 
-            result.push(ResolvedDep {
-                name: name.to_string(),
-                source: format!("path:{}", path),
-                root_path: dep_dir
-                    .canonicalize()
-                    .unwrap_or(dep_dir),
-                resolved_version: None,
-            });
+            Dependency::Version(version) => (version, parse_version_requirement(name, version)?),
 
-            Ok(result)
-        }
+            Dependency::Full { version, features } => {
+                if !features.is_empty() {
+                    return Err(format!(
+                        "dependency '{}' requests features {:?}, but feature flags on \
+                         dependencies are not supported yet.\n  \
+                         To build without them, drop `features` from the '{}' dependency.",
+                        name, features, name
+                    ));
+                }
+                (version, parse_version_requirement(name, version)?)
+            }
 
-        Dependency::Version(ver) => {
-            resolve_version_dep(name, ver, resolved)
-        }
-
-        Dependency::Full { version, features } => {
-            if !features.is_empty() {
+            Dependency::Git { git, .. } => {
                 return Err(format!(
-                    "dependency '{}' requests features {:?}, but feature flags on \
-                     dependencies are not supported yet.\n  \
-                     To build without them, drop `features` from the '{}' dependency.",
-                    name, features, name
+                    "git dependency '{}' from '{}' requires git clone support.\n  \
+                     Workaround: clone the repo manually and use a path dependency.\n  \
+                     Git dependency support is planned for sp v0.3.0.",
+                    name, git
                 ));
             }
-            resolve_version_dep(name, version, resolved)
-        }
+        };
+        Ok(Requirement { dependent: dependent.to_string(), text: text.clone(), kind })
+    }
 
-        Dependency::Git { git, .. } => {
-            Err(format!(
-                "git dependency '{}' from '{}' requires git clone support.\n  \
-                 Workaround: clone the repo manually and use a path dependency.\n  \
-                 Git dependency support is planned for sp v0.3.0.",
-                name, git
-            ))
+    fn constraints(&self) -> Option<&[Constraint]> {
+        match &self.kind {
+            RequirementKind::Path(_) => None,
+            RequirementKind::Version(constraints) => Some(constraints),
+        }
+    }
+
+    fn accepts(&self, selection: &Selection) -> bool {
+        match &self.kind {
+            RequirementKind::Path(dir) => selection.from_path && selection.dir == *dir,
+            // A package without a version satisfies only a requirement that
+            // constrains nothing ("*").
+            RequirementKind::Version(constraints) => match &selection.version {
+                Some(version) => semver::satisfies(version, constraints),
+                None => constraints.is_empty(),
+            },
+        }
+    }
+
+    /// The requirement on `name` in salt.toml syntax.
+    fn describe(&self, name: &str) -> String {
+        match &self.kind {
+            RequirementKind::Path(dir) => {
+                format!("{} = {{ path = \"{}\" }} ({})", name, self.text, dir.display())
+            }
+            RequirementKind::Version(_) => format!("{} = \"{}\"", name, self.text),
         }
     }
 }
 
-/// Resolve a version-constrained dependency from the local publish directory.
-///
-/// Finds all published versions of `name`, parses `constraint_str` as semver
-/// constraints, picks the highest matching version, extracts it to the
-/// local packages cache, and recurses into transitive dependencies.
-fn resolve_version_dep(
+fn parse_version_requirement(name: &str, constraint: &str) -> Result<RequirementKind, String> {
+    semver::parse_constraints(constraint)
+        .map(RequirementKind::Version)
+        .map_err(|e| format!("invalid version constraint for '{}': {}", name, e))
+}
+
+/// The version constraints of all `reqs` together: a version satisfies them
+/// if every version requirement accepts it.
+fn combined_constraints<'a>(reqs: impl IntoIterator<Item = &'a Requirement>) -> Vec<Constraint> {
+    reqs.into_iter()
+        .flat_map(|r| r.constraints().unwrap_or_default())
+        .cloned()
+        .collect()
+}
+
+/// The package a name resolved to, and the requirements it satisfies.
+struct Selection {
+    /// Canonical package root: a path dependency's directory, or the
+    /// extracted copy of a published archive.
+    dir: PathBuf,
+    /// Whether a path requirement selected it.
+    from_path: bool,
+    /// The published version, or the one a path package's salt.toml
+    /// declares (None if it has no salt.toml or the version doesn't parse).
+    version: Option<Version>,
+    required_by: Vec<Requirement>,
+}
+
+impl Selection {
+    fn describe(&self, name: &str) -> String {
+        match (&self.version, self.from_path) {
+            (Some(version), false) => format!("{} {}", name, version),
+            (Some(version), true) => format!("{} {} from {}", name, version, self.dir.display()),
+            (None, _) => format!("{} from {} (no version declared)", name, self.dir.display()),
+        }
+    }
+}
+
+/// Walk state for one resolve().
+struct Resolver {
+    /// The root manifest's requirements not applied yet. Each is applied at
+    /// its package's first visit, whichever package makes it.
+    root_requirements: HashMap<String, Requirement>,
+    root_manifest: PathBuf,
+    selected: HashMap<String, Selection>,
+}
+
+impl Resolver {
+    fn new(manifest: &Manifest, project_dir: &Path) -> Result<Self, String> {
+        let root = format!("{} {}", manifest.package.name, manifest.package.version);
+        let mut root_requirements = HashMap::new();
+        for (name, dep) in &manifest.dependencies {
+            root_requirements.insert(name.clone(), Requirement::new(name, dep, project_dir, &root)?);
+        }
+        Ok(Resolver {
+            root_requirements,
+            root_manifest: project_dir.join("salt.toml"),
+            selected: HashMap::new(),
+        })
+    }
+
+    /// Resolves one of the root manifest's dependencies. If another
+    /// dependency reached it first, that visit already applied the root's
+    /// requirement, and there is nothing left to do.
+    fn resolve_root_dep(&mut self, name: &str) -> Result<Vec<ResolvedDep>, String> {
+        match self.root_requirements.remove(name) {
+            Some(req) => self.resolve_single(name, req),
+            None => Ok(vec![]),
+        }
+    }
+
+    /// Applies one requirement on `name`. The package's first visit selects
+    /// it and resolves its own dependencies, returning them, then it, in
+    /// build order. A later visit only checks that the requirement accepts
+    /// the selection.
+    fn resolve_single(&mut self, name: &str, req: Requirement) -> Result<Vec<ResolvedDep>, String> {
+        if let Some(selection) = self.selected.get_mut(name) {
+            if !req.accepts(selection) {
+                let reqs: Vec<&Requirement> = selection.required_by.iter().chain([&req]).collect();
+                return Err(conflict(name, &reqs, Some((&*selection, &req)), &self.root_manifest));
+            }
+            selection.required_by.push(req);
+            return Ok(vec![]);
+        }
+
+        let mut reqs: Vec<Requirement> = self.root_requirements.remove(name).into_iter().collect();
+        reqs.push(req);
+        let (selection, resolved, manifest) = select(name, reqs, &self.root_manifest)?;
+        let dir = selection.dir.clone();
+        // Recorded before resolving its dependencies, which may lead back to it.
+        self.selected.insert(name.to_string(), selection);
+
+        let mut result = vec![];
+        if let Some(manifest) = manifest {
+            let dependent = format!("{} {}", name, manifest.package.version);
+            for (dep_name, dep) in &manifest.dependencies {
+                let dep_req = Requirement::new(dep_name, dep, &dir, &dependent)?;
+                result.extend(self.resolve_single(dep_name, dep_req)?);
+            }
+        }
+        result.push(resolved);
+        Ok(result)
+    }
+}
+
+/// Selects a package for `name` at its first visit: a path requirement's
+/// directory, else the highest published version every requirement accepts.
+/// Returns the selection, its entry for the lockfile, and its manifest.
+fn select(
     name: &str,
-    constraint_str: &str,
-    resolved: &mut HashSet<String>,
-) -> Result<Vec<ResolvedDep>, String> {
-    // No dedup check here: resolve_single, the only caller, has already
-    // recorded `name` in `resolved`, so a check here would always return
-    // early.
+    reqs: Vec<Requirement>,
+    root_manifest: &Path,
+) -> Result<(Selection, ResolvedDep, Option<Manifest>), String> {
+    let path_req = reqs.iter().find_map(|r| match &r.kind {
+        RequirementKind::Path(dir) => Some((r.text.as_str(), dir)),
+        RequirementKind::Version(_) => None,
+    });
+    let (dir, published_version, source) = match path_req {
+        Some((text, dir)) => (dir.clone(), None, format!("path:{}", text)),
+        None => {
+            let (version, dir) = select_published(name, &reqs, root_manifest)?;
+            let source = format!("v{}", version);
+            (dir, Some(version), source)
+        }
+    };
+    let from_path = path_req.is_some();
 
-    // Parse constraints
-    let constraints =
-        crate::semver::parse_constraints(constraint_str)
-            .map_err(|e| format!("invalid version constraint for '{}': {}", name, e))?;
+    let manifest_path = dir.join("salt.toml");
+    let manifest = if manifest_path.exists() {
+        Some(crate::manifest::load(&manifest_path)?)
+    } else {
+        None
+    };
 
+    let resolved = ResolvedDep {
+        name: name.to_string(),
+        source,
+        root_path: dir.clone(),
+        resolved_version: published_version.as_ref().map(Version::to_string),
+    };
+    let version = published_version.or_else(|| {
+        manifest
+            .as_ref()
+            .and_then(|m| semver::parse_version(&m.package.version).ok())
+    });
+    let selection = Selection { dir, from_path, version, required_by: vec![] };
+
+    // A path requirement selects its directory whatever the other
+    // requirement says, so that one must still accept it.
+    if let Some(rejecting) = reqs.iter().find(|r| !r.accepts(&selection)) {
+        let all: Vec<&Requirement> = reqs.iter().collect();
+        return Err(conflict(name, &all, Some((&selection, rejecting)), root_manifest));
+    }
+    Ok((Selection { required_by: reqs, ..selection }, resolved, manifest))
+}
+
+/// The highest published version of `name` that every requirement accepts
+/// (all of them version requirements), and the directory it's extracted to.
+fn select_published(
+    name: &str,
+    reqs: &[Requirement],
+    root_manifest: &Path,
+) -> Result<(Version, PathBuf), String> {
     // Find published versions
     let published = crate::publish::find_published(name)?;
     if published.is_empty() {
@@ -195,51 +359,100 @@ fn resolve_version_dep(
     }
 
     // Pick the best matching version
-    let versions: Vec<crate::semver::Version> = published.iter().map(|(v, _)| v.clone()).collect();
-    let best = crate::semver::best_match(&versions, &constraints)
-        .ok_or_else(|| {
-            format!(
+    let versions: Vec<Version> = published.iter().map(|(v, _)| v.clone()).collect();
+    let Some(best) = semver::best_match(&versions, &combined_constraints(reqs)) else {
+        if let [req] = reqs {
+            return Err(format!(
                 "no published version of '{}' matches constraints '{}'.\n  \
                  Available versions: {}",
                 name,
-                constraint_str,
+                req.text,
                 versions
                     .iter()
                     .map(|v| v.to_string())
                     .collect::<Vec<_>>()
                     .join(", ")
-            )
-        })?
-        .clone();
+            ));
+        }
+        let all: Vec<&Requirement> = reqs.iter().collect();
+        return Err(conflict(name, &all, None, root_manifest));
+    };
 
     let (_, archive) = published
         .iter()
-        .find(|(v, _)| *v == best)
+        .find(|(v, _)| v == best)
         .expect("best_match picks one of the published versions");
-    let dep_dir = crate::publish::extract_package(name, &best, archive)?;
+    let dep_dir = crate::publish::extract_package(name, best, archive)?;
+    Ok((best.clone(), dep_dir.canonicalize().unwrap_or(dep_dir)))
+}
 
-    // Load its manifest and recurse
-    let dep_manifest_path = dep_dir.join("salt.toml");
-    let mut result = vec![];
-
-    if dep_manifest_path.exists() {
-        if let Ok(dep_manifest) = crate::manifest::load(&dep_manifest_path) {
-            for (trans_name, trans_dep) in &dep_manifest.dependencies {
-                let trans_resolved = resolve_single(trans_name, trans_dep, &dep_dir, resolved)?;
-                result.extend(trans_resolved);
-            }
-        }
+/// The error for requirements on `name` that no one package satisfies:
+/// `rejected` is the selection and the requirement that rejects it, or None
+/// if no published version satisfies them all. sp doesn't backtrack, so it
+/// can't tell whether any solution exists, and mustn't imply there is none.
+fn conflict(
+    name: &str,
+    reqs: &[&Requirement],
+    rejected: Option<(&Selection, &Requirement)>,
+    root_manifest: &Path,
+) -> String {
+    let mut msg = format!("conflicting requirements for '{}':", name);
+    for req in reqs {
+        msg.push_str(&format!("\n    {} requires {}", req.dependent, req.describe(name)));
     }
 
-    let version_str = best.to_string();
-    result.push(ResolvedDep {
-        name: name.to_string(),
-        source: format!("v{}", version_str),
-        root_path: dep_dir.canonicalize().unwrap_or(dep_dir),
-        resolved_version: Some(version_str),
-    });
+    // With only version requirements, a published version they all accept
+    // can be suggested as a pin.
+    let versions: Vec<Version> = if reqs.iter().all(|r| r.constraints().is_some()) {
+        crate::publish::find_published(name)
+            .map(|found| found.into_iter().map(|(v, _)| v).collect())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let fit = semver::best_match(&versions, &combined_constraints(reqs.iter().copied()));
 
-    Ok(result)
+    match rejected {
+        Some((selection, req)) => {
+            msg.push_str(&format!(
+                "\n  sp selected {}, which {} rejects.",
+                selection.describe(name),
+                req.dependent
+            ));
+            // Two directories: no version choice or pin helps; only editing
+            // one of these path dependencies does.
+            if selection.from_path && matches!(req.kind, RequirementKind::Path(_)) {
+                msg.push_str(
+                    "\n  A package can come from only one directory.\n  \
+                     Hint: point these path dependencies at the same one.",
+                );
+                return msg;
+            }
+        }
+        None => msg.push_str(&format!(
+            "\n  No published version of '{}' satisfies all of them (available: {}).",
+            name,
+            versions.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ")
+        )),
+    }
+    msg.push_str("\n  sp doesn't backtrack, so this doesn't mean no solution exists");
+    match fit {
+        Some(version) => msg.push_str(&format!(
+            ": {} {} satisfies all of them.\n  Hint: pin it in the root manifest ({}): {} = \"={}\"",
+            name,
+            version,
+            root_manifest.display(),
+            name,
+            version
+        )),
+        None => msg.push_str(&format!(
+            ".\n  Hint: pin '{}', or the packages that require it, in the root manifest ({}) \
+             so that their requirements agree.",
+            name,
+            root_manifest.display()
+        )),
+    }
+    msg
 }
 
 /// Find the Salt stdlib by searching upward from the project directory.
@@ -399,26 +612,27 @@ json = { version = "1.0", features = ["streaming"] }
         let _ = fs::remove_dir_all(&tmp);
     }
 
-    /// App project under `root/app` depending on one package by version.
-    fn app_depending_on(root: &Path, dep: &str, constraint: &str) -> Manifest {
+    /// App project under `root/app` with `deps` as its [dependencies] table.
+    fn app_with(root: &Path, deps: &str) -> Manifest {
         let app = root.join("app");
         fs::create_dir_all(app.join("src")).unwrap();
         fs::write(
             app.join("salt.toml"),
-            format!(
-                "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\n{} = \"{}\"\n",
-                dep, constraint
-            ),
+            format!("[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\n{}", deps),
         )
         .unwrap();
         fs::write(app.join("src/main.salt"), "package main\nfn main() -> i32 { return 0; }\n").unwrap();
         crate::manifest::load(&app.join("salt.toml")).unwrap()
     }
 
-    /// Publishes `name` at `version` into $HOME/.salt/publish, with `deps`
-    /// as its [dependencies] table and a source file naming the version.
-    fn publish_package(root: &Path, name: &str, version: &str, deps: &str) {
-        let dir = root.join("sources").join(format!("{}-{}", name, version));
+    /// App project under `root/app` depending on one package by version.
+    fn app_depending_on(root: &Path, dep: &str, constraint: &str) -> Manifest {
+        app_with(root, &format!("{} = \"{}\"\n", dep, constraint))
+    }
+
+    /// Writes package `name` at `version` into `dir`, with `deps` as its
+    /// [dependencies] table and a source file naming the version.
+    fn write_package(dir: &Path, name: &str, version: &str, deps: &str) {
         fs::create_dir_all(dir.join("src")).unwrap();
         fs::write(dir.join("src/lib.salt"), format!("package {}\n// version {}\n", name, version)).unwrap();
         fs::write(
@@ -426,7 +640,21 @@ json = { version = "1.0", features = ["streaming"] }
             format!("[package]\nname = \"{}\"\nversion = \"{}\"\n\n[dependencies]\n{}", name, version, deps),
         )
         .unwrap();
+    }
+
+    /// Publishes `name` at `version` into $HOME/.salt/publish (see write_package).
+    fn publish_package(root: &Path, name: &str, version: &str, deps: &str) {
+        let dir = root.join("sources").join(format!("{}-{}", name, version));
+        write_package(&dir, name, version, deps);
         crate::publish::publish(&crate::manifest::load(&dir.join("salt.toml")).unwrap(), &dir).unwrap();
+    }
+
+    /// "<name> <version>" per resolved dependency; "<name> path" for a path one.
+    fn selected(resolved: &[ResolvedDep]) -> Vec<String> {
+        resolved
+            .iter()
+            .map(|r| format!("{} {}", r.name, r.resolved_version.as_deref().unwrap_or("path")))
+            .collect()
     }
 
     #[test]
@@ -508,6 +736,219 @@ json = { version = "1.0", features = ["streaming"] }
             fs::read_to_string(resolved[0].root_path.join("src/lib.salt")).unwrap(),
             "package two\n// version 0.1\n"
         );
+
+        drop(home);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// a at 1.0.0, 1.5.0 and 2.0.0, and b 1.0.0, which requires a < 2.0.
+    fn publish_a_and_b(root: &Path) {
+        for version in ["1.0.0", "1.5.0", "2.0.0"] {
+            publish_package(root, "a", version, "");
+        }
+        publish_package(root, "b", "1.0.0", "a = \"<2.0\"\n");
+    }
+
+    #[test]
+    fn test_resolve_rejects_conflicting_versions() {
+        let tmp = crate::test_support::temp_path("sp_test_resolve_conflict");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp.join("home"));
+        publish_a_and_b(&tmp);
+
+        // The app's a >= 1.0 selects 2.0.0, which b's a < 2.0 then rejects.
+        let manifest = app_with(&tmp, "a = \">=1.0\"\nb = \"1\"\n");
+        let err = resolve(&manifest, &tmp.join("app")).expect_err("a 2.0.0 violates b's a < 2.0");
+
+        assert!(err.contains("conflicting requirements for 'a'"), "{err}");
+        assert!(err.contains("app 0.1.0 requires a = \">=1.0\""), "{err}");
+        assert!(err.contains("b 1.0.0 requires a = \"<2.0\""), "{err}");
+        assert!(err.contains("selected a 2.0.0, which b 1.0.0 rejects"), "{err}");
+        // sp doesn't backtrack, so it must not call the conflict unsolvable.
+        assert!(err.contains("a 1.5.0 satisfies all of them"), "{err}");
+        assert!(err.contains("root manifest") && err.contains("a = \"=1.5.0\""), "{err}");
+
+        drop(home);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_resolve_root_pin_settles_conflict() {
+        let tmp = crate::test_support::temp_path("sp_test_resolve_pin");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp.join("home"));
+        publish_a_and_b(&tmp);
+
+        // The pin the conflict error suggests.
+        let manifest = app_with(&tmp, "a = \"=1.5.0\"\nb = \"1\"\n");
+        let (_order, _roots, resolved) = resolve(&manifest, &tmp.join("app")).unwrap();
+        assert_eq!(selected(&resolved), ["a 1.5.0", "b 1.0.0"]);
+
+        drop(home);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_resolve_applies_root_requirement_at_first_visit() {
+        let tmp = crate::test_support::temp_path("sp_test_resolve_root_first");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp.join("home"));
+        for version in ["1.0.0", "1.5.0", "2.0.0"] {
+            publish_package(&tmp, "z", version, "");
+        }
+        publish_package(&tmp, "b", "1.0.0", "z = \">=1.0\"\n");
+
+        // b reaches z before the app's own entry for z does, and b's
+        // z >= 1.0 alone would select 2.0.0.
+        let manifest = app_with(&tmp, "b = \"1\"\nz = \"=1.5.0\"\n");
+        let (_order, _roots, resolved) =
+            resolve(&manifest, &tmp.join("app")).expect("a pin in the root manifest must hold");
+        assert_eq!(selected(&resolved), ["z 1.5.0", "b 1.0.0"]);
+
+        drop(home);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_resolve_rejects_root_requirement_no_version_meets() {
+        let tmp = crate::test_support::temp_path("sp_test_resolve_root_unmet");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp.join("home"));
+        for version in ["1.0.0", "1.5.0", "2.0.0"] {
+            publish_package(&tmp, "z", version, "");
+        }
+        publish_package(&tmp, "y", "1.0.0", "z = \">=2.0\"\n");
+
+        let manifest = app_with(&tmp, "y = \"1\"\nz = \"=1.5.0\"\n");
+        let err = resolve(&manifest, &tmp.join("app")).expect_err("y's z >= 2.0 and the app's z = 1.5.0 can't both hold");
+
+        assert!(err.contains("app 0.1.0 requires z = \"=1.5.0\""), "{err}");
+        assert!(err.contains("y 1.0.0 requires z = \">=2.0\""), "{err}");
+        assert!(
+            err.contains("No published version of 'z' satisfies all of them (available: 1.0.0, 1.5.0, 2.0.0)"),
+            "{err}"
+        );
+        assert!(err.contains("pin 'z', or the packages that require it"), "{err}");
+
+        drop(home);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_resolve_selects_for_first_and_root_requirements_together() {
+        let tmp = crate::test_support::temp_path("sp_test_resolve_root_and_first");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp.join("home"));
+        for version in ["1.0.0", "2.0.0"] {
+            publish_package(&tmp, "json", version, "");
+        }
+        publish_package(&tmp, "http", "1.0.0", "json = \"^1\"\n");
+
+        // `sp add json` writes json = "*". Selecting for the root's "*"
+        // alone would pick 2.0.0, which http rejects.
+        let manifest = app_with(&tmp, "http = \"1\"\njson = \"*\"\n");
+        let (_order, _roots, resolved) = resolve(&manifest, &tmp.join("app")).unwrap();
+        assert_eq!(selected(&resolved), ["json 1.0.0", "http 1.0.0"]);
+
+        drop(home);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_resolve_rejects_one_package_at_two_paths() {
+        let tmp = crate::test_support::temp_path("sp_test_resolve_two_paths");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp.join("home"));
+        write_package(&tmp.join("s1"), "shared", "1.0.0", "");
+        write_package(&tmp.join("s2"), "shared", "1.0.0", "");
+        write_package(&tmp.join("b"), "b", "0.1.0", "shared = { path = \"../s1\" }\n");
+        write_package(&tmp.join("c"), "c", "0.1.0", "shared = { path = \"../s2\" }\n");
+
+        let manifest = app_with(&tmp, "b = { path = \"../b\" }\nc = { path = \"../c\" }\n");
+        let err = resolve(&manifest, &tmp.join("app")).expect_err("'shared' can't be two directories");
+
+        assert!(err.contains("conflicting requirements for 'shared'"), "{err}");
+        assert!(err.contains("b 0.1.0 requires shared = { path = \"../s1\" }"), "{err}");
+        assert!(err.contains("c 0.1.0 requires shared = { path = \"../s2\" }"), "{err}");
+        assert!(err.contains("point these path dependencies at the same one"), "{err}");
+
+        drop(home);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_resolve_accepts_path_dependency_shared_by_dependents() {
+        let tmp = crate::test_support::temp_path("sp_test_resolve_shared_path");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp.join("home"));
+        write_package(&tmp.join("shared"), "shared", "1.0.0", "");
+        write_package(&tmp.join("b"), "b", "0.1.0", "shared = { path = \"../shared\" }\n");
+
+        // One directory, reached from app/ and from b/.
+        let manifest = app_with(&tmp, "b = { path = \"../b\" }\nshared = { path = \"../shared\" }\n");
+        let (_order, _roots, resolved) = resolve(&manifest, &tmp.join("app")).unwrap();
+        assert_eq!(selected(&resolved), ["shared path", "b path"]);
+
+        drop(home);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_resolve_checks_version_requirement_against_path_package() {
+        let tmp = crate::test_support::temp_path("sp_test_resolve_path_version");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp.join("home"));
+        publish_package(&tmp, "b", "1.0.0", "a = \"<2.0\"\n");
+        write_package(&tmp.join("a"), "a", "2.0.0", "");
+
+        let manifest = app_with(&tmp, "a = { path = \"../a\" }\nb = \"1\"\n");
+        let err = resolve(&manifest, &tmp.join("app")).expect_err("the path package a is 2.0.0, and b requires a < 2.0");
+
+        assert!(err.contains("app 0.1.0 requires a = { path = \"../a\" }"), "{err}");
+        assert!(err.contains("b 1.0.0 requires a = \"<2.0\""), "{err}");
+        assert!(err.contains("selected a 2.0.0 from"), "{err}");
+
+        drop(home);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_resolve_rejects_path_requirement_on_published_package() {
+        let tmp = crate::test_support::temp_path("sp_test_resolve_path_after_version");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp.join("home"));
+        publish_package(&tmp, "a", "1.0.0", "");
+        write_package(&tmp.join("a"), "a", "1.0.0", "");
+        write_package(&tmp.join("c"), "c", "0.1.0", "a = { path = \"../a\" }\n");
+
+        let manifest = app_with(&tmp, "a = \"1\"\nc = { path = \"../c\" }\n");
+        let err = resolve(&manifest, &tmp.join("app")).expect_err("c needs a from ../a, not the published a");
+
+        assert!(err.contains("c 0.1.0 requires a = { path = \"../a\" }"), "{err}");
+        assert!(err.contains("selected a 1.0.0, which c 0.1.0 rejects"), "{err}");
+
+        drop(home);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_resolve_version_requirement_on_path_package_without_version() {
+        let tmp = crate::test_support::temp_path("sp_test_resolve_path_no_version");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp.join("home"));
+        // No salt.toml, so no version.
+        fs::create_dir_all(tmp.join("shared/src")).unwrap();
+        fs::write(tmp.join("shared/src/lib.salt"), "package shared\n").unwrap();
+        let manifest = app_with(&tmp, "b = { path = \"../b\" }\nshared = { path = \"../shared\" }\n");
+
+        write_package(&tmp.join("b"), "b", "0.1.0", "shared = \"1\"\n");
+        let err = resolve(&manifest, &tmp.join("app")).expect_err("a package without a version can't satisfy \"1\"");
+        assert!(err.contains("b 0.1.0 requires shared = \"1\""), "{err}");
+        assert!(err.contains("no version"), "{err}");
+
+        write_package(&tmp.join("b"), "b", "0.1.0", "shared = \"*\"\n");
+        let (_order, _roots, resolved) = resolve(&manifest, &tmp.join("app")).expect("\"*\" accepts any package");
+        assert_eq!(selected(&resolved), ["shared path", "b path"]);
 
         drop(home);
         let _ = fs::remove_dir_all(&tmp);

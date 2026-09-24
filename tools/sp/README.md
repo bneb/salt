@@ -64,7 +64,7 @@ Phase 1 (Foundation) is implemented:
 - ✅ `sp run` / `sp test` / `sp check` / `sp clean`
 - ✅ `sp add` — non-destructive manifest editing
 - ✅ Path dependency resolution with transitive support
-- ✅ Version dependencies resolve to the highest matching version published with `sp publish` (conflicting constraints on one package aren't detected yet)
+- ✅ Version dependencies resolve to the highest matching version published with `sp publish`. A package's version is chosen at its first visit, from that requirement and the root manifest's; a later requirement that rejects it is a conflict error. sp doesn't backtrack, so pin versions in the root manifest to settle a conflict
 - ✅ `sp publish` — packages a project into `~/.salt/publish/`
 - ✅ `sp build` writes `salt.lock` (path dependencies aren't locked)
 
