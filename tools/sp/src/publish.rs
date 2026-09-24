@@ -229,8 +229,15 @@ mod tests {
 
     #[test]
     fn test_find_published_empty_dir() {
-        // Should return empty list for non-existent publish dir
-        let results = find_published("nonexistent").unwrap_or_default();
+        let tmp = crate::test_support::temp_path("sp_test_find_published_empty");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp);
+
+        // $HOME/.salt/publish doesn't exist yet.
+        let results = find_published("nonexistent").expect("a missing publish dir is not an error");
         assert!(results.is_empty());
+
+        drop(home);
+        let _ = fs::remove_dir_all(&tmp);
     }
 }
