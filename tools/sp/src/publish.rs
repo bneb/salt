@@ -126,8 +126,10 @@ fn collect_source_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), Stri
 
 /// Find all published versions of a package.
 ///
-/// Returns sorted list of (version, archive_path) for all published
-/// versions of the given package name.
+/// Returns (version, archive_path) for every published version of the
+/// given package name, sorted by version, then by path: archives published
+/// as "0.1" and "0.1.0" both hold 0.1.0, and must come out in the same
+/// order on every run.
 pub fn find_published(name: &str) -> Result<Vec<(semver::Version, PathBuf)>, String> {
     let dir = publish_dir()?;
     let mut results = Vec::new();
@@ -159,14 +161,22 @@ pub fn find_published(name: &str) -> Result<Vec<(semver::Version, PathBuf)>, Str
         }
     }
 
-    results.sort_by(|a, b| a.0.cmp(&b.0));
+    results.sort();
     Ok(results)
 }
 
 /// Extract a published package to the local packages cache.
 ///
+/// `archive_path` is the archive `find_published` listed for `version`. It
+/// can't be rebuilt from `version`: the file name keeps the version as it
+/// was published ("two-0.1.tar.gz"), while `version` is normalized (0.1.0).
+///
 /// Returns the path to the extracted package directory.
-pub fn extract_package(name: &str, version: &str) -> Result<PathBuf, String> {
+pub fn extract_package(
+    name: &str,
+    version: &semver::Version,
+    archive_path: &Path,
+) -> Result<PathBuf, String> {
     let pkg_dir = packages_dir()?.join(format!("{}-{}", name, version));
 
     // Skip if already extracted
@@ -174,20 +184,8 @@ pub fn extract_package(name: &str, version: &str) -> Result<PathBuf, String> {
         return Ok(pkg_dir);
     }
 
-    let pub_dir = publish_dir()?;
-    let archive_path = pub_dir.join(format!("{}-{}.tar.gz", name, version));
-
-    if !archive_path.exists() {
-        return Err(format!(
-            "published package '{}-{}' not found in {}",
-            name,
-            version,
-            pub_dir.display()
-        ));
-    }
-
     // Extract
-    let file = std::fs::File::open(&archive_path)
+    let file = std::fs::File::open(archive_path)
         .map_err(|e| format!("failed to open {}: {}", archive_path.display(), e))?;
     let decoder = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
@@ -236,6 +234,36 @@ mod tests {
         // $HOME/.salt/publish doesn't exist yet.
         let results = find_published("nonexistent").expect("a missing publish dir is not an error");
         assert!(results.is_empty());
+
+        drop(home);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_find_published_sorts_by_version_then_path() {
+        let tmp = crate::test_support::temp_path("sp_test_find_published_order");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp);
+        let dir = tmp.join(".salt/publish");
+        fs::create_dir_all(&dir).unwrap();
+        // Only the names matter. two-0.1 and two-0.1.0 both hold 0.1.0.
+        for archive in ["two-0.2.tar.gz", "two-0.1.tar.gz", "two-0.1.0.tar.gz", "two-0.0.9.tar.gz"] {
+            fs::write(dir.join(archive), b"").unwrap();
+        }
+
+        let found: Vec<(String, String)> = find_published("two")
+            .unwrap()
+            .into_iter()
+            .map(|(v, p)| (v.to_string(), p.file_name().unwrap().to_string_lossy().into_owned()))
+            .collect();
+        let expected = [
+            ("0.0.9", "two-0.0.9.tar.gz"),
+            ("0.1.0", "two-0.1.0.tar.gz"),
+            ("0.1.0", "two-0.1.tar.gz"),
+            ("0.2.0", "two-0.2.tar.gz"),
+        ]
+        .map(|(v, f)| (v.to_string(), f.to_string()));
+        assert_eq!(found, expected);
 
         drop(home);
         let _ = fs::remove_dir_all(&tmp);

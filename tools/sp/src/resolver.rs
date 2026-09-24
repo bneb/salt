@@ -212,8 +212,11 @@ fn resolve_version_dep(
         })?
         .clone();
 
-    // Extract the package
-    let dep_dir = crate::publish::extract_package(name, &best.to_string())?;
+    let (_, archive) = published
+        .iter()
+        .find(|(v, _)| *v == best)
+        .expect("best_match picks one of the published versions");
+    let dep_dir = crate::publish::extract_package(name, &best, archive)?;
 
     // Load its manifest and recurse
     let dep_manifest_path = dep_dir.join("salt.toml");
@@ -412,6 +415,20 @@ json = { version = "1.0", features = ["streaming"] }
         crate::manifest::load(&app.join("salt.toml")).unwrap()
     }
 
+    /// Publishes `name` at `version` into $HOME/.salt/publish, with `deps`
+    /// as its [dependencies] table and a source file naming the version.
+    fn publish_package(root: &Path, name: &str, version: &str, deps: &str) {
+        let dir = root.join("sources").join(format!("{}-{}", name, version));
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/lib.salt"), format!("package {}\n// version {}\n", name, version)).unwrap();
+        fs::write(
+            dir.join("salt.toml"),
+            format!("[package]\nname = \"{}\"\nversion = \"{}\"\n\n[dependencies]\n{}", name, version, deps),
+        )
+        .unwrap();
+        crate::publish::publish(&crate::manifest::load(&dir.join("salt.toml")).unwrap(), &dir).unwrap();
+    }
+
     #[test]
     fn test_resolve_version_dep_errors_when_unpublished() {
         let tmp = crate::test_support::temp_path("sp_test_resolve_unpublished");
@@ -467,6 +484,29 @@ json = { version = "1.0", features = ["streaming"] }
         assert!(
             search_roots.iter().any(|r| r.starts_with(&dep.root_path)),
             "compiler search roots should include the extracted package: {search_roots:?}"
+        );
+
+        drop(home);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_resolve_version_dep_published_with_two_components() {
+        let tmp = crate::test_support::temp_path("sp_test_resolve_two_components");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp.join("home"));
+
+        // Archived as two-0.1.tar.gz; the resolver normalizes the version to 0.1.0.
+        publish_package(&tmp, "two", "0.1", "");
+
+        let manifest = app_depending_on(&tmp, "two", "0.1");
+        let (_order, _roots, resolved) =
+            resolve(&manifest, &tmp.join("app")).expect("a package published as version \"0.1\" must resolve");
+        assert_eq!(resolved.len(), 1, "{resolved:?}");
+        assert_eq!(resolved[0].resolved_version.as_deref(), Some("0.1.0"));
+        assert_eq!(
+            fs::read_to_string(resolved[0].root_path.join("src/lib.salt")).unwrap(),
+            "package two\n// version 0.1\n"
         );
 
         drop(home);
