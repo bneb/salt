@@ -5,6 +5,7 @@
 
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// A lockfile entry for a single package.
@@ -44,7 +45,10 @@ impl Lockfile {
         toml::from_str(&content).map_err(|e| format!("failed to parse lockfile: {}", e))
     }
 
-    /// Save the lockfile to disk.
+    /// Save the lockfile to disk, atomically: the content goes to a
+    /// temporary file that is synced, then renamed over `path`, so a reader
+    /// or an interrupted build sees the old file or the new one, never a
+    /// partial one.
     pub fn save(&self, path: &Path) -> Result<(), String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -52,8 +56,22 @@ impl Lockfile {
         }
         let content = toml::to_string_pretty(self)
             .map_err(|e| format!("failed to serialize lockfile: {}", e))?;
-        std::fs::write(path, &content).map_err(|e| format!("failed to write lockfile: {}", e))?;
-        Ok(())
+
+        // Beside `path`, so the rename stays on one filesystem; the pid keeps
+        // concurrent builds out of each other's temporary file.
+        let mut tmp = path.as_os_str().to_owned();
+        tmp.push(format!(".{}.tmp", std::process::id()));
+        let tmp = PathBuf::from(tmp);
+        std::fs::File::create(&tmp)
+            .and_then(|mut file| {
+                file.write_all(content.as_bytes())?;
+                file.sync_all()
+            })
+            .and_then(|()| std::fs::rename(&tmp, path))
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&tmp);
+                format!("failed to write lockfile: {}", e)
+            })
     }
 
     /// Insert or update a package entry.
@@ -239,6 +257,61 @@ mod tests {
             fs::write(path, content).unwrap();
         }
         root
+    }
+
+    fn file_names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    // A reader holding the old file open keeps seeing all of it only on
+    // platforms where renaming over an open file detaches it (unix).
+    #[cfg(unix)]
+    #[test]
+    fn test_save_replaces_lockfile_atomically() {
+        use std::io::Read;
+
+        let tmp = crate::test_support::temp_path("sp_test_lockfile_atomic");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("salt.lock");
+
+        let mut old = Lockfile::new();
+        old.add_package("app", "1.0.0", None, vec![]);
+        old.save(&path).unwrap();
+        let old_text = fs::read_to_string(&path).unwrap();
+
+        // Opened before the save, like a concurrent `sp build` reading it.
+        let mut reader = fs::File::open(&path).unwrap();
+        let mut new = Lockfile::new();
+        new.add_package("app", "2.0.0", None, vec![]);
+        new.save(&path).unwrap();
+
+        let mut seen = String::new();
+        reader.read_to_string(&mut seen).unwrap();
+        assert_eq!(seen, old_text, "salt.lock must be replaced whole, not rewritten in place");
+        assert!(fs::read_to_string(&path).unwrap().contains("version = \"2.0.0\""));
+        assert_eq!(file_names(&tmp), ["salt.lock"], "no temporary file may be left behind");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_save_failure_removes_temporary_file() {
+        let tmp = crate::test_support::temp_path("sp_test_lockfile_save_fails");
+        let _ = fs::remove_dir_all(&tmp);
+        // A non-empty directory where salt.lock goes: nothing can replace it.
+        fs::create_dir_all(tmp.join("salt.lock/inside")).unwrap();
+
+        let err = Lockfile::new().save(&tmp.join("salt.lock")).unwrap_err();
+        assert!(err.contains("failed to write lockfile"), "{err}");
+        assert_eq!(file_names(&tmp), ["salt.lock"], "the temporary file must be removed");
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
