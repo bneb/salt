@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn test_collect_salt_files() {
-        let tmp = std::env::temp_dir().join("sp_test_collect");
+        let tmp = crate::test_support::temp_path("sp_test_collect");
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(tmp.join("src")).unwrap();
         fs::write(tmp.join("src/main.salt"), "package main").unwrap();
@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn test_resolve_simple_project() {
-        let tmp = std::env::temp_dir().join("sp_test_resolve");
+        let tmp = crate::test_support::temp_path("sp_test_resolve");
         let _ = fs::remove_dir_all(&tmp);
 
         // Create a simple project
@@ -368,7 +368,7 @@ version = "0.1.0"
 
     #[test]
     fn test_resolve_rejects_dependency_features() {
-        let tmp = std::env::temp_dir().join("sp_test_resolve_features");
+        let tmp = crate::test_support::temp_path("sp_test_resolve_features");
         let _ = fs::remove_dir_all(&tmp);
 
         fs::create_dir_all(tmp.join("src")).unwrap();
@@ -414,7 +414,7 @@ json = { version = "1.0", features = ["streaming"] }
 
     #[test]
     fn test_resolve_version_dep_errors_when_unpublished() {
-        let tmp = std::env::temp_dir().join("sp_test_resolve_unpublished");
+        let tmp = crate::test_support::temp_path("sp_test_resolve_unpublished");
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(tmp.join("home")).unwrap();
         let home = crate::test_support::HomeGuard::new(&tmp.join("home"));
@@ -430,7 +430,7 @@ json = { version = "1.0", features = ["streaming"] }
 
     #[test]
     fn test_resolve_version_dep_round_trip() {
-        let tmp = std::env::temp_dir().join("sp_test_resolve_round_trip");
+        let tmp = crate::test_support::temp_path("sp_test_resolve_round_trip");
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(tmp.join("home")).unwrap();
         let home = crate::test_support::HomeGuard::new(&tmp.join("home"));

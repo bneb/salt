@@ -235,7 +235,7 @@ mod tests {
 
     #[test]
     fn test_cache_roundtrip() {
-        let tmp = std::env::temp_dir().join("sp_test_cache");
+        let tmp = crate::test_support::temp_path("sp_test_cache");
         let _ = fs::remove_dir_all(&tmp);
 
         let cache = ArtifactCache {
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_same_source_same_hash() {
-        let tmp = std::env::temp_dir().join("sp_test_hash_stable");
+        let tmp = crate::test_support::temp_path("sp_test_hash_stable");
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(tmp.join("src")).unwrap();
         fs::write(tmp.join("src/main.salt"), "package main\nfn main() { }").unwrap();

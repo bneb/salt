@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn test_collect_source_files_finds_salt_files() {
-        let tmp = std::env::temp_dir().join("sp_test_publish_collect");
+        let tmp = crate::test_support::temp_path("sp_test_publish_collect");
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(tmp.join("src")).unwrap();
         fs::write(tmp.join("src/main.salt"), "package main").unwrap();

@@ -497,7 +497,7 @@ mod tests {
 
     #[test]
     fn test_write_lockfile_creates_salt_lock() {
-        let tmp = std::env::temp_dir().join("sp_test_write_lockfile");
+        let tmp = crate::test_support::temp_path("sp_test_write_lockfile");
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(tmp.join("src")).unwrap();
         fs::write(
@@ -532,8 +532,8 @@ mod tests {
 
     #[test]
     fn test_cmd_publish_creates_archive() {
-        let tmp_home = std::env::temp_dir().join("sp_test_cmd_publish_home");
-        let project_dir = std::env::temp_dir().join("sp_test_cmd_publish_project");
+        let tmp_home = crate::test_support::temp_path("sp_test_cmd_publish_home");
+        let project_dir = crate::test_support::temp_path("sp_test_cmd_publish_project");
         let _ = fs::remove_dir_all(&tmp_home);
         let _ = fs::remove_dir_all(&project_dir);
         fs::create_dir_all(&tmp_home).unwrap();

@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn test_lockfile_roundtrip() {
-        let tmp = std::env::temp_dir().join("sp_test_lockfile");
+        let tmp = crate::test_support::temp_path("sp_test_lockfile");
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
 
@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn test_content_hash_stable() {
-        let tmp = std::env::temp_dir().join("sp_test_hash");
+        let tmp = crate::test_support::temp_path("sp_test_hash");
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(tmp.join("src")).unwrap();
         fs::write(tmp.join("src/main.salt"), "package main\nfn main() {}").unwrap();
@@ -210,8 +210,8 @@ mod tests {
 
     #[test]
     fn test_content_hash_differs() {
-        let tmp1 = std::env::temp_dir().join("sp_test_hash1");
-        let tmp2 = std::env::temp_dir().join("sp_test_hash2");
+        let tmp1 = crate::test_support::temp_path("sp_test_hash1");
+        let tmp2 = crate::test_support::temp_path("sp_test_hash2");
         let _ = fs::remove_dir_all(&tmp1);
         let _ = fs::remove_dir_all(&tmp2);
         fs::create_dir_all(tmp1.join("src")).unwrap();
@@ -230,7 +230,7 @@ mod tests {
     /// Writes `files` (path relative to the package root, content) under a
     /// fresh temp package directory.
     fn package_dir(tag: &str, files: &[(&str, &[u8])]) -> PathBuf {
-        let root = std::env::temp_dir().join(tag);
+        let root = crate::test_support::temp_path(tag);
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         for (rel, content) in files {
@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn test_save_orders_packages_deterministically() {
-        let tmp = std::env::temp_dir().join("sp_test_lockfile_order");
+        let tmp = crate::test_support::temp_path("sp_test_lockfile_order");
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
 

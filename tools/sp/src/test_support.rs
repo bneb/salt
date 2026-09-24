@@ -1,7 +1,15 @@
 //! Test-only helpers shared across modules.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
+
+/// `<system temp dir>/<name>-<pid>`. A name unique to its test keeps tests
+/// in one process apart, but concurrent `cargo test` runs (say, in two
+/// worktrees) share the temp dir, and with the name alone one run deletes
+/// or overwrites another's files.
+pub fn temp_path(name: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("{}-{}", name, std::process::id()))
+}
 
 /// Serializes every test that overrides $HOME: the variable is
 /// process-global and `cargo test` runs tests on parallel threads. Tests
