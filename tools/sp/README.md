@@ -35,6 +35,7 @@ sp test
 | `sp clean` | Remove build artifacts |
 | `sp add <dep>` | Add a dependency to `salt.toml` |
 | `sp fetch` | Download dependencies without building |
+| `sp publish` | Package the project into `~/.salt/publish/` for use as a version dependency |
 
 ## Architecture
 
@@ -63,7 +64,8 @@ Phase 1 (Foundation) is implemented:
 - ✅ `sp run` / `sp test` / `sp check` / `sp clean`
 - ✅ `sp add` — non-destructive manifest editing
 - ✅ Path dependency resolution with transitive support
-- ✅ 10/10 unit tests passing
+- ✅ `sp publish` — packages a project into `~/.salt/publish/`
+- ✅ `sp build` writes `salt.lock` (path dependencies aren't locked)
 
 Planned:
 - 🚧 PubGrub version resolution

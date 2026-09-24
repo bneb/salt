@@ -39,6 +39,12 @@ pub enum Dependency {
     Version(String),
 }
 
+// Exercised by this module's own test (test_parse_with_dependencies) but not
+// called from the shipped binary: resolver.rs pattern-matches
+// Dependency::Path directly instead of going through this accessor. Kept as
+// tested scaffolding rather than wired in — there's no missing call site to
+// attach it to today.
+#[allow(dead_code)]
 impl Dependency {
     /// Get the local path for a path dependency.
     pub fn local_path(&self) -> Option<&str> {

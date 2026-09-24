@@ -62,16 +62,25 @@ pub enum Dependency {
     /// Inline table with git source: { git = "...", rev = "..." }
     Git {
         git: String,
+        // rev/branch/tag are parsed so the documented git-dependency shape is
+        // accepted, but nothing in the shipped binary reads them:
+        // resolver::resolve_single rejects every Git dependency until git
+        // resolution exists.
         #[serde(default)]
+        #[allow(dead_code)]
         rev: Option<String>,
         #[serde(default)]
+        #[allow(dead_code)]
         branch: Option<String>,
         #[serde(default)]
+        #[allow(dead_code)]
         tag: Option<String>,
     },
     /// Inline table with version + features: { version = "1.0", features = ["x"] }
     Full {
         version: String,
+        // Feature flags aren't implemented; resolver::resolve_single rejects a
+        // non-empty list rather than silently dropping it.
         #[serde(default)]
         features: Vec<String>,
     },
@@ -79,6 +88,12 @@ pub enum Dependency {
     Version(String),
 }
 
+// local_path/version/source_display are exercised by this module's own tests
+// (below) but have no caller in the shipped binary: resolver.rs pattern-matches
+// Dependency variants directly instead of going through these accessors. Kept
+// as tested scaffolding rather than wired in, since there's no missing call
+// site to attach them to.
+#[allow(dead_code)]
 impl Dependency {
     /// Get the local filesystem path for a path dependency.
     pub fn local_path(&self) -> Option<&str> {
@@ -127,7 +142,11 @@ pub struct BuildConfig {
 }
 
 /// Per-profile build settings.
+// Parsed so `[build.release]`/`[build.debug]` (documented at the top of this
+// file) are accepted, but not yet consumed: cmd_build only ever reads
+// BuildConfig's `target`, never `release`/`debug`.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct ProfileConfig {
     #[serde(default)]
     pub opt: Option<String>,

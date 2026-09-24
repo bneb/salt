@@ -142,7 +142,15 @@ fn resolve_single(
             resolve_version_dep(name, ver, resolved)
         }
 
-        Dependency::Full { version, features: _ } => {
+        Dependency::Full { version, features } => {
+            if !features.is_empty() {
+                return Err(format!(
+                    "dependency '{}' requests features {:?}, but feature flags on \
+                     dependencies are not supported yet.\n  \
+                     To build without them, drop `features` from the '{}' dependency.",
+                    name, features, name
+                ));
+            }
             resolve_version_dep(name, version, resolved)
         }
 
@@ -355,6 +363,36 @@ version = "0.1.0"
 
         assert_eq!(build_order.len(), 1, "should have 1 source file");
         assert!(!search_roots.is_empty(), "should have at least 1 search root");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_resolve_rejects_dependency_features() {
+        let tmp = std::env::temp_dir().join("sp_test_resolve_features");
+        let _ = fs::remove_dir_all(&tmp);
+
+        fs::create_dir_all(tmp.join("src")).unwrap();
+        fs::write(
+            tmp.join("salt.toml"),
+            r#"
+[package]
+name = "test_app"
+version = "0.1.0"
+
+[dependencies]
+json = { version = "1.0", features = ["streaming"] }
+"#,
+        )
+        .unwrap();
+        fs::write(tmp.join("src/main.salt"), "package main\nfn main() -> i32 { return 0; }").unwrap();
+
+        let manifest = crate::manifest::load(&tmp.join("salt.toml")).unwrap();
+        let err = resolve(&manifest, &tmp).unwrap_err();
+
+        assert!(err.contains("'json'"), "error should name the dependency: {err}");
+        assert!(err.contains("streaming"), "error should name the requested feature: {err}");
+        assert!(err.contains("not supported"), "error should say features are unsupported: {err}");
 
         let _ = fs::remove_dir_all(&tmp);
     }

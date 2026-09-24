@@ -74,34 +74,36 @@ jobs:
         run: cargo clippy -- -D warnings
         working-directory: tools/salt-lsp
 
-  # No Clippy step: cargo clippy -D warnings currently fails on a
-  # pre-existing dead-code finding (local_path in src/manifest.rs, only
-  # called from a #[cfg(test)] block in this bin-only crate) that needs a
-  # real look, not a rushed deletion -- tracked separately, not papered
-  # over here.
   salt-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - name: Build
         run: cargo build --release
         working-directory: tools/salt-build
       - name: Test
         run: cargo test --release
         working-directory: tools/salt-build
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+        working-directory: tools/salt-build
 
-  # No Clippy step: cargo clippy -D warnings currently fails on 10
-  # pre-existing dead-code findings (unused fns/fields) that need a real
-  # look, not a rushed deletion -- tracked separately, not papered over here.
   sp:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - name: Build
         run: cargo build --release
         working-directory: tools/sp
       - name: Test
         run: cargo test --release
+        working-directory: tools/sp
+      - name: Clippy
+        run: cargo clippy -- -D warnings
         working-directory: tools/sp
