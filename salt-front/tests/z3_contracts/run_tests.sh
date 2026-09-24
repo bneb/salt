@@ -813,8 +813,15 @@ if ! "$SALTC" "$SCRIPT_DIR/test_ensures_timeout_runtime_check.salt" \
         cat /tmp/z3_out_etrc.txt | head -5
         FAIL=$((FAIL + 1))
     fi
+elif grep -q '__salt_contract_violation' /tmp/z3_test_etrc \
+    && grep -qi 'WARNING: Z3 could not prove' /tmp/z3_out_etrc.txt; then
+    # Sound, but weaker than this fixture expects: Z3 ran out of budget and
+    # the compiler deferred to a runtime check. Outcomes here are calibrated
+    # to the Z3 version CI pins; an older Z3 lands in this branch.
+    echo "FAIL (deferred to a runtime check instead of compile-time rejection: sound, but this Z3 is weaker than the version CI pins)"
+    FAIL=$((FAIL + 1))
 else
-    echo "FAIL (weakened bound ACCEPTED — soundness lost)"
+    echo "FAIL (weakened bound ACCEPTED with no runtime check — soundness lost)"
     FAIL=$((FAIL + 1))
 fi
 
