@@ -8,7 +8,7 @@
 //!   [workspace]    — members, shared dependencies
 
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Top-level salt.toml manifest structure.
@@ -17,9 +17,9 @@ use std::path::Path;
 pub struct Manifest {
     pub package: Package,
     #[serde(default)]
-    pub dependencies: HashMap<String, Dependency>,
+    pub dependencies: BTreeMap<String, Dependency>,
     #[serde(default, rename = "dev-dependencies")]
-    pub dev_dependencies: HashMap<String, Dependency>,
+    pub dev_dependencies: BTreeMap<String, Dependency>,
     #[serde(default)]
     pub build: Option<BuildConfig>,
     #[serde(default)]
@@ -163,7 +163,7 @@ pub struct Workspace {
     #[serde(default)]
     pub members: Vec<String>,
     #[serde(default)]
-    pub dependencies: HashMap<String, Dependency>,
+    pub dependencies: BTreeMap<String, Dependency>,
 }
 
 /// Load and parse a salt.toml manifest file.
@@ -209,6 +209,45 @@ version = "0.1.0"
         assert_eq!(manifest.package.version, "0.1.0");
         assert_eq!(manifest.package.edition, "2026");
         assert_eq!(manifest.package.entry, "src/main.salt");
+    }
+
+    #[test]
+    fn test_dependencies_iterate_in_sorted_order() {
+        // The resolver walks dependencies in this order and the first visit
+        // of a package wins, and the build-cache key hashes search roots in
+        // this order, so it must not vary from run to run. 8 names: an
+        // unordered map lands sorted by chance with probability 1/8!.
+        let toml = r#"
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+theta = "1"
+eta = "1"
+zeta = "1"
+epsilon = "1"
+delta = "1"
+gamma = "1"
+beta = "1"
+alpha = "1"
+
+[dev-dependencies]
+theta = "1"
+eta = "1"
+zeta = "1"
+epsilon = "1"
+delta = "1"
+gamma = "1"
+beta = "1"
+alpha = "1"
+"#;
+        let manifest: Manifest = toml::from_str(toml).unwrap();
+        let sorted = ["alpha", "beta", "delta", "epsilon", "eta", "gamma", "theta", "zeta"];
+        let deps: Vec<&str> = manifest.dependencies.keys().map(String::as_str).collect();
+        let dev: Vec<&str> = manifest.dev_dependencies.keys().map(String::as_str).collect();
+        assert_eq!(deps, sorted);
+        assert_eq!(dev, sorted);
     }
 
     #[test]
