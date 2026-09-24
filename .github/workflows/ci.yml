@@ -8,10 +8,29 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - name: Install Z3
-        run: sudo apt-get update && sudo apt-get install -y libz3-dev
+      # Pinned rather than apt's libz3-dev (4.8.12 on ubuntu-latest): the
+      # proof budget is a Z3 rlimit, whose units vary by version, and the Z3
+      # contract expectations and proof_baseline.json are calibrated to this
+      # version. Under 4.8.12, test_ensures_timeout_runtime_check defers to a
+      # runtime check instead of rejecting at compile time.
+      - name: Install Z3 4.16.0
+        run: |
+          curl -sSfL -o /tmp/z3.zip https://github.com/Z3Prover/z3/releases/download/z3-4.16.0/z3-4.16.0-x64-glibc-2.39.zip
+          echo "7288c49a5bd6dbafd7b0b0d1f65956b91672da24b08f09242919af159be3418e  /tmp/z3.zip" | sha256sum -c -
+          unzip -q /tmp/z3.zip -d /tmp/z3 && sudo mv /tmp/z3/* /opt/z3
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I/opt/z3/include" >> "$GITHUB_ENV"
+          # -L on rustc's own link line: with only LIBRARY_PATH, the runner
+          # image's preinstalled libz3-dev (4.8.12) wins the link.
+          echo "RUSTFLAGS=-L native=/opt/z3/bin" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/opt/z3/bin" >> "$GITHUB_ENV"
+          /opt/z3/bin/z3 --version
       - name: Build
         run: cargo build --release
+        working-directory: salt-front
+      - name: Check saltc loads the pinned Z3
+        run: |
+          ldd target/release/saltc | grep libz3
+          ldd target/release/saltc | grep -q '=> /opt/z3/bin/' || { echo "saltc is not loading the pinned Z3 from /opt/z3/bin"; exit 1; }
         working-directory: salt-front
       - name: Test
         run: cargo test --release
