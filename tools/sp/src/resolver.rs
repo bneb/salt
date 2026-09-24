@@ -175,10 +175,9 @@ fn resolve_version_dep(
     constraint_str: &str,
     resolved: &mut HashSet<String>,
 ) -> Result<Vec<ResolvedDep>, String> {
-    if resolved.contains(name) {
-        return Ok(vec![]);
-    }
-    resolved.insert(name.to_string());
+    // No dedup check here: resolve_single, the only caller, has already
+    // recorded `name` in `resolved`, so a check here would always return
+    // early.
 
     // Parse constraints
     let constraints =
@@ -394,6 +393,83 @@ json = { version = "1.0", features = ["streaming"] }
         assert!(err.contains("streaming"), "error should name the requested feature: {err}");
         assert!(err.contains("not supported"), "error should say features are unsupported: {err}");
 
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// App project under `root/app` depending on one package by version.
+    fn app_depending_on(root: &Path, dep: &str, constraint: &str) -> Manifest {
+        let app = root.join("app");
+        fs::create_dir_all(app.join("src")).unwrap();
+        fs::write(
+            app.join("salt.toml"),
+            format!(
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\n{} = \"{}\"\n",
+                dep, constraint
+            ),
+        )
+        .unwrap();
+        fs::write(app.join("src/main.salt"), "package main\nfn main() -> i32 { return 0; }\n").unwrap();
+        crate::manifest::load(&app.join("salt.toml")).unwrap()
+    }
+
+    #[test]
+    fn test_resolve_version_dep_errors_when_unpublished() {
+        let tmp = std::env::temp_dir().join("sp_test_resolve_unpublished");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("home")).unwrap();
+        let home = crate::test_support::HomeGuard::new(&tmp.join("home"));
+
+        let manifest = app_depending_on(&tmp, "nosuchpkg", "1.0");
+        let err = resolve(&manifest, &tmp.join("app"))
+            .expect_err("an unpublished version dependency must not resolve to nothing");
+        assert!(err.contains("no published versions found for 'nosuchpkg'"), "{err}");
+
+        drop(home);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_resolve_version_dep_round_trip() {
+        let tmp = std::env::temp_dir().join("sp_test_resolve_round_trip");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("home")).unwrap();
+        let home = crate::test_support::HomeGuard::new(&tmp.join("home"));
+
+        // Publish three versions into the isolated $HOME/.salt/publish, each
+        // with distinct source so the test can tell which one was extracted.
+        let lib = tmp.join("mylib");
+        fs::create_dir_all(lib.join("src")).unwrap();
+        let source = |version: &str| format!("package mylib\n// version {}\n", version);
+        for version in ["0.3.0", "0.3.1", "0.4.0"] {
+            fs::write(lib.join("src/lib.salt"), source(version)).unwrap();
+            fs::write(
+                lib.join("salt.toml"),
+                format!("[package]\nname = \"mylib\"\nversion = \"{}\"\n", version),
+            )
+            .unwrap();
+            let lib_manifest = crate::manifest::load(&lib.join("salt.toml")).unwrap();
+            crate::publish::publish(&lib_manifest, &lib).unwrap();
+        }
+
+        // The constraint admits 0.3.x only; 0.4.0 is newer but must be skipped.
+        let manifest = app_depending_on(&tmp, "mylib", ">=0.3.0, <0.4.0");
+        let (_order, search_roots, resolved) = resolve(&manifest, &tmp.join("app")).unwrap();
+
+        assert_eq!(resolved.len(), 1, "exactly one dependency should resolve: {resolved:?}");
+        let dep = &resolved[0];
+        assert_eq!(dep.name, "mylib");
+        assert_eq!(dep.resolved_version.as_deref(), Some("0.3.1"), "highest version matching the constraint");
+        assert_eq!(
+            fs::read_to_string(dep.root_path.join("src/lib.salt")).unwrap(),
+            source("0.3.1"),
+            "the extracted package must be the version that was reported"
+        );
+        assert!(
+            search_roots.iter().any(|r| r.starts_with(&dep.root_path)),
+            "compiler search roots should include the extracted package: {search_roots:?}"
+        );
+
+        drop(home);
         let _ = fs::remove_dir_all(&tmp);
     }
 }

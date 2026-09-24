@@ -21,6 +21,8 @@ mod cache;
 mod semver;
 mod publish;
 mod lockfile;
+#[cfg(test)]
+mod test_support;
 
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
@@ -528,30 +530,6 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
     }
 
-    /// RAII guard that overrides $HOME for the duration of a test and restores
-    /// the previous value on drop (even on panic), so a failed assertion can't
-    /// leave $HOME clobbered for tests that run afterward in this process.
-    struct HomeGuard {
-        old: Option<String>,
-    }
-
-    impl HomeGuard {
-        fn new(new_home: &Path) -> Self {
-            let old = std::env::var("HOME").ok();
-            std::env::set_var("HOME", new_home);
-            HomeGuard { old }
-        }
-    }
-
-    impl Drop for HomeGuard {
-        fn drop(&mut self) {
-            match &self.old {
-                Some(v) => std::env::set_var("HOME", v),
-                None => std::env::remove_var("HOME"),
-            }
-        }
-    }
-
     #[test]
     fn test_cmd_publish_creates_archive() {
         let tmp_home = std::env::temp_dir().join("sp_test_cmd_publish_home");
@@ -571,7 +549,7 @@ mod tests {
         )
         .unwrap();
 
-        let guard = HomeGuard::new(&tmp_home);
+        let guard = crate::test_support::HomeGuard::new(&tmp_home);
 
         cmd_publish(&project_dir).expect("cmd_publish should succeed");
 
