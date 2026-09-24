@@ -112,7 +112,7 @@ fn reject_path_dependencies(manifest: &Manifest) -> Result<(), String> {
         .dependencies
         .iter()
         .filter_map(|(name, dep)| match dep {
-            Dependency::Path { path } => Some(format!("\n    {} = {{ path = \"{}\" }}", name, path)),
+            Dependency::Path { path, .. } => Some(format!("\n    {} = {{ path = \"{}\" }}", name, path)),
             _ => None,
         })
         .collect();

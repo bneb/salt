@@ -58,7 +58,14 @@ fn default_edition() -> String {
 #[serde(untagged)]
 pub enum Dependency {
     /// Inline table: { path = "../foo" }
-    Path { path: String },
+    Path {
+        path: String,
+        // Parsed so it can be refused: the enum is untagged, so an unknown
+        // key is dropped silently. Feature flags aren't implemented;
+        // resolver::Requirement::new rejects a non-empty list, as for Full.
+        #[serde(default)]
+        features: Vec<String>,
+    },
     /// Inline table with git source: { git = "...", rev = "..." }
     Git {
         git: String,
@@ -98,7 +105,7 @@ impl Dependency {
     /// Get the local filesystem path for a path dependency.
     pub fn local_path(&self) -> Option<&str> {
         match self {
-            Dependency::Path { path } => Some(path),
+            Dependency::Path { path, .. } => Some(path),
             _ => None,
         }
     }
@@ -115,7 +122,7 @@ impl Dependency {
     /// Human-readable source description.
     pub fn source_display(&self) -> String {
         match self {
-            Dependency::Path { path } => format!("path:{}", path),
+            Dependency::Path { path, .. } => format!("path:{}", path),
             Dependency::Git { git, rev, .. } => {
                 if let Some(r) = rev {
                     format!("git+{}?rev={}", git, &r[..7.min(r.len())])
@@ -310,6 +317,7 @@ entry = "lib.salt"
     fn test_dependency_source_display() {
         let path_dep = Dependency::Path {
             path: "../foo".to_string(),
+            features: vec![],
         };
         assert_eq!(path_dep.source_display(), "path:../foo");
 

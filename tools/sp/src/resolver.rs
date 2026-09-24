@@ -117,7 +117,8 @@ enum RequirementKind {
 impl Requirement {
     fn new(name: &str, dep: &Dependency, base_dir: &Path, dependent: &str) -> Result<Self, String> {
         let (text, kind) = match dep {
-            Dependency::Path { path } => {
+            Dependency::Path { path, features } => {
+                reject_features(name, features)?;
                 let dep_dir = base_dir.join(path);
                 if !dep_dir.exists() {
                     return Err(format!(
@@ -132,14 +133,7 @@ impl Requirement {
             Dependency::Version(version) => (version, parse_version_requirement(name, version)?),
 
             Dependency::Full { version, features } => {
-                if !features.is_empty() {
-                    return Err(format!(
-                        "dependency '{}' requests features {:?}, but feature flags on \
-                         dependencies are not supported yet.\n  \
-                         To build without them, drop `features` from the '{}' dependency.",
-                        name, features, name
-                    ));
-                }
+                reject_features(name, features)?;
                 (version, parse_version_requirement(name, version)?)
             }
 
@@ -183,6 +177,20 @@ impl Requirement {
             RequirementKind::Version(_) => format!("{} = \"{}\"", name, self.text),
         }
     }
+}
+
+/// Feature flags on dependencies aren't implemented, and dropping requested
+/// ones silently would build something other than what was asked for.
+fn reject_features(name: &str, features: &[String]) -> Result<(), String> {
+    if features.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "dependency '{}' requests features {:?}, but feature flags on \
+         dependencies are not supported yet.\n  \
+         To build without them, drop `features` from the '{}' dependency.",
+        name, features, name
+    ))
 }
 
 fn parse_version_requirement(name: &str, constraint: &str) -> Result<RequirementKind, String> {
@@ -609,6 +617,24 @@ json = { version = "1.0", features = ["streaming"] }
         assert!(err.contains("streaming"), "error should name the requested feature: {err}");
         assert!(err.contains("not supported"), "error should say features are unsupported: {err}");
 
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_resolve_rejects_path_dependency_features() {
+        let tmp = crate::test_support::temp_path("sp_test_resolve_path_features");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp.join("home"));
+        write_package(&tmp.join("helper"), "helper", "1.0.0", "");
+
+        let manifest = app_with(&tmp, "helper = { path = \"../helper\", features = [\"fast\"] }\n");
+        let err = resolve(&manifest, &tmp.join("app")).expect_err("the features must not be dropped silently");
+
+        assert!(err.contains("'helper'"), "error should name the dependency: {err}");
+        assert!(err.contains("fast"), "error should name the requested feature: {err}");
+        assert!(err.contains("not supported"), "error should say features are unsupported: {err}");
+
+        drop(home);
         let _ = fs::remove_dir_all(&tmp);
     }
 
