@@ -457,6 +457,24 @@ fn cmd_add(dep: &str, path: &Path, dev: bool) -> Result<(), String> {
         name, version, section
     );
 
+    // What `sp add` writes is a version dependency, which resolves only from
+    // ~/.salt/publish. Dev-dependencies aren't resolved by anything yet.
+    if !dev {
+        match publish::find_published(name) {
+            Ok(found) if found.is_empty() => eprintln!(
+                "\x1b[1;33mwarning\x1b[0m: nothing named '{}' is published in ~/.salt/publish, \
+                 so `sp build` will fail until it is.\n  \
+                 Publish it with `sp publish` from its directory.",
+                name
+            ),
+            Ok(_) => {}
+            Err(e) => eprintln!(
+                "\x1b[1;33mwarning\x1b[0m: couldn't check whether '{}' is published: {}",
+                name, e
+            ),
+        }
+    }
+
     Ok(())
 }
 
