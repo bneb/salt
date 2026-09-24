@@ -64,7 +64,7 @@ pub enum Dependency {
         git: String,
         // rev/branch/tag are parsed so the documented git-dependency shape is
         // accepted, but nothing in the shipped binary reads them:
-        // resolver::resolve_single rejects every Git dependency until git
+        // resolver::Requirement::new rejects every Git dependency until git
         // resolution exists.
         #[serde(default)]
         #[allow(dead_code)]
@@ -79,8 +79,8 @@ pub enum Dependency {
     /// Inline table with version + features: { version = "1.0", features = ["x"] }
     Full {
         version: String,
-        // Feature flags aren't implemented; resolver::resolve_single rejects a
-        // non-empty list rather than silently dropping it.
+        // Feature flags aren't implemented; resolver::Requirement::new rejects
+        // a non-empty list rather than silently dropping it.
         #[serde(default)]
         features: Vec<String>,
     },
@@ -213,10 +213,10 @@ version = "0.1.0"
 
     #[test]
     fn test_dependencies_iterate_in_sorted_order() {
-        // The resolver walks dependencies in this order and the first visit
-        // of a package wins, and the build-cache key hashes search roots in
-        // this order, so it must not vary from run to run. 8 names: an
-        // unordered map lands sorted by chance with probability 1/8!.
+        // The resolver walks dependencies in this order and selects each
+        // package at its first visit, and the build-cache key hashes search
+        // roots in this order, so it must not vary from run to run. 8 names:
+        // an unordered map lands sorted by chance with probability 1/8!.
         let toml = r#"
 [package]
 name = "app"
