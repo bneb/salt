@@ -4,7 +4,7 @@
 //! The resolver extracts them to ~/.salt/packages/<name>-<version>/
 //! for use as dependencies.
 
-use crate::manifest::Manifest;
+use crate::manifest::{Dependency, Manifest};
 use crate::semver;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -31,6 +31,9 @@ fn packages_dir() -> Result<PathBuf, String> {
 /// Output: ~/.salt/publish/<name>-<version>.tar.gz
 /// Archive contains: salt.toml, all .salt files from src/
 pub fn publish(manifest: &Manifest, project_dir: &Path) -> Result<(), String> {
+    // Before creating the archive, which would replace one already published.
+    reject_path_dependencies(manifest)?;
+
     let pub_dir = publish_dir()?;
     let archive_name = format!("{}-{}.tar.gz", manifest.package.name, manifest.package.version);
     let archive_path = pub_dir.join(&archive_name);
@@ -98,6 +101,33 @@ pub fn publish(manifest: &Manifest, project_dir: &Path) -> Result<(), String> {
     );
 
     Ok(())
+}
+
+/// Consumers resolve a published package's dependencies from its copy
+/// extracted to ~/.salt/packages/, where a relative path leads nowhere, so
+/// a path dependency would break every one of them. Dev-dependencies are
+/// fine: nothing resolves a dependency's dev-dependencies.
+fn reject_path_dependencies(manifest: &Manifest) -> Result<(), String> {
+    let paths: Vec<String> = manifest
+        .dependencies
+        .iter()
+        .filter_map(|(name, dep)| match dep {
+            Dependency::Path { path } => Some(format!("\n    {} = {{ path = \"{}\" }}", name, path)),
+            _ => None,
+        })
+        .collect();
+    if paths.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "cannot publish '{}' with path dependencies:{}\n  \
+         Packages that use '{}' resolve its dependencies from the copy extracted to \
+         ~/.salt/packages/, where these paths don't exist.\n  \
+         Hint: publish each of them with `sp publish` and depend on it by version.",
+        manifest.package.name,
+        paths.concat(),
+        manifest.package.name
+    ))
 }
 
 /// Collect all .salt files under a directory.
@@ -222,6 +252,59 @@ mod tests {
         // README should not be included
         assert!(!files.iter().any(|f| f.ends_with("README.md")));
 
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// A package named `withpath` under `root`, with `manifest_tail`
+    /// appended to its salt.toml.
+    fn package_with(root: &Path, manifest_tail: &str) -> (PathBuf, Manifest) {
+        let dir = root.join("withpath");
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/lib.salt"), "package withpath\n").unwrap();
+        fs::write(
+            dir.join("salt.toml"),
+            format!("[package]\nname = \"withpath\"\nversion = \"1.0.0\"\n\n{}", manifest_tail),
+        )
+        .unwrap();
+        let manifest = crate::manifest::load(&dir.join("salt.toml")).unwrap();
+        (dir, manifest)
+    }
+
+    #[test]
+    fn test_publish_rejects_path_dependencies() {
+        let tmp = crate::test_support::temp_path("sp_test_publish_path_dep");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp.join("home"));
+        let (dir, manifest) = package_with(
+            &tmp,
+            "[dependencies]\nhelper = { path = \"../helper\" }\nother = \"1\"\n",
+        );
+
+        let err = publish(&manifest, &dir).expect_err("no consumer could resolve ../helper");
+        assert!(err.contains("cannot publish 'withpath'"), "{err}");
+        assert!(err.contains("helper = { path = \"../helper\" }"), "{err}");
+        assert!(!err.contains("other"), "only path dependencies are the problem: {err}");
+        assert!(
+            !tmp.join("home/.salt/publish/withpath-1.0.0.tar.gz").exists(),
+            "nothing may be published"
+        );
+
+        drop(home);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_publish_allows_path_dev_dependencies() {
+        let tmp = crate::test_support::temp_path("sp_test_publish_path_dev_dep");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp.join("home"));
+        // Consumers never resolve a dependency's dev-dependencies.
+        let (dir, manifest) = package_with(&tmp, "[dev-dependencies]\nhelper = { path = \"../helper\" }\n");
+
+        publish(&manifest, &dir).expect("a path dev-dependency doesn't reach consumers");
+        assert!(tmp.join("home/.salt/publish/withpath-1.0.0.tar.gz").exists());
+
+        drop(home);
         let _ = fs::remove_dir_all(&tmp);
     }
 
