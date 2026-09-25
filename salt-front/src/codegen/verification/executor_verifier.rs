@@ -12,6 +12,7 @@
 //! 5. Mailbox Lossless: posted frame is always reachable from drain
 //! 6. Arena Reset Safety: reset only when mailbox fully drained
 
+#[cfg(feature = "z3-backend")]
 use crate::z3_shim::ast::Ast;
 
 const QUEUE_CAPACITY: i64 = 1024;

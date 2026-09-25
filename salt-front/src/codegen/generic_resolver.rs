@@ -142,7 +142,24 @@ impl<'a, 'ctx, 'b> GenericResolver<'a, 'ctx, 'b> {
                     // Skip unresolved generic placeholders — these would poison the map
                     // and block Phase 3 (argument inference) from binding the real type.
                     // e.g., Box<T>::new(Simple{val:10}) has struct_concrete_args=[Struct("T")]
-                    if arg.has_generics() {
+                    //
+                    // NB-4: has_generics() is BLIND to bare Struct("T") spellings
+                    // (types.rs: Struct(_) => false), so raw self-spellings from
+                    // unbound receivers slipped through and pre-empted argument
+                    // inference (push(1) never bound T=i64 => cast i64 -> T).
+                    // Skip any bare leaf spelled as a DECLARED param name.
+                    let placeholder_spelling = match arg {
+                        Type::Struct(n) => {
+                            !n.contains("__")
+                                && params.iter().any(|p| generic_param_name(p) == *n)
+                        }
+                        Type::Concrete(n, a) if a.is_empty() => {
+                            !n.contains("__")
+                                && params.iter().any(|p| generic_param_name(p) == *n)
+                        }
+                        _ => false,
+                    };
+                    if arg.has_generics() || placeholder_spelling {
                         continue;
                     }
                     let name = generic_param_name(param);

@@ -493,7 +493,7 @@ Contracts are checked at compile time using an SMT solver. The process for each 
 3. If constant folding fails, the compiler checks whether the negation of the expression is satisfiable.
 4. **Proved:** No input can violate the condition. The check is elided.
 5. **Counterexample:** A violating input exists. The compiler reports the specific values and stops with an error.
-6. **Timeout:** The solver cannot decide within a fixed time budget (100ms). The compiler emits a runtime assertion as a fallback. The program compiles and runs, but will trap if the condition is violated at runtime.
+6. **Timeout:** The solver cannot decide within a fixed proof budget (a Z3 `rlimit` of resource units, not a wall-clock timeout — deterministic regardless of machine speed or load; see `Z3_PROOF_RLIMIT` in `verification/mod.rs`). The compiler emits a runtime assertion as a fallback. The program compiles and runs, but will trap if the condition is violated at runtime.
 
 Postconditions are checked similarly at each return site, with `result` bound to the returned expression.
 
@@ -520,14 +520,556 @@ The compiler verifies two properties:
 
 If either check fails, the compiler reports a counterexample. Invariants that constrain an index variable to a known range enable Z3 to prove array bounds safety inside while loops — the same way `for`-loop induction variables do automatically.
 
-### 7.5 Limitations
+### 7.5 Arithmetic Overflow
+
+Outside release builds (and inside any function marked to force it), every `+`/`-`/`*` on a fixed-width integer type is runtime-checked by default: the operation is redone in a wider type, truncated back, and re-widened; a mismatch means information was lost, and the program traps rather than silently wrapping. This is unconditional today — it costs a real branch and a wider redundant computation on every checked arithmetic operation, whether or not that operation could ever actually overflow.
+
+Before emitting that check, the compiler now first attempts to prove it unnecessary, the same proof-or-panic shape used for `requires`/`ensures` everywhere else in this section, applied to arithmetic itself as an implicit contract rather than one the programmer wrote out. Concretely: translate both operands to Z3, assert their type's range (plus this function's own `requires` clauses, so a stated precondition can narrow the operands enough to prove safety that the bare types alone don't establish), and check whether the operation's true mathematical result can fall outside the target type's range. UNSAT — impossible — elides the runtime check entirely, zero cost. Anything else (a real counterexample, an undecidable result, or an operand the translator can't handle) keeps the exact runtime check that would have been emitted anyway.
+
+This is deliberately a pure optimization, never a new way to reject code: a proven violation is treated identically to an undecidable one. An unconstrained `a + b` has a trivial counterexample (the type's own max, plus one) for nearly any function that doesn't bound its inputs, so promoting "Z3 found a way this could overflow" to a compile error would turn most ordinary, unannotated arithmetic in the language into a compile failure. Only a genuine, explicit `requires`/`ensures` claim gets that treatment elsewhere in this document; an operation's implicit non-overflow obligation does not.
+
+```salt
+pub fn safe_add(a: i32, b: i32) -> i32
+    requires(a >= 0 && a <= 100 && b >= 0 && b <= 100)
+{ return a + b; }  // sum is at most 200 -- runtime check proven unnecessary, elided
+
+pub fn unsafe_add(a: i32, b: i32) -> i32 { return a + b; }  // no bound on a, b -- check kept, unchanged from before this feature existed
+```
+
+Cost was measured, not assumed, before this shipped: nonlinear arithmetic (multiplication of two unconstrained variables) does not exhibit the scaling cliff this session found for bitwise operators (Int↔BV↔Int conversion specifically) — a 25x larger proof budget on the same multiplication query showed no blowup, same answer, same order of magnitude of time. The one real, consistently-reproduced cost found: a function already exercising compound nonlinear reasoning (`x*x + y*y`, in a fixture literally named for being a hard case) went from ~45ms to ~1.3-1.9s once its arithmetic sub-expressions also got elision attempts — real and attributable, but bounded to that narrow class of already-complex expressions, confined entirely to debug/checked builds (release builds never attempt elision, since they never emit the check it would be eliding), and not visible as a whole-suite regression across repeated full runs (which showed no aggregate slowdown outside ordinary run-to-run rlimit timing variance). If this cost profile becomes a practical problem on real, arithmetic-heavy code, the documented next step is a cheap interval/range analysis pass that filters out the obviously-safe cases before ever invoking Z3 — matching how SPARK's `gnatprove` avoids full SMT dispatch on every operation — rather than accepting a Z3 round-trip per arithmetic operation as the steady state.
+
+Only this function's own `requires` clauses are consulted for now (`caller_preconditions`); `path_conditions`, `loop_assumptions`, and `scoped_facts` use the identical translate-and-assert pattern elsewhere in `VerificationEngine::verify` and would extend elision the same way, just not needed for the cases this was built to cover yet. See `try_elide_overflow_check` in `verification/mod.rs`, and `test_overflow_elide_add_proved.salt` / `_sub_proved` / `_mul_proved` / `_unsigned_proved` / `test_overflow_check_kept_unconstrained.salt` / `_provable_violation` / `test_overflow_elide_untranslatable_operand.salt`.
+
+### 7.6 Limitations
 
 Contracts cannot prove all properties. Known limitations of the current implementation:
 
+- Integer overflow/wraparound is not modeled. Arithmetic is unbounded
+  (arbitrary-precision) internally, not the fixed-width, wrapping arithmetic
+  real hardware performs. `ensures { (a + 1) > a }` on a `u64` proves, even
+  though it is false at `a = u64::MAX` on real hardware. Practically: an
+  overflow GUARD written in your own code (`if a + b < a { reject }`) still
+  executes as real, correctly-wrapping machine code at runtime and remains
+  fully protective -- what does NOT hold is any expectation that the prover
+  will catch you if you forget to write one. Removing such a guard and
+  re-proving is not, by itself, evidence the guard was unnecessary.
 - Floating-point properties: the solver's theory of floating-point arithmetic is incomplete. Contracts with non-trivial float expressions may timeout.
 - String length and content: only compile-time-known string literals are reliably folded to constants. Properties of strings from runtime sources (I/O, network) rely on the timeout fallback.
 - Non-linear integer arithmetic: multiplication of two variables may timeout.
+- Fields of a returned value: `ensures { result.field < N }` is not proven, because
+  the postcondition is checked against a single symbolic `result` rather than
+  against the struct's fields. Constrain the field through a scalar the function
+  already returns, or check it at runtime.
+- ~~A callee's `ensures` is not assumed at the call site.~~ **Fixed for named
+  results.** After `let y = f(x);`, `f`'s `ensures` clause (params
+  substituted with the actual arguments, `result` tied to `y`) is now a fact
+  available to any later `requires`/`ensures` check in `y`'s scope. Two prior
+  bugs made this a no-op despite the plumbing (`apply_ensures_to_solver`,
+  called from every call site) looking complete: `result` lowered to a
+  symbol literally named `"result"` -- the same name at every call site with
+  an ensures clause, colliding across all of them -- with no substitution
+  rule ever pointing it at the value this specific call produced; and the
+  resulting fact was asserted only into `ctx.z3_solver`, which
+  `requires`/`ensures` checks never read (each builds a fresh `Solver`; only
+  while-loop invariant proving reads it directly). `test_cross_fn_chain.salt`
+  -- already in the suite, already claimed as a working example of this --
+  measurably improved from this fix (1/2 checks proven to 2/2) once it was
+  actually true rather than aspirational. Still doesn't reach an UNNAMED call
+  result (`h(g(x))` -- `g`'s value is never bound to an identifier, so
+  nothing carries the fact forward) or a recursive call's own inductive
+  hypothesis (no ranking/induction machinery exists for that).
+- ~~A function's own `requires` clause is not assumed as a fact for
+  reasoning inside its own body.~~ **Fixed for calls it makes.** `f(x)
+  requires { x <= LIMIT } { g(x); }`, where `g` also requires `x <= LIMIT`,
+  now proves without re-guarding. The mechanism (`caller_preconditions`,
+  pushed/popped around the function body, consumed at the callee's
+  requires-check site) already existed and was already wired correctly --
+  `requires { expr }` just parses as `Expr::Block`, and the Z3 translator
+  has no arm for that, so every entry silently failed to translate and
+  never reached the solver. `requires(expr)` (paren form) was never
+  affected, which is why this stayed hidden. This specifically covers calls
+  the function makes; a path-sensitive `if` guard, re-stating the same fact
+  directly in the body, is still the way to help checks that aren't a call
+  (e.g. an inline array index) discharge against a `requires` clause.
+- ~~Unsigned integer types carry no non-negativity constraint.~~ **Fixed.**
+  `u8/u16/u32/u64/usize` (and the signed narrow types `i8/i16`) now carry
+  their type's range as an implicit fact wherever a value of that type is in
+  scope for a `requires` or `ensures` check -- not only for the direct
+  arguments of the call being verified, which is as far as the existing
+  bounds-injection reached before. So `dense_idx < count` now DOES imply
+  `count > 0` for unsigned types, without an extra guard stating it.
+  Scoped to the free variables the constraint under check actually mentions,
+  not every local in scope: the unscoped version measurably regressed one
+  proof-gate fixture (a bitvector-heavy check pushed past its 100ms
+  watchdog by the extra assertions) before this constraint was added.
+- A `Ptr<T>.field` read is opaque in ARGUMENT position, not only when
+  returned: two occurrences of the same `set[0].count` are two unrelated
+  symbols to the solver, even with nothing mutated between them. Bind the
+  read to a local once and use the local everywhere the fact is needed.
+- ~~Locals are not constrained to their defining expressions.~~ **Fixed for
+  non-`mut` locals.** After `let end = ptr + len;`, `end` and `ptr + len` are
+  now the same fact to the solver: a guard on one now discharges an
+  obligation stated over the other, in either direction. Sound
+  unconditionally for a non-`mut` binding -- it has exactly one value for
+  its whole lifetime, so there is no branch to merge and no havoc semantics
+  to fight. Implemented as a new `ctx.emission.let_bindings` fact list
+  (`name == init`, one entry per non-`mut` local in scope), asserted
+  alongside `path_conditions` at both the `requires` and `ensures` check
+  sites; kept as its own list rather than pushed onto `path_conditions`
+  itself because that Vec's push/pop pairs assume strict LIFO nesting by the
+  if/else branch that owns each entry, and a let's scope (to the end of its
+  enclosing block) doesn't nest that way. `emit_block` and `emit_block_expr`
+  each snapshot-and-truncate it, so a let declared inside a branch or loop
+  body doesn't leak its fact past that block. See
+  `tests/z3_contracts/test_let_binding_proved.salt` and
+  `test_let_binding_rejected.salt`. Still open: a `mut` local's own
+  defining expression is unconstrained (stays on the literal-only
+  `assert_local_lit_int_in_z3` path below it) -- extending this to `mut`
+  locals hits the havoc entry two bullets down, not this one.
+- A `mut` local reassigned anywhere -- not only inside a branch -- loses its
+  tracked value for the solver. This is deliberate: the same "havoc" semantics
+  that make while-loop verification sound (a loop's induction variable must be
+  treated as unconstrained going into each iteration, or reasoning about the
+  loop would be unsound) apply to any reassignment, named literally
+  `{var}_havoc_{id}` at the one site that mints them
+  (`codegen/stmt/while_stmt.rs`). `ensures` clauses handle this gracefully: a
+  postcondition whose return value traces to a havoc'd local defers to a
+  runtime check rather than hard-failing (`emit_ensures_runtime_check`).
+  `requires` clauses at a call site do not -- a havoc'd argument produces a
+  hard `E009`, unconditionally, even when the surrounding code is correct
+  (this is what forces the pattern seen throughout this codebase of
+  re-asserting a bound immediately before the call it protects, rather than
+  trusting an earlier clamp).
+
+  This asymmetry looks fixable by mirroring the `ensures` treatment -- detect
+  a havoc'd argument, defer to `emit_requires_runtime_check` instead of
+  failing -- and a patch doing exactly that was built, and reverted, in the
+  course of documenting this entry. It passed every existing contract test
+  except one: `test_slice_cursor_rejected`, built specifically to catch
+  "unsound elision" in bounds checks, where a genuinely wrong loop bound
+  (`while off <= buf.len()`, allowing `off == len` into `buf.set()`) also
+  havocs its induction variable and was accepted by the same broadened
+  leniency. From the solver's side, "a benign clamp the prover cannot see
+  through" and "a genuinely wrong loop bound" are the identical shape --
+  both are SAT results driven by a havoc'd symbol -- and nothing in scope at
+  the call site distinguishes them. Fixing this soundly needs a way to tell
+  those two cases apart that does not currently exist, not a bigger
+  allowlist; recorded here rather than shipped narrower-than-safe. **Still
+  open** -- the paragraph below fixes an adjacent, different gap found
+  while re-investigating this one, not this one.
+
+  ~~Nothing re-established anything about a havoc'd variable once its loop
+  exited, not even the loop's own invariant.~~ **Fixed.** A `while` loop's
+  standard Hoare post-loop fact -- `invariant && !cond` -- is now pushed
+  onto `ctx.emission.scoped_facts` when the loop exits (renamed from
+  Tier 1's `let_bindings`; the field now serves both), so code AFTER a
+  loop can use it, the same way `loop_assumptions` already lets code
+  INSIDE the loop use `invariant && cond`. Before this fix, `off` stayed
+  permanently, unconditionally free for the rest of the function the
+  moment any while loop havoc'd it -- not just within the loop, which is
+  what the paragraph above is about, but forever after, since nothing
+  ever un-havocs `symbolic_tracker`'s entry for a name. Soundness rests on
+  `__salt_contract_violation` being `noreturn` (see context.rs's
+  cold+noreturn passthrough): invariant maintenance across iterations is
+  checked at RUNTIME, not proven at compile time (only the base case is),
+  so this is sound because control can only reach post-loop code if that
+  runtime check held on every iteration that ran -- the same trust
+  `emit_requires_runtime_check`/`emit_ensures_runtime_check` already rest
+  on elsewhere, applied somewhere it wasn't reaching before, not a new
+  kind of trust.
+
+  A second, genuine soundness bug was found and fixed in the same change:
+  `scoped_facts` entries are raw expressions re-resolved by NAME at
+  whatever point they're later consulted, and a loop's induction variable
+  is an ordinary, reusable name. Two SEQUENTIAL while loops reusing the
+  same variable name produced a direct contradiction -- the first loop's
+  stale post-fact and the second loop's live one, both resolving against
+  the second loop's havoc symbol once the name was reassigned -- which
+  silently made the solver context UNSAT and let an absurd, unrelated
+  claim "prove" for the rest of the block. Caught empirically
+  (`test_while_post_loop_var_reuse_rejected.salt` reproduces it) while
+  testing this fix, not by inspection. Fixed by anchoring each pushed
+  fact to its own loop's permanent `{var}_havoc_{id}` symbol
+  (`HavocAnchor` in `while_stmt.rs`) instead of the bare, reusable name --
+  the same technique Tier 2 used for call results, applied here because
+  the same class of risk turned out to apply to loop variables too.
+
+  For-loops were not checked for the same gap -- `for_loop.rs` pops
+  `loop_assumptions` the same way but has no post-loop-fact push at all,
+  and for-loop induction variables typically go out of scope entirely at
+  the loop (unlike a `while` loop's condition variable, a pre-declared
+  `mut` local that outlives it), so whether there's anything left to
+  propagate is unclear without a closer look.
+
+  The still-open within-loop problem two paragraphs up turned out to be
+  smaller than it looked: tested directly, `need_positive(y)` inside a
+  loop that mutates `y` fails with no invariant covering it, and
+  compiles clean the moment `invariant y > 0;` is added -- no leniency,
+  no runtime fallback, 100% proven. So this was never "impossible to
+  verify without real invariant inference"; it's "the compiler doesn't
+  tell you which invariant to add," and a bare `y_havoc_14` in the
+  counterexample doesn't point at `invariant` the way a plain English
+  hint could. `test_slice_cursor_rejected` stays correctly rejected
+  either way -- no invariant rescues a genuinely wrong guard. Fixed with
+  a new `ProofHint::AddInvariant` (`proof_witness.rs`), triggered by a
+  `_havoc_` substring in the failing constraint and replacing the
+  generic `AddRequires`/`AddAssert` hints entirely rather than
+  supplementing them (those reference a `requires` clause on the
+  function signature or a bare `assert` -- Salt has no `assert`
+  statement at all, and a `requires` clause can't refer to a local
+  variable's value; both would send the developer at the wrong fix for
+  a loop-local). The suggested condition is rewritten into the caller's
+  own terms (the callee's parameter names replaced with the actual
+  argument expressions at this call site) rather than shown verbatim in
+  the callee's names, which would reference identifiers out of scope at
+  the call site whenever the argument isn't a bare variable matching
+  the parameter's own name. Diagnostics only -- doesn't change what's
+  provable, so it carries none of the soundness risk the reverted
+  leniency patch had.
+
+  ~~Automatically trying a failing call's `requires` clause as a
+  candidate invariant would remove the manual step entirely; not
+  attempted, deliberately, to see how much friction the hint alone
+  removes first.~~ **Built anyway, same session, on request rather than
+  waiting for real usage to answer that question.** For every
+  statement-position call in a while loop's body (`need_positive(y);` --
+  not `let x = f(y);`, not a method call like `buf.set(off, v)`; both
+  need more than a name-based lookup and are out of scope for now),
+  `collect_call_requires_candidates` (`while_stmt.rs`) proposes the
+  callee's own `requires` clause, substituted into the loop's variable
+  names, as a candidate invariant; `filter_call_requires_candidates`
+  keeps only the ones that hold at the base case, silently dropping the
+  rest. A dropped candidate changes nothing -- the call it came from
+  still gets checked for real, with concrete arguments, during body
+  emission, by the same path that already existed. A kept candidate is
+  inserted as a genuine `Stmt::Invariant`, which means it gets the exact
+  same treatment a hand-written one does: included in `loop_assumptions`
+  for other calls inside the loop, in `scoped_facts` after it (the
+  paragraph above), and -- not incidental, load-bearing -- a real
+  per-iteration runtime check via the normal `Stmt::Invariant` codegen.
+  Without that last part, a wrongly-kept candidate would have no safety
+  net at all, unlike an explicit invariant, which at least gets caught
+  at runtime if it's wrong; this mechanism inherits the exact same
+  guarantee rather than a weaker one, by reusing the exact same
+  insertion point `try_infer_while_invariant`'s existing single-pattern
+  auto-invariant already uses.
+
+  Building this immediately surfaced a real, separate, pre-existing bug
+  it doesn't cause but reliably triggers: `symbolic_tracker` maps a
+  variable's SOURCE NAME (not a unique id) to its current Z3 term, and
+  is never reset between functions. Two functions in the same file each
+  using "y" as a loop variable meant the second function's base-case
+  check -- for a HAND-WRITTEN invariant, not just a synthesized
+  candidate -- silently resolved against the first function's leftover
+  havoc symbol and failed for a reason that had nothing to do with
+  either function's own code. Reproduces with two copies of the exact
+  same, individually-correct function body compiled together
+  (`test_cross_fn_symbolic_tracker_proved.salt`). Fixed by clearing
+  `symbolic_tracker` at the start of `emit_fn` (`codegen/mod.rs`),
+  alongside the existing per-function clears of `consumed_vars`/
+  `consumption_locs`/`devoured_vars`. `ctx.z3_solver`'s own accumulated
+  assertions are left alone -- they're keyed by these same never-reused
+  names, so once nothing can look them up by name anymore they go inert
+  rather than harmful, and resetting the solver itself is a larger,
+  less-understood change than clearing this one cache.
+
+  `symbolic_tracker` living on `CodegenContext` -- constructed once per
+  compilation, not once per function -- rather than being reset per call
+  is one instance of a general shape: any `RefCell` field there keyed by
+  plain, reusable source-level name is a candidate for the same class of
+  bug. Prompted an audit of the others. `ownership_tracker`
+  (`Z3StateTracker`), `malloc_tracker`, and `arena_escape_tracker` turned
+  out to already be correctly scoped, just via a different mechanism --
+  `emit_fn` swaps each for a fresh instance and restores the caller's on
+  the way out (`ctx.malloc_tracker.replace(MallocTracker::new())`, etc.,
+  `codegen/mod.rs`), rather than clearing in place. `pointer_tracker` was
+  the one actual miss: `PointerStateTracker::states` is keyed by plain
+  variable name exactly like `symbolic_tracker`, ships its own `clear()`
+  explicitly documented "for new function scope"
+  (`verification/pointer_state.rs`), and was simply never wired up.
+  Confirmed with an adversarial two-function case
+  (`test_cross_fn_pointer_tracker_rejected.salt`): a bare-alias local
+  (`let p = other;`) never re-marks its own tracker entry (see
+  `emit_local_pointer_tracking`, `stmt/mod.rs` -- it only handles a
+  recognized constructor call or no initializer at all), so it silently
+  inherited an unrelated earlier function's leftover `Valid` marking for
+  the name `p`, and `requires { valid(p) }` on a call using it was PROVEN
+  -- "0 deferred to runtime" -- for a pointer this function never
+  actually validated. Unlike the `symbolic_tracker` fix, this one is
+  wired in as a swap-and-restore, matching its three siblings above, not
+  a bare clear: `process_fn_arguments`, which marks pointer-typed
+  parameters `Valid` on entry, runs before the point where those three
+  swap in fresh state, so the swap-in for `pointer_tracker` sits earlier
+  in `emit_fn`, right next to `symbolic_tracker`'s clear -- clearing
+  after parameter processing would have wiped out this function's own
+  parameter marks. The restore stays grouped with the other three near
+  the end of `emit_fn`; that ordering isn't sensitive the way swap-in is,
+  since nothing checks `pointer_tracker` as a whole the way
+  `malloc_tracker.verify()` does. Swap-and-restore over a bare clear
+  everywhere it was available (not just for consistency): if `emit_fn`
+  is ever reentered mid-body for nested specialization, clearing would
+  permanently discard the outer call's in-progress state, where
+  swap-and-restore recovers it.
+
+  The "already correctly scoped" claim above for `malloc_tracker` and
+  `arena_escape_tracker` sat unverified by an actual adversarial test for
+  a while -- noted as structurally identical to the `pointer_tracker`
+  bug and flagged for the same two-function testing, but the audit
+  moved on (to the `check_deref` swallowing bug, a different discovery
+  entirely) before it happened. Closed out later the same session:
+  confirmed by tracing both with temporary instrumentation rather than
+  trusting the swap-restore code alone. For `malloc_tracker`,
+  `second()`'s own malloc/free pair is unaffected by `first()` leaking
+  the same variable name (`test_cross_fn_malloc_tracker_proved.salt`),
+  and the leak itself is still caught despite that unrelated reuse
+  (`test_cross_fn_malloc_leak_still_caught.salt`) -- a narrower
+  adversarial angle than `pointer_tracker`'s bare-alias gap, since
+  `malloc_tracker.track()` unconditionally overwrites its key regardless
+  of scoping, so a leaked (never freed or returned) entry is the only
+  state shape that could conceivably survive into another function's
+  fresh activity. For `arena_escape_tracker`
+  (`test_cross_fn_arena_escape_proved.salt`), traced directly: a plain
+  malloc'd pointer named `p` in `second()`, never registered with any
+  arena, resolved `taint.get("p")` to `None` in `check_return_escape` --
+  not `first()`'s leftover depth-2 arena taint on the same name, which a
+  tracker that leaked state the way `pointer_tracker` originally did
+  would have produced instead, wrongly rejecting the return. Also added
+  `test_arena_escape_direct_rejected.salt`: arena escape analysis had no
+  coverage at all in this suite before now, cross-function or otherwise.
+
+  Two adjacent, separate findings surfaced while constructing the
+  adversarial test above; both since resolved. (1) `process_fn_arguments`
+  marks every pointer-typed parameter `Valid` on function entry
+  unconditionally, not only when the function's own `requires` actually
+  says so about it. Investigated as a possible bug matching
+  `pointer_state.rs`'s own doc comment ("Optional... function args"), but
+  it's the load-bearing ergonomic default, not an oversight: `check_deref`
+  treats untracked (`None`) identically to `Valid`, so an ordinary
+  function that dereferences its own pointer parameter with no `requires`
+  at all -- the common case -- compiles clean today
+  (`buf.write(val)` with no contract on `buf`), and `requires { valid(p) }`
+  doesn't mark `p` in `pointer_tracker` either (`emit_requires_verification`
+  only asserts into the Z3 solver), so there's no opt-in path to a
+  stricter default even for a function that states one. Defaulting
+  raw-pointer parameters to `Optional` instead would break that common
+  case outright with no fallback -- a design change requiring its own
+  buy-in, not a fix, and out of scope here. (2) Any call to an extern (or
+  configured freeing) function marks its own pointer arguments `Optional`
+  as a post-emission side effect (`emit_low_level_call`, `call_helpers.rs`)
+  -- correct for code that runs *after* that call. Checked directly
+  whether a single call site's own `requires { valid(...) }` could be
+  validated against tracker state read *after* this side effect: it
+  isn't -- verification happens before `emit_low_level_call` runs for that
+  same call, confirmed by tracing `pointer_tracker.get_state` at the
+  point of injection, and a plain user-function call in between two
+  checks doesn't trigger the downgrade at all (only extern/freeing calls
+  do). No bug.
+
+  A third, unrelated, considerably more serious bug turned up by accident
+  while building an adversarial case for (1)/(2) above: a dereference
+  safety check that was already computing the right answer was being
+  silently discarded before it could ever reject anything.
+  `try_emit_special_method` (`special_methods.rs`) calls `check_deref` for
+  unsafe `Ptr<T>` methods (`.read()`/`.write()`/`.offset()`/etc.) and
+  correctly returns `Err` on a real violation -- Freed, Uninitialized,
+  Empty, or Optional -- distinct from `Ok(None)` when the method name
+  isn't a special method at all. Its caller, `emit_method_call`
+  (`calls.rs`), matched `if let Ok(Some(res)) = try_emit_special_method(...)`,
+  which treats those two outcomes identically: a genuine `Err` silently
+  fell through to ordinary, unchecked method resolution instead of
+  aborting. `free(p); p.read();` -- one function, no contracts, no
+  cross-function state whatsoever -- compiled clean with zero error and
+  zero runtime check. Confirmed by tracing `check_deref`'s own return
+  value directly at the call site: it correctly computed `Freed`, and the
+  compiler emitted the read anyway. Fixed by propagating with `?` instead
+  of matching on `Ok(Some(_))`, so `Ok(None)` still falls through but
+  `Err` now aborts with the real message. See
+  `test_use_after_free_via_read_rejected.salt`. The identical shape
+  appeared twice more, both wrapping `ctx.emit_intrinsic(...)` (`calls.rs`,
+  `method_resolution.rs`) -- lower severity (a real intrinsic-argument
+  error there gets a confusing generic-method-resolution error instead of
+  its own specific one, rather than silently compiling), but same fix,
+  applied for the same reason. All three fixes are a five-line diff
+  total; the full test suite (2025 Rust tests, 69 z3_contracts fixtures)
+  passes unchanged before and after, meaning nothing was relying on the
+  swallowed behavior.
+- Conditionally-assigned `mut` locals lose their constraints. After
+  `let mut x = a; if c { x = b; }` the solver does not merge the branches, so a
+  guard on `x` will not discharge a later obligation about it. Where this
+  matters, state the precondition immediately before the operation it protects.
 - The `@trusted` attribute bypasses verification entirely for the annotated function body.
+
+Postconditions on bool-returning functions used to be skipped in silence, which
+is the more dangerous shape of the same problem: the return value was translated
+through the integer path, which had no arm for bool literals or for comparisons
+in value position, so translation failed and no check ran. `ensures { result }`
+on `return false` compiled clean and reported nothing. Bools now carry as 0/1 in
+that encoding and a bare identifier in boolean position means "not zero"; see
+`tests/z3_contracts/test_bool_postcondition_proved.salt`.
+
+Named constants used to belong on this list by accident: a `const` referenced in
+a contract lowered to a fresh unconstrained symbol rather than its value, so
+`ensures { result < MAX }` became `result < <anything>` and Z3 duly produced a
+counter-example. The identical contract written with a literal proved fine,
+which made the failure look like a limit of the solver. Constants now lower to
+their values; see `tests/z3_contracts/test_const_in_contract_proved.salt`.
+
+A postcondition's type-bounds scoping used to look only at identifiers written
+in the `ensures` clause's own text, not at the RETURN expression `result` is
+bound to. `fn g(n: u64) -> u64 ensures { result > 0 } { return n + 1; }` --
+obviously true for real `u64` arithmetic -- failed to prove, because the
+scoping never saw `n` (it appears only inside `result == n + 1`, the
+Hoare/WP binding, not inside `result > 0` itself), so `n`'s non-negativity
+was never available and Z3 was free to pick `n = -1`. Found while testing
+the composability fixes above and confirmed to predate both of them.
+Type-bounds scoping now also collects from the return expression; see
+`tests/z3_contracts/test_ensures_return_expr_bounds_proved.salt`.
+
+`assert_bound_for_type` -- the single function every type-bounds path above
+funnels through -- had explicit arms for u8/u16/i8/i16/bool, but none at all
+for i32 or i64: they fell through to the match's `_ => {}` and Z3 treated
+them as unconstrained mathematical integers, no ceiling or floor. u32/u64/
+usize had a floor (`>= 0`) but no ceiling at all, correct in spirit for
+u64/usize (their real ceiling is astronomically unlikely to bind) but wrong
+for u32, whose ceiling (2^32 - 1) is well within range of ordinary
+arithmetic. Found by accident while investigating why `test_bv.salt`'s
+proof/timeout outcome was flaky under machine load (see the determinism
+work above): giving Z3 a far larger resource budget than its normal
+~100ms turned a "proven" bitwise contract on `i32` parameters into a hard
+rejection, with a counterexample of `x = 2^37` -- physically impossible
+for a real `i32`. The exact same class of gap reproduces instantly under
+the compiler's normal, default settings with nothing but a single
+unconstrained variable and a linear bound (`ensures(result <= 2147483647)`
+on an `i32` identity function) -- no special budget needed; see
+`test_i32_i64_full_range_proved.salt` and `test_u32_upper_bound_proved.salt`.
+Fixed by adding the missing i32/i64 arms and splitting u32 from u64/usize
+so each gets its own real ceiling (u64::MAX exceeds what `Int::from_i64`
+can represent, so its ceiling uses `Int::from_u64` instead).
+
+This produced a real, informative side effect rather than a clean win:
+with i32 properly bounded, `test_bv.salt`'s three bitwise facts (all
+true, none contrived) stopped being provable within 100ms at all --
+every one of them now hits the timeout and gets a real runtime check
+instead, with an explicit warning, every single time. Correctly modeling
+a bitwise operation against a *bounded* domain is measurably more
+solver work than the (unsound) unbounded-integer shortcut was; the old
+"proof" was fast because it was skipping the hard part, not because the
+fact was easy. `proof_gate.sh`'s baseline was regenerated
+(`--update-baseline`) to record this fixture's honest count (0/5 proven,
+down from a baseline of 1) rather than treating the correction as a
+regression to revert.
+
+**Correction to the paragraph above, written minutes later against a
+bigger sample:** the initial check (4 clean runs of
+`mlir_determinism_gate.sh` right after this fix) was reported here as
+the flakiness having "stopped reproducing as a side effect." Ten more
+runs on an otherwise idle machine came back 5 pass / 5 fail on the same
+fixture. Four clean runs was luck, not a fix -- the honest read is that
+this query still sits close enough to the 100ms line that ordinary
+run-to-run timing noise (no competing process required) decides it
+about half the time. The underlying diagnosis stands: this is the
+100ms watchdog being wall-clock rather than resource-based, and fixing
+it for real means switching to something like Z3's `rlimit` (resource
+units, deterministic regardless of machine speed or load -- prototyped
+and confirmed working during the investigation that found this, see the
+git history around this fix) rather than tuning the wall-clock number.
+That switch is still not done. If `requires`/`ensures` proofs over
+runtime checks is the actual goal, a compiler that can't reliably
+finish proving true bitwise facts about bounded integers -- reliably in
+either direction, proven or honestly deferred, rather than a coin flip
+-- is leaving real guarantees on the table AND shipping non-reproducible
+builds. Worth doing on its own now that it's tuning a genuinely
+hard-but-sound query rather than papering over an unsound one; not
+attempted here.
+
+**Update: the switch is done.** Both `solver_params.set_u32("timeout", 100)`
+call sites (`VerificationEngine::verify` and `verify_postcondition`,
+`verification/mod.rs`) now set `"rlimit"` instead, via a shared
+`Z3_PROOF_RLIMIT` constant. `rlimit` counts Z3-internal resource units --
+a deterministic function of the query itself, not of wall-clock time --
+confirmed directly with a throwaway test before touching real code: a
+trivial UNSAT proves fine at a generous limit, and a starved one (`1`)
+bails out to `Unknown` every time, same as a real hard case would, with
+no machine-speed dependency either way.
+
+Calibration turned out to be the real work, and not the "just raise the
+number" kind. The instinct that a bigger budget would let more true
+bitwise facts (like `test_bv.salt`'s `or_monotonic`) actually prove
+turned out to be only partly right: 2,000,000 lets one more of its five
+checks prove that couldn't before, but pushing further doesn't buy more
+of them -- 10,000,000 (5x) made that same query run past 15 seconds
+without finishing, and 50,000,000 (25x) ran past a minute of CPU time
+before being killed, still undecided. Rlimit cost is not proportional to
+problem difficulty for every query shape; past a point, more budget buys
+nothing but compile time. `or_monotonic` specifically stays a deferred
+runtime check, and that's the correct outcome, not a shortfall -- the
+Int<->BV<->Int encoding this compiler uses for bitwise ops apparently
+makes this particular monotonicity property disproportionately expensive
+to decide directly, and forcing a proof through sheer resource budget
+would trade a fast, honest runtime check for an impractically slow
+compiler. `Z3_PROOF_RLIMIT = 2_000_000` was chosen empirically as the
+point that stays fast (the full 76-fixture z3_contracts suite compiles
+in ~20s total, no fixture individually slow) while still proving what it
+practically can.
+
+One fixture's premise broke as a direct, foreseeable consequence and was
+handled deliberately rather than patched around:
+`test_ensures_timeout_runtime_check.salt` was built specifically to
+reliably drive the *old* wall-clock timeout to `Unknown`, to test that
+deferral actually emits a real runtime check. Under the new budget, its
+exact query -- the deliberately weakened bound modeled on the KeuOS bug
+that motivated the fixture -- is no longer hard to decide at all: Z3
+finds the planted violation directly and rejects at compile time,
+in well under a second. That's strictly better (a real bug caught at
+compile time beats a runtime check that only fires if that exact path
+executes), so the fixture's expected outcome was updated to REJECTED
+instead of the query being artificially made harder to preserve the
+original "must defer" premise -- see the fixture's own header for the
+full history. Runtime-check-emission coverage didn't just get dropped,
+though: `test_ensures_deferred_runtime_check.salt` takes over that role,
+built on `or_monotonic`'s shape specifically because it was already
+confirmed, empirically, to still exceed budget rather than picked
+because it looks hard.
+
+Verified properly this time, learning from the correction two paragraphs
+up: `mlir_determinism_gate.sh` run 15 times (not 4) on an otherwise idle
+machine came back 15/15 clean. If the true failure rate were still
+anywhere near the ~50% measured for the wall-clock timeout, 15
+consecutive clean runs would happen by chance under 1 in 30,000 times --
+this is a real fix, not a lucky sample. `proof_gate.sh`'s baseline was
+regenerated for the fixture changes above (`test_ensures_timeout_runtime_check.salt`
+dropping out of the compiled/proof-tracked set entirely,
+`test_ensures_deferred_runtime_check.salt` entering at 0/2 proven, and
+`test_bv.salt` gaining one more proven check) -- all deliberate, all
+explained above, none a regression to chase.
+
+The other item flagged when this fix first landed -- contract literals
+at or near u64::MAX (`18446744073709551615`) silently reporting 0/0
+checks instead of proving, erroring, or deferring, while the identical
+literal outside a contract parsed fine -- is fixed. `translate_to_z3`'s
+integer-literal arm parsed every literal via `base10_parse::<i64>()`
+and correctly propagated a parse failure with `?` for anything above
+`i64::MAX` -- correct handling of a real error, except the caller of
+the whole ensures translation (`verify_postcondition`) gated on
+`if let Ok(z3_ens) = translate_bool_to_z3(...)`, which treated that
+propagated `Err` identically to "nothing to check." Same swallowed-error
+shape as the `check_deref` bug two entries up, just in the arithmetic
+path instead of the pointer-safety one, and just as silent: no compile
+error, no runtime check, no warning, `0/0 checks` printed as if nothing
+was ever there to verify. Fixed at the source rather than patching the
+one caller: the literal arm now tries `i64` first (every ordinary
+literal, unchanged) and falls back to `u64` only when that fails --
+`syn`/Rust literal tokens are never negative (`-5` parses as
+`Unary(Neg, Lit(5))`), so anything `i64` rejects for being too large is
+a legitimate value up to `u64::MAX`, not a malformed one. Verified the
+fix isn't also over-permissive: an off-by-one-too-tight bound one below
+`u64::MAX` is still correctly rejected, with `u64::MAX` itself as the
+genuine counterexample. See `test_u64_max_literal_proved.salt` and
+`test_u64_max_literal_rejected.salt`. The other two `base10_parse::<i64>().ok()`
+call sites (array-index bounds, loop-bounds evaluation) are intentionally
+i64-scoped for their own domains, where a value this large is
+astronomically implausible rather than a real contract value -- left
+as-is, not the same bug.
 
 ---
 

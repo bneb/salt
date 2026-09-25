@@ -829,6 +829,7 @@ impl<'a> CodegenContext<'a> {
     }
 
     fn verify_field_atomic(&self, s_name: &str, f: &crate::grammar::FieldDef, byte_offset: usize) -> Result<(), String> {
+        #[cfg(feature = "z3-backend")]
         use crate::z3_shim::ast::Ast;
         let has_atomic = f.attributes.iter().any(|a| a.name == "atomic");
         if !has_atomic { return Ok(()); }
@@ -858,6 +859,7 @@ impl<'a> CodegenContext<'a> {
     }
 
     fn verify_field_align(&self, s_name: &str, f: &crate::grammar::FieldDef, mut byte_offset: usize) -> Result<usize, String> {
+        #[cfg(feature = "z3-backend")]
         use crate::z3_shim::ast::Ast;
         let align_value = crate::grammar::attr::extract_align(&f.attributes);
         if let Some(n) = align_value {
@@ -899,6 +901,7 @@ impl<'a> CodegenContext<'a> {
     }
 
     fn verify_struct_atomic(&self, s_name: &str, attributes: &[crate::grammar::attr::Attribute], byte_offset: usize) -> Result<(), String> {
+        #[cfg(feature = "z3-backend")]
         use crate::z3_shim::ast::Ast;
         let has_struct_atomic = attributes.iter().any(|a| a.name == "atomic");
         if !has_struct_atomic { return Ok(()); }
@@ -922,6 +925,7 @@ impl<'a> CodegenContext<'a> {
     }
 
     fn verify_struct_packed(&self, s_name: &str, attributes: &[crate::grammar::attr::Attribute], byte_offset: usize, fields: &[crate::grammar::FieldDef]) -> Result<(), String> {
+        #[cfg(feature = "z3-backend")]
         use crate::z3_shim::ast::Ast;
         let has_packed = attributes.iter().any(|a| a.name == "packed");
         if !has_packed { return Ok(()); }
@@ -1338,6 +1342,44 @@ pub fn emit_fn(ctx: &CodegenContext, func: &crate::grammar::SaltFn, override_nam
     ctx.consumed_vars_mut().clear();
     ctx.consumption_locs_mut().clear();
     ctx.devoured_vars_mut().clear();
+    // symbolic_tracker maps a SOURCE NAME (not a unique id) to a Z3 term,
+    // and a while loop's havoc mechanism (while_stmt.rs) mints a fresh
+    // term under a variable's plain name whenever it mutates it -- so an
+    // entry left over from a previous function's own "y" or "i" is
+    // silently picked up by this function's identically-named local,
+    // making an otherwise-valid base-case check (an explicit invariant,
+    // or a Houdini-lite candidate) fail against a symbol it was never
+    // actually about. Found via test_houdini_isolated.salt: identical
+    // function bodies pass alone and fail back-to-back in the same file,
+    // solely from this leftover state. Clearing here scopes the map to a
+    // single function, matching consumed_vars/consumption_locs/
+    // devoured_vars just above -- ctx.z3_solver's own accumulated
+    // assertions are left alone: they're keyed by these same
+    // never-reused names, so they go inert rather than harmful once
+    // nothing can look them up by name anymore, and resetting the solver
+    // itself is a larger, less-understood change than clearing this cache.
+    ctx.symbolic_tracker.borrow_mut().clear();
+    // pointer_tracker has the same shape as ownership_tracker/malloc_tracker/
+    // arena_escape_tracker below (PointerStateTracker::states is keyed by
+    // plain variable name), and those three are correctly swapped for a
+    // fresh instance per function -- but pointer_tracker was the odd one
+    // out, never swapped at all. A name marked Valid/Freed/etc. in one
+    // function was still sitting in the map when a later function declared
+    // its own local of the same name. Confirmed via
+    // test_cross_fn_pointer_tracker_rejected.salt: a bare-alias local
+    // (`let p = other;`) never re-marks its own tracker entry (see
+    // emit_local_pointer_tracking), so it silently inherited a prior
+    // function's leftover Valid marking and a `requires { valid(p) }` check
+    // on it was PROVEN with 0 deferred to runtime -- for a pointer this
+    // function never actually validated. Swapped here (not down with its
+    // siblings below) because process_fn_arguments -- which marks pointer
+    // parameters Valid -- runs before that block; swapping in fresh state
+    // after it would wipe out this function's own parameter marks. The
+    // restore is still grouped with the other three, near the end of this
+    // function: restore timing isn't ordering-sensitive the way swap-in is,
+    // since nothing here checks pointer_tracker as a whole the way
+    // malloc_tracker.verify() does.
+    let saved_pointer_tracker = ctx.pointer_tracker.replace(crate::codegen::verification::PointerStateTracker::new());
     *ctx.mutated_vars_mut() = crate::codegen::stmt::collect_mutations(&func.body.stmts);
 
     // Record array stores (arr[i] = val) for postcondition verification.
@@ -1459,6 +1501,7 @@ pub fn emit_fn(ctx: &CodegenContext, func: &crate::grammar::SaltFn, override_nam
     ctx.ownership_tracker.replace(saved_ownership);
     ctx.malloc_tracker.replace(saved_malloc_tracker);
     ctx.arena_escape_tracker.replace(saved_arena_escape);
+    ctx.pointer_tracker.replace(saved_pointer_tracker);
     
     *ctx.alloca_out_mut() = saved_alloca;
 
@@ -1874,8 +1917,7 @@ fn register_fn_signature(ctx: &CodegenContext, f: &crate::grammar::SaltFn, pkg_n
             .map(|a| resolve_type_safe(ctx, a.ty.as_ref().unwrap_or(&unknown_ty)))
             .collect::<Vec<_>>()
     });
-    let ret = bind_signature_placeholders(&ret, &f.generics);
-    let args: Vec<Type> = raw_args.iter().map(|a| bind_signature_placeholders(a, &f.generics)).collect();
+    let args = raw_args;
     ctx.globals_mut().insert(mangled, Type::Fn(args, Box::new(ret)));
     Ok(())
 }
@@ -1996,29 +2038,9 @@ pub(crate) fn scoped_generic_hydration<T>(
     out
 }
 
-/// Rewrites self-named placeholder args left by context-free parsing into
-/// true `Generic` placeholders so stored signatures stay substitutable at
-/// call sites. Identity for signatures without declared generics.
-pub(crate) fn bind_signature_placeholders(
-    ty: &Type,
-    generics: &Option<crate::grammar::Generics>,
-) -> Type {
-    let Some(g) = generics else { return ty.clone(); };
-    let mut map = std::collections::BTreeMap::new();
-    for param in &g.params {
-        let name = match param {
-            crate::grammar::GenericParam::Type { name, .. } => name.to_string(),
-            crate::grammar::GenericParam::Const { name, .. } => name.to_string(),
-        };
-        map.insert(name.clone(), Type::Struct(name));
-    }
-    crate::codegen::types::substitution::substitute_generics(&map, ty)
-}
-
 fn register_impl_signatures(ctx: &CodegenContext, imp: &SaltImpl) -> Result<(), String> {
     if let SaltImpl::Methods { target_ty, methods, generics } = imp {
         let parsed_ty = scoped_generic_hydration(ctx, generics, || resolve_type_safe(ctx, target_ty));
-        let parsed_ty = bind_signature_placeholders(&parsed_ty, generics);
         let _target_name = match &parsed_ty {
             Type::Struct(name) | Type::Enum(name) => name.clone(),
             Type::Concrete(name, _) => name.clone(),
@@ -2033,7 +2055,6 @@ fn register_impl_signatures(ctx: &CodegenContext, imp: &SaltImpl) -> Result<(), 
         register_impl_methods_merged(ctx, methods, generics, key.clone(), &parsed_ty);
     } else if let SaltImpl::Trait { trait_name: _, target_ty, methods, generics } = imp {
         let parsed_ty = scoped_generic_hydration(ctx, generics, || resolve_type_safe(ctx, target_ty));
-        let parsed_ty = bind_signature_placeholders(&parsed_ty, generics);
 
         let mut key = parsed_ty.to_key().unwrap_or_else(|| {
             crate::types::TypeKey { path: vec![], name: parsed_ty.mangle_suffix(), specialization: None }

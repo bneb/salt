@@ -713,13 +713,26 @@ Z3_SYS_Z3_HEADER=/opt/homebrew/include/z3.h \
 LIBRARY_PATH=/opt/homebrew/lib \
 cargo build --release
 
-# Compile a Salt program to native binary
-export PATH="/opt/homebrew/opt/llvm@21/bin:$PATH"
-export DYLD_LIBRARY_PATH="/opt/homebrew/lib"
-
-./target/release/salt-front ../examples/hello_world.salt
-# Produces: hello_world binary in current directory
+# Compile and verify a Salt program (emits MLIR; verification runs by
+# default and its proof-coverage ratio is printed)
+./target/release/saltc ../examples/hello_world.salt --lib -o /dev/null
 ```
+
+> [!NOTE]
+> `--binary` (native Mach-O/ELF via the Iron Driver) is a goal, not a
+> currently-working path on a plain macOS target: `clang` fails to link
+> `runtime.o` against ~44 ordinary Darwin system symbols (45 undefined
+> entries total, including the linker's own synthetic `start`)
+> (`_printf`, `_malloc`, `_mmap`, `___stack_chk_fail`, `___stdoutp`,
+> `__NSGetArgc`, `__tlv_bootstrap`, ...) -- standard libc/system
+> functions, not anything KeuOS-specific; runtime.o's own KeuOS-shaped
+> functions (`_salt_readdir`, `_syscall6`, etc.) are present and defined.
+> Looks like the link step isn't pulling in the standard system
+> libraries, not a missing KeuOS runtime. Confirmed failing with
+> `--target macos --binary` as of this writing, independent of
+> `--target`. `keuos_rt/`, which the linker error's own hint points at,
+> doesn't exist in this checkout either, though that hint may not
+> describe this specific failure.
 
 ### KeuOS Kernel
 

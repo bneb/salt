@@ -1,0 +1,45 @@
+// Multi-file benchmark, module 1 of 3: geometry primitives.
+// Part of benchmarks/fixtures/bench_multifile_app/. The timing harness
+// concatenates all .salt files in this directory into one translation
+// unit before compiling (saltc does not cross-link separate files).
+package basalt.bench_app
+
+struct Vec2 {
+    x: f32,
+    y: f32,
+}
+
+fn vadd(a: Vec2, b: Vec2) -> Vec2 {
+    return Vec2 { x: a.x + b.x, y: a.y + b.y };
+}
+
+fn vscale(a: Vec2, k: f32) -> Vec2 {
+    return Vec2 { x: a.x * k, y: a.y * k };
+}
+
+fn dot(a: Vec2, b: Vec2) -> f32 {
+    return a.x * b.x + a.y * b.y;
+}
+
+struct Rect {
+    min_x: f32,
+    min_y: f32,
+    max_x: f32,
+    max_y: f32,
+}
+
+fn rect_area(r: Rect) -> f32 {
+    return (r.max_x - r.min_x) * (r.max_y - r.min_y);
+}
+
+fn rect_union(a: Rect, b: Rect) -> Rect {
+    return Rect {
+        min_x: min_f(a.min_x, b.min_x),
+        min_y: min_f(a.min_y, b.min_y),
+        max_x: max_f(a.max_x, b.max_x),
+        max_y: max_f(a.max_y, b.max_y),
+    };
+}
+
+fn min_f(a: f32, b: f32) -> f32 { if a < b { return a; } return b; }
+fn max_f(a: f32, b: f32) -> f32 { if a > b { return a; } return b; }

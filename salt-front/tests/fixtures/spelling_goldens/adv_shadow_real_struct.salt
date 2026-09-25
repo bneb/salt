@@ -1,0 +1,18 @@
+package main
+
+struct Node { v: i64 }
+
+struct Box2<const NODE: i64> { n: Node }
+
+impl<const NODE: i64> Box2<NODE> {
+    pub fn get(&self) -> Node { return self.n; }
+    pub fn make() -> Box2<NODE> { return Box2 { n: Node { v: 0 } }; }
+}
+
+pub fn main() -> i32 {
+    let a = Box2::<5>::make();
+    let b = Box2::<9>::make();
+    let x = a.get();
+    let y = b.get();
+    return (x.v + y.v + a.n.v) as i32;
+}

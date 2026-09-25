@@ -27,7 +27,7 @@ for mod in "${DEPS[@]}"; do
 done
 
 echo "🔧 [JS_LexerDiff] Compiling merged Salt source..."
-"$SALT_FRONT/target/release/salt-front" "$MERGED_SALT" --release > "$TMP_DIR/js_lexer_diff.mlir"
+"$SALT_FRONT/target/release/saltc" "$MERGED_SALT" --release > "$TMP_DIR/js_lexer_diff.mlir"
 
 echo "🔧 [JS_LexerDiff] Optimizing MLIR..."
 mlir-opt "$TMP_DIR/js_lexer_diff.mlir" --allow-unregistered-dialect \

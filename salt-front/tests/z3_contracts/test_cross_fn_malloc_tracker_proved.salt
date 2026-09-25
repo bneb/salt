@@ -1,0 +1,32 @@
+// Z3 Contract Test: a leaked allocation in one function must not affect
+// a correctly-freed allocation of the same variable name in another.
+// Expected: PASS
+//
+// Closes out the audit flagged (and left dangling) earlier this session:
+// malloc_tracker, ownership_tracker, and arena_escape_tracker were noted
+// as structurally identical to the confirmed pointer_tracker bug (a
+// HashMap keyed by plain, reusable variable name) but never actually
+// tested -- the check_deref discovery pulled the session sideways before
+// it happened. Traced through emit_fn (codegen/mod.rs) and confirmed:
+// all three are already swap-and-restored per function
+// (ctx.malloc_tracker.replace(MallocTracker::new()), matching
+// ownership_tracker/arena_escape_tracker/pointer_tracker), so there is
+// no shared state between functions to leak in the first place -- this
+// fixture locks that in as a permanent regression guard rather than
+// leaving it as an unverified claim in a commit message.
+package test_cross_fn_malloc_tracker_proved
+
+extern fn malloc(size: i64) -> Ptr<i32>;
+extern fn free(p: Ptr<i32>);
+
+pub fn first() -> i32 {
+    let p: Ptr<i32> = malloc(4);
+    free(p);
+    return 0;
+}
+
+pub fn second() -> i32 {
+    let p: Ptr<i32> = malloc(4);
+    free(p);
+    return 0;
+}

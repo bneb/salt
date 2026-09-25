@@ -1,0 +1,25 @@
+// Z3 Contract Test: a candidate invariant that genuinely doesn't hold at
+// the loop's base case must be silently dropped, not trusted -- the
+// underlying call must still be rejected exactly as it was before
+// Houdini-lite existed.
+// Expected: FAIL (verification error)
+//
+// `y` starts at -5, so the candidate `y > 0` (proposed from
+// need_positive's own contract) fails filter_call_requires_candidates'
+// base-case check and is never added. Confirms the mechanism only ever
+// adds confirmed-true facts -- it cannot turn a real rejection into a
+// wrongly-accepted one.
+package test_houdini_call_requires_rejected
+
+fn need_positive(y: i64) requires { y > 0 } { }
+
+pub fn f(n: i64) {
+    let mut i: i64 = 0;
+    let mut y: i64 = 0 - 5;
+    while i < n {
+        invariant i >= 0;
+        need_positive(y);
+        y = y + 1;
+        i = i + 1;
+    }
+}

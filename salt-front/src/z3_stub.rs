@@ -20,6 +20,10 @@ impl Config {
     pub fn new() -> Self { Config }
 }
 
+impl Default for Config {
+    fn default() -> Self { Self::new() }
+}
+
 #[derive(Debug)]
 pub struct Context;
 
@@ -147,7 +151,7 @@ pub mod ast {
     pub struct Int<'a>(pub(crate) PhantomData<&'a ()>);
 
     impl<'a> Int<'a> {
-        pub fn new_const(_ctx: &'a Context, _name: impl Into<String>) -> Self { Int(PhantomData) }
+        pub fn new_const<S: Into<std::string::String>>(_ctx: &'a Context, _name: S) -> Self { Int(PhantomData) }
         pub fn fresh_const(_ctx: &'a Context, _prefix: &str) -> Self { Int(PhantomData) }
         pub fn from_i64(_ctx: &'a Context, _val: i64) -> Self { Int(PhantomData) }
         pub fn from_u64(_ctx: &'a Context, _val: u64) -> Self { Int(PhantomData) }
@@ -247,7 +251,7 @@ pub mod ast {
     pub struct Bool<'a>(pub(crate) PhantomData<&'a ()>);
 
     impl<'a> Bool<'a> {
-        pub fn new_const(_ctx: &'a Context, _name: impl Into<String>) -> Self { Bool(PhantomData) }
+        pub fn new_const<S: Into<std::string::String>>(_ctx: &'a Context, _name: S) -> Self { Bool(PhantomData) }
         pub fn from_bool(_ctx: &'a Context, _val: bool) -> Self { Bool(PhantomData) }
         pub fn not(&self) -> Bool<'a> { Bool(PhantomData) }
         pub fn and(_ctx: &'a Context, _args: &[&Bool<'a>]) -> Bool<'a> { Bool(PhantomData) }
@@ -288,7 +292,7 @@ pub mod ast {
     pub struct Real<'a>(pub(crate) PhantomData<&'a ()>);
 
     impl<'a> Real<'a> {
-        pub fn new_const(_ctx: &'a Context, _name: impl Into<String>) -> Self { Real(PhantomData) }
+        pub fn new_const<S: Into<std::string::String>>(_ctx: &'a Context, _name: S) -> Self { Real(PhantomData) }
         pub fn fresh_const(_ctx: &'a Context, _prefix: &str) -> Self { Real(PhantomData) }
         pub fn from_int(_int: &Int<'a>) -> Self { Real(PhantomData) }
         pub fn from_real_str(_ctx: &'a Context, _num: &str, _den: &str) -> Option<Self> { Some(Real(PhantomData)) }
@@ -308,6 +312,11 @@ pub mod ast {
 
     impl<'a> Ast for Real<'a> {}
 
+    impl<'a> std::ops::Add for Real<'a> { type Output = Real<'a>; fn add(self, _: Real<'a>) -> Real<'a> { Real(PhantomData) } }
+    impl<'a> std::ops::Sub for Real<'a> { type Output = Real<'a>; fn sub(self, _: Real<'a>) -> Real<'a> { Real(PhantomData) } }
+    impl<'a> std::ops::Mul for Real<'a> { type Output = Real<'a>; fn mul(self, _: Real<'a>) -> Real<'a> { Real(PhantomData) } }
+    impl<'a> std::ops::Div for Real<'a> { type Output = Real<'a>; fn div(self, _: Real<'a>) -> Real<'a> { Real(PhantomData) } }
+    impl<'a> std::ops::Neg for Real<'a> { type Output = Real<'a>; fn neg(self) -> Real<'a> { Real(PhantomData) } }
     impl<'a> std::ops::Add for &Real<'a> { type Output = Real<'a>; fn add(self, _: &Real<'a>) -> Real<'a> { Real(PhantomData) } }
     impl<'a> std::ops::Sub for &Real<'a> { type Output = Real<'a>; fn sub(self, _: &Real<'a>) -> Real<'a> { Real(PhantomData) } }
     impl<'a> std::ops::Mul for &Real<'a> { type Output = Real<'a>; fn mul(self, _: &Real<'a>) -> Real<'a> { Real(PhantomData) } }
@@ -320,7 +329,7 @@ pub mod ast {
     pub struct BV<'a>(pub(crate) PhantomData<&'a ()>);
 
     impl<'a> BV<'a> {
-        pub fn new_const(_ctx: &'a Context, _name: impl Into<String>, _sz: u32) -> Self { BV(PhantomData) }
+        pub fn new_const<S: Into<std::string::String>>(_ctx: &'a Context, _name: S, _sz: u32) -> Self { BV(PhantomData) }
         pub fn fresh_const(_ctx: &'a Context, _prefix: &str, _sz: u32) -> Self { BV(PhantomData) }
         pub fn from_i64(_ctx: &'a Context, _val: i64, _sz: u32) -> Self { BV(PhantomData) }
         pub fn from_u64(_ctx: &'a Context, _val: u64, _sz: u32) -> Self { BV(PhantomData) }

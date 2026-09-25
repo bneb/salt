@@ -27,7 +27,7 @@ for mod in "${DEPS[@]}"; do
 done
 
 echo "🔧 [Selectors_Diff] Compiling merged Salt source..."
-"$SALT_FRONT/target/release/salt-front" "$MERGED_SALT" --release > "$TMP_DIR/selectors_diff.mlir"
+"$SALT_FRONT/target/release/saltc" "$MERGED_SALT" --release > "$TMP_DIR/selectors_diff.mlir"
 
 echo "🔧 [Selectors_Diff] Optimizing MLIR..."
 mlir-opt "$TMP_DIR/selectors_diff.mlir" --allow-unregistered-dialect \

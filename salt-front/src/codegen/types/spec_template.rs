@@ -325,19 +325,17 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
         // 6. Atomic Registration (Placeholder)
         // Insert empty info to prevent recursive re-entry if registry lookup happens (redundant with pending_set but safe)
         if is_enum {
-             let reg = self.enum_registry_mut();
-             reg.insert(key.clone(), EnumInfo {
-                 name: mangled.clone(), variants: Vec::new(), max_payload_size: 0,
-                 template_name: if concrete_tys.is_empty() { None } else { Some(base_name.to_string()) },
-                 specialization_args: concrete_tys.to_vec(),
-             });
+            self.define_enum_instance(key.clone(), EnumInfo {
+                name: mangled.clone(), variants: Vec::new(), max_payload_size: 0,
+                template_name: if concrete_tys.is_empty() { None } else { Some(base_name.to_string()) },
+                specialization_args: concrete_tys.to_vec(),
+            });
         } else {
-             let reg = self.struct_registry_mut();
-             reg.insert(key.clone(), StructInfo {
-                 name: mangled.clone(), fields: HashMap::new(), field_order: Vec::new(), field_alignments: Vec::new(),
-                 template_name: if concrete_tys.is_empty() { None } else { Some(base_name.to_string()) },
-                 specialization_args: concrete_tys.to_vec(),
-             });
+            self.define_struct_instance(key.clone(), StructInfo {
+                name: mangled.clone(), fields: HashMap::new(), field_order: Vec::new(), field_alignments: Vec::new(),
+                template_name: if concrete_tys.is_empty() { None } else { Some(base_name.to_string()) },
+                specialization_args: concrete_tys.to_vec(),
+            });
         }
 
         // 7. Recursive expansion: process immediately to ensure
@@ -350,9 +348,10 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
         if is_enum {
              let res = self.expand_enum_structure(base_name, concrete_tys);
              match res {
-                 Ok(info) => { self.enum_registry_mut().insert(key.clone(), info); }
+                 Ok(info) => { self.define_enum_instance(key.clone(), info); }
                  Err(e) => {
                      self.enum_registry_mut().remove(&key);
+                    self.instance_ids_mut().remove(&key);
                      self.monomorphizer_mut().pending_set.remove(&mangled);
                      return Err(e);
                  }
@@ -368,10 +367,11 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
                          // type name (D1: field access on erased generic self-types),
                          // so leave the registry entry absent instead.
                          self.struct_registry_mut().remove(&key);
+                        self.instance_ids_mut().remove(&key);
                          self.monomorphizer_mut().pending_set.remove(&mangled);
                          return Ok(key);
                      }
-                     self.struct_registry_mut().insert(key.clone(), info);
+                     self.define_struct_instance(key.clone(), info);
                  }
                  Err(e) => {
                      self.struct_registry_mut().remove(&key);

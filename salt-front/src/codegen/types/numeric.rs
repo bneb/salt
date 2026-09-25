@@ -2,6 +2,12 @@ use crate::types::Type;
 use crate::codegen::context::LoweringContext;
 use crate::codegen::type_casts::cast_numeric;
 
+pub(crate) fn base_leaf(name: &str) -> String {
+    let protected = name.replace("__", "\u{1}");
+    let leaf = protected.rsplit('\u{1}').next().unwrap_or(&protected);
+    leaf.replace('\u{1}', "__")
+}
+
 pub fn promote_numeric(ctx: &mut LoweringContext, out: &mut String, var: &str, from: &Type, to: &Type) -> Result<String, String> {
     if from == to { return Ok(var.to_string()); }
 
@@ -278,6 +284,60 @@ fn promote_numeric_fallback(ctx: &mut LoweringContext, out: &mut String, var: &s
             let other_norm = normalize_fqn(&other.mangle_suffix());
             if n_norm == other_norm {
                 return Ok(var.to_string());
+            }
+        }
+        // NB-5c prefix tolerance: same qualifying base where the LONGER
+        // side's extra trailing args are all unresolved placeholders
+        // (e.g. Vec<i64, A-placeholder> passed where Vec<i64> expected)
+        // => identity pass-through; callee consumes the bound prefix.
+        // Mirrors generic_unify's prefix unification.
+        (Type::Struct(_) | Type::Concrete(..), Type::Struct(_) | Type::Concrete(..)) => {
+            fn args_of(t: &Type) -> (Option<&String>, Vec<Type>) {
+                match t {
+                    Type::Struct(n) => (Some(n), vec![]),
+                    Type::Concrete(n, a) => (Some(n), a.clone()),
+                    _ => (None, vec![]),
+                }
+            }
+            fn bare_placeholder_leaf(a: &Type) -> bool {
+                match a {
+                    Type::Struct(n) | Type::Generic(n) => !n.contains("__"),
+                    Type::Concrete(n, a2) => a2.is_empty() && !n.contains("__"),
+                    _ => false,
+                }
+            }
+            fn value_leaf(sg: &str) -> bool {
+                let d = sg.strip_prefix('-').unwrap_or(sg);
+                (!d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+                    || sg == "true" || sg == "false"
+            }
+            let (f_name, f_args) = args_of(from);
+            let (t_name, t_args) = args_of(to);
+            if let (Some(f_name), Some(t_name)) = (f_name, t_name) {
+                let f_base = base_leaf(f_name);
+                let t_base = base_leaf(t_name);
+                let bases_match = f_base == t_base
+                    || f_base.ends_with(&format!("__{}", t_base))
+                    || t_base.ends_with(&format!("__{}", f_base));
+                if bases_match && f_args.len() >= t_args.len() {
+                    let extra_ok =
+                        f_args[t_args.len()..].iter().all(bare_placeholder_leaf);
+                    if extra_ok {
+                        return Ok(var.to_string());
+                    }
+                }
+                // NB-5c mirror: a STRUCT-spelled source encodes its bound
+                // values in the name tail (...Vec_i64 => ["i64"]). Accept
+                // when every tail segment is a value leaf and the segment
+                // count covers the target's BOUND (non-placeholder) args.
+                if matches!(from, Type::Struct(_)) && f_name.starts_with(t_name.as_str()) {
+                    let tail = &f_name[t_name.len()..];
+                    let segs: Vec<&str> = tail.split('_').filter(|s| !s.is_empty()).collect();
+                    let bound_count = t_args.iter().filter(|a| !bare_placeholder_leaf(a)).count();
+                    if segs.iter().all(|sg| value_leaf(sg)) && segs.len() >= bound_count {
+                        return Ok(var.to_string());
+                    }
+                }
             }
         }
         _ => {}

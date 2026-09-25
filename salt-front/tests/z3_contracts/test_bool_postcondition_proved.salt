@@ -1,0 +1,41 @@
+// Z3 Contract Test: postconditions on bool-returning functions must be checked.
+// Expected: PASS
+//
+// `ensures` on a bool-returning function used to be skipped in SILENCE. The
+// return value was translated through the integer path, which had no arm for
+// bool literals or for comparisons in value position, so the translation
+// errored, the caller's `if let Ok(..)` did not match, and no check ran.
+// `ensures { result }` on `return false` compiled clean.
+//
+// Bools carry as 0/1 in the integer encoding; a bare identifier in boolean
+// position is "not zero".
+package test_bool_postcondition_proved
+
+const USER_ADDR_LIMIT: u64 = 0x0000800000000000;
+
+pub fn always_true() -> bool
+    ensures { result }
+{
+    return true;
+}
+
+pub fn mirrors_its_guard(x: u32) -> bool
+    ensures { result == (x < 10) }
+{
+    return x < 10;
+}
+
+// The shape this was actually wanted for: a validator whose true result must
+// imply the range it accepted is inside the user half.
+//
+// Guards read `ptr + len` rather than binding it to a local -- this
+// predates the let-binding fix (see test_let_binding_proved.salt) and is
+// left as-is so this file's regression scope stays on bool postconditions.
+pub fn is_valid_user_ptr(ptr: u64, len: u64) -> bool
+    ensures { !result || (ptr + len) <= USER_ADDR_LIMIT }
+{
+    if ptr >= USER_ADDR_LIMIT { return false; }
+    if (ptr + len) < ptr { return false; }
+    if (ptr + len) > USER_ADDR_LIMIT { return false; }
+    return true;
+}

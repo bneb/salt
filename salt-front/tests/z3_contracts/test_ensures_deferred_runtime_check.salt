@@ -1,0 +1,25 @@
+// Z3 Contract Test: an ensures clause Z3 genuinely cannot decide within
+// budget must still be enforced -- by a runtime check, not by silence.
+// Expected: compiles (Z3 defers this one check), AND the emitted MLIR
+// must contain a real call to __salt_contract_violation.
+//
+// Takes over test_ensures_timeout_runtime_check.salt's original role
+// after that fixture's specific query became decidable once the proof
+// budget moved to a resource-based rlimit (see that file's own comment
+// for the full history). Needed a replacement query that stays genuinely
+// hard at the same budget: bitwise-OR monotonicity for bounded i32
+// (`x | y >= x`, same shape as test_bv.salt's or_monotonic) reliably
+// does, via the Int<->BV<->Int conversion this compiler uses to verify
+// bitwise operations -- confirmed empirically to still defer, quickly
+// and consistently, rather than picked because it looks hard.
+package test_ensures_deferred_runtime_check
+
+pub fn or_monotonic(x: i32, y: i32) -> i32
+    requires(x >= 0 && y >= 0)
+    ensures(result >= x)
+{ return x | y; }
+
+pub fn main() -> i32 {
+    let _a = or_monotonic(5, 3);
+    return 0;
+}

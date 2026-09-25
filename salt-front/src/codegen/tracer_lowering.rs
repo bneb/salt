@@ -143,9 +143,11 @@ fn trace_call(ctx: &LoweringContext, c: &syn::ExprCall, locals: &BTreeMap<String
                 syn::GenericArgument::Type(t) =>
                     crate::grammar::SynType::from_std(t.clone()).ok()
                         .and_then(|st| Type::from_syn(&st)),
-                syn::GenericArgument::Const(syn::Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Int(li), .. })) =>
-                    li.base10_parse::<i64>().ok().map(|v| Type::Struct(v.to_string())),
+                                syn::GenericArgument::Const(const_expr) =>
+                                    crate::codegen::types::generic_arg::GenericArg
+                                        ::from_const_expr(const_expr, ctx.evaluator)
+                                        .ok()
+                                        .map(|g| g.to_legacy_type()),
                 _ => None,
             }).collect::<Vec<_>>()
         } else { Vec::new() }

@@ -80,7 +80,17 @@ fn eval_struct_fields(
             *ctx.pending_pointer_state = None;
 
             if f_ty == Type::Unit && actual_ty == Type::I64 {
-                crate::ice!("Type Poisoning Detected: Field '{}' resolved to Unit but assigned I64. \nGeneric substitution failed during monomorphization. \nStructure: {}\nArg Type: {:?}", name, mangled_name, actual_ty);
+                // NB-1: this shape arises when a user struct's mangled name
+                // collides with a generic instantiation of same prefix
+                // (GBox_i64 vs GBox<i64>). Refuse with a NAMING diagnostic
+                // instead of panicking mid-emission.
+                return Err(format!(
+                    "[E007] struct literal `{}` conflicts with registered type `{}`: \
+                     field `{}` resolved to `unit` but received `i64`. \
+                     Rename one of the two competing types (naming-collision class NB-1).",
+                    s.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default(),
+                    mangled_name, name
+                ));
             }
 
             field_vals.insert(name, (val, actual_ty));
@@ -923,6 +933,34 @@ pub fn emit_repeat(ctx: &mut LoweringContext, out: &mut String, r: &syn::ExprRep
     Ok((current_array, array_ty))
 }
 
+/// Builds the Undefined-struct diagnostic, surfacing the closest
+/// REGISTERED typed instance when the requested name prefix-matches one
+/// (S3b first-reader consumer; NB-6 UX bridge).
+pub(crate) fn undefined_struct_err(
+    ctx: &crate::codegen::context::LoweringContext,
+    mangled_name: &str,
+) -> String {
+    // Search the LIVE registry (not the instance_ids bridge): entries can
+    // be rolled back during specialization, and users need near-misses
+    // that actually exist.
+    let mut best: Option<String> = None;
+    for k in ctx.struct_registry().keys() {
+        let m = k.mangle();
+        if m.starts_with(mangled_name)
+            && best.as_ref().is_none_or(|b| m.len() < b.len())
+        {
+            best = Some(m);
+        }
+    }
+    match best {
+        Some(near) => format!(
+            "Undefined struct: {} (closest registered instance: {})",
+            mangled_name, near
+        ),
+        None => format!("Undefined struct: {}", mangled_name),
+    }
+}
+
 pub fn emit_struct(
     ctx: &mut LoweringContext,
     out: &mut String,
@@ -1117,7 +1155,7 @@ pub fn emit_struct(
         
         Ok((current_struct, struct_ty))
     } else {
-        Err(format!("Undefined struct: {}", mangled_name))
+        Err(undefined_struct_err(ctx, &mangled_name))
     }
 }
 

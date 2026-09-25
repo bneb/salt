@@ -1,0 +1,33 @@
+// Z3 Contract Test: a contract literal at u64::MAX must actually be
+// checked, not silently skipped.
+// Expected: PASS
+//
+// translate_to_z3's integer-literal arm parsed every literal via
+// base10_parse::<i64>() and propagated a parse failure with `?` --
+// correct handling of a real error, except the caller of the whole
+// ensures translation (verify_postcondition, mod.rs) gates on
+// `if let Ok(z3_ens) = translate_bool_to_z3(...)`, which treats that
+// propagated Err identically to "nothing to check": the check silently
+// reported 0/0 rather than proving, deferring, or erroring. A literal
+// between i64::MAX+1 and u64::MAX -- u64::MAX itself, written out, is
+// what surfaced this -- always failed the i64 parse.
+//
+// Found immediately after fixing u64's missing upper bound
+// (test_u32_upper_bound_proved.salt's sibling fix): asserting u64's real
+// ceiling meant writing u64::MAX as a literal to test it, and the literal
+// itself turned out not to work inside a contract at all.
+package test_u64_max_literal_proved
+
+pub fn identity_u64(x: u64) -> u64
+    ensures(result <= 18446744073709551615)
+{ return x; }
+
+pub fn identity_usize(x: usize) -> usize
+    ensures(result <= 18446744073709551615)
+{ return x; }
+
+pub fn main() -> i32 {
+    let _a = identity_u64(5);
+    let _b = identity_usize(5);
+    return 0;
+}

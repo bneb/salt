@@ -14,6 +14,7 @@
 //   a new frame → stack_depth(dispatch^n) = n → overflow at ~1MB/8KB = 128
 // =============================================================================
 
+#[cfg(feature = "z3-backend")]
 use crate::z3_shim::ast::Ast;
 
 /// Result of the stack stability proof.

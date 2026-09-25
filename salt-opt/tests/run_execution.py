@@ -27,8 +27,9 @@ def main():
     # Root is keuos
     project_root = os.path.abspath(os.path.join(script_dir, "../../"))
     
-    salt_front_bin = os.path.join(project_root, "salt-front", "target", "release", "salt-front")
-    salt_opt_bin = os.path.join(project_root, "salt", "build", "salt-opt")
+    salt_front_bin = os.path.join(project_root, "salt-front", "target", "release", "saltc")
+    salt_opt_bin = os.path.join(project_root, "salt-opt", "build", "salt-opt")
+    runtime_c = os.path.join(project_root, "salt-front", "runtime.c")
     
     if not os.path.exists(salt_front_bin):
         print(f"Error: salt-front binary not found at {salt_front_bin}")
@@ -43,7 +44,7 @@ def main():
 
     # 1. Salt -> MLIR
     print("--- Step 1: Frontend (Salt -> MLIR) ---")
-    if not run_cmd(f"{salt_front_bin} {salt_file} > {mlir_file}"):
+    if not run_cmd(f"{salt_front_bin} {salt_file} -o {mlir_file}"):
         sys.exit(1)
 
     # 2. MLIR -> LLVM IR
@@ -54,7 +55,7 @@ def main():
         
     # 3. LLVM IR -> Executable (via Clang)
     print("--- Step 3: Compilation (LLVM IR -> Executable) ---")
-    if not run_cmd(f"clang {ll_file} -o {exe_file}"):
+    if not run_cmd(f"clang {ll_file} {runtime_c} -o {exe_file}"):
         sys.exit(1)
         
     # 4. Execute

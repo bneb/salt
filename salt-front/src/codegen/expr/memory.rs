@@ -179,10 +179,7 @@ pub fn emit_field(
                 if let Some(i) = candidates.iter().position(|i| i.name == *name) { return Some(candidates[i].clone()); }
                 candidates.into_iter().next().cloned()
             })
-            .ok_or_else(|| {
-                let available: Vec<String> = ctx.struct_registry().values().map(|i| i.name.clone()).collect();
-                format!("Undefined struct: {} (Available: {:?})", name, available)
-            })?;
+            .ok_or_else(|| crate::codegen::expr::literals::undefined_struct_err(ctx, name))?;
             
         let field_name = if let syn::Member::Named(id) = &f.member { id.to_string() } else { "unnamed".to_string() };
         
@@ -980,6 +977,32 @@ fn assert_field_type_bounds(
     }
 }
 
+/// Resolve an identifier to an integer compile-time constant, if it is one.
+///
+/// Tries the bare name and then the current package's mangling, matching how
+/// literals.rs resolves constant paths. Returns None for anything that is not
+/// a registered integer constant, so callers keep their existing behaviour for
+/// genuine variables.
+fn lookup_const_int<'a, 'ctx>(ctx: &LoweringContext<'a, 'ctx>, name: &str) -> Option<i64> {
+    use crate::evaluator::ConstValue;
+
+    let mut candidates = vec![name.to_string()];
+    if let Some(pkg) = &*ctx.current_package {
+        let segs: Vec<String> = pkg.name.iter().map(|i: &syn::Ident| i.to_string()).collect();
+        let pkg_mangled = crate::common::mangling::Mangler::mangle(&segs);
+        candidates.push(crate::common::mangling::Mangler::mangle(&[&pkg_mangled, &name.to_string()]));
+    }
+
+    for key in candidates {
+        match ctx.evaluator.constant_table.get(&key) {
+            Some(ConstValue::Integer(v)) => return Some(*v),
+            Some(ConstValue::Bool(b)) => return Some(if *b { 1 } else { 0 }),
+            _ => {}
+        }
+    }
+    None
+}
+
 pub fn translate_to_z3<'a, 'ctx>(
     ctx: &mut LoweringContext<'a, 'ctx>,
     expr: &syn::Expr,
@@ -988,8 +1011,31 @@ pub fn translate_to_z3<'a, 'ctx>(
 ) -> Result<crate::z3_shim::ast::Int<'a>, String> {
     match expr {
         syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(li), .. }) => {
-            let val = li.base10_parse::<i64>().map_err(|e| e.to_string())?;
-            Ok(ctx.mk_int(val))
+            // A bare integer token is never negative (syn/Rust syntax has no
+            // negative literal token; `-5` parses as Unary(Neg, Lit(5))), so
+            // anything base10_parse::<i64> rejects for being too large is a
+            // legitimate value between i64::MAX+1 and u64::MAX, not a
+            // malformed literal -- try u64 before giving up. Without this,
+            // a contract literal in that range (u64::MAX itself, written
+            // out, is the case that surfaced it) failed this parse, the
+            // error correctly propagated via `?`, and the caller's
+            // `if let Ok(z3_ens) = ...` silently treated the whole ensures
+            // clause as nothing to check: 0/0 checks, no warning, no error.
+            match li.base10_parse::<i64>() {
+                Ok(val) => Ok(ctx.mk_int(val)),
+                Err(_) => {
+                    let val = li.base10_parse::<u64>().map_err(|e| e.to_string())?;
+                    Ok(crate::z3_shim::ast::Int::from_u64(ctx.z3_ctx, val))
+                }
+            }
+        }
+        syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Bool(b), .. }) => {
+            // Bools are carried as 0/1 in the integer encoding. Without this a
+            // bool-returning function's `return false` failed to translate, the
+            // caller's `if let Ok(..)` did not match, and its postcondition was
+            // skipped in silence -- `ensures { result }` on `return false`
+            // compiled clean.
+            Ok(ctx.mk_int(if b.value { 1 } else { 0 }))
         }
         syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Float(lf), .. }) => {
             // Float literals are truncated to integers for Z3 comparison.
@@ -1010,6 +1056,17 @@ pub fn translate_to_z3<'a, 'ctx>(
             if let Some(_z3_val) = ctx.symbolic_tracker.get(&name).cloned() {
                                 return Ok(_z3_val);
             }
+            // A named compile-time constant must lower to its VALUE, not to a
+            // fresh symbol. Falling through to the fallback below made every
+            // contract mentioning a constant unprovable: `ensures { result < M }`
+            // became `result < <unconstrained>`, which Z3 satisfies by choosing
+            // M = 0 and reports as a counter-example. The same contract written
+            // with a literal proved fine, so the failures looked like limits of
+            // the prover rather than an unresolved name.
+            if let Some(val) = lookup_const_int(ctx, &name) {
+                return Ok(ctx.mk_int(val));
+            }
+
             // Fallback to fresh variable — store it so subsequent lookups find it
                         let fresh = ctx.mk_var(&name);
             ctx.symbolic_tracker.insert(name.clone(), fresh.clone());
@@ -1025,6 +1082,26 @@ pub fn translate_to_z3<'a, 'ctx>(
                 syn::BinOp::Div(_) => Ok(lhs / rhs),
                 syn::BinOp::BitAnd(_) | syn::BinOp::BitOr(_) | syn::BinOp::BitXor(_)
                 | syn::BinOp::Shl(_) | syn::BinOp::Shr(_) => crate::codegen::expr::z3_translate::translate_bitwise_op(ctx, &lhs, &rhs, &b.op),
+                // A comparison used where a VALUE is expected -- a bool
+                // function returning `x > 100` -- carries as ite(cond, 1, 0),
+                // matching the 0/1 encoding used for bool literals above.
+                syn::BinOp::Eq(_) | syn::BinOp::Ne(_) | syn::BinOp::Lt(_)
+                | syn::BinOp::Le(_) | syn::BinOp::Gt(_) | syn::BinOp::Ge(_) => {
+                    #[cfg(feature = "z3-backend")]
+                    use crate::z3_shim::ast::Ast;
+                    let cond = match b.op {
+                        syn::BinOp::Eq(_) => lhs._eq(&rhs),
+                        syn::BinOp::Ne(_) => lhs._eq(&rhs).not(),
+                        syn::BinOp::Lt(_) => lhs.lt(&rhs),
+                        syn::BinOp::Le(_) => lhs.le(&rhs),
+                        syn::BinOp::Gt(_) => lhs.gt(&rhs),
+                        syn::BinOp::Ge(_) => lhs.ge(&rhs),
+                        _ => unreachable!(),
+                    };
+                    let one = ctx.mk_int(1);
+                    let zero = ctx.mk_int(0);
+                    Ok(cond.ite(&one, &zero))
+                }
                 _ => Err(format!("Unsupported symbolic operator: {:?}", b.op)),
             }
         }
@@ -1089,6 +1166,7 @@ pub fn translate_to_z3<'a, 'ctx>(
                         translate_to_z3(ctx, &store.index_expr, local_vars),
                         translate_to_z3(ctx, &store.value_expr, local_vars),
                     ) {
+                        #[cfg(feature = "z3-backend")]
                         use crate::z3_shim::ast::Ast;
                         let new_at_idx = new_func.apply(&[&s_idx]);
                         if let Some(new_int) = new_at_idx.as_int() {
@@ -1287,6 +1365,7 @@ fn translate_z3_exists<'a, 'ctx>(
         if hi_val <= lo_val {
             return Ok(crate::z3_shim::ast::Bool::from_bool(ctx.z3_ctx, false));
         }
+        #[cfg(feature = "z3-backend")]
         use crate::z3_shim::ast::Ast;
         let mut disjuncts: Vec<crate::z3_shim::ast::Bool<'_>> = Vec::new();
         for val in lo_val..hi_val {
@@ -1358,6 +1437,7 @@ fn translate_z3_forall<'a, 'ctx>(
         if hi_val <= lo_val {
             return Ok(crate::z3_shim::ast::Bool::from_bool(ctx.z3_ctx, true));
         }
+        #[cfg(feature = "z3-backend")]
         use crate::z3_shim::ast::Ast;
         let mut conjuncts: Vec<crate::z3_shim::ast::Bool<'_>> = Vec::new();
         for val in lo_val..hi_val {
@@ -1393,6 +1473,7 @@ pub fn translate_bool_to_z3<'a, 'ctx>(
     local_vars: &HashMap<String, (Type, LocalKind)>,
     sym_ctx: &crate::codegen::verification::SymbolicContext<'a>
 ) -> Result<crate::z3_shim::ast::Bool<'a>, String> {
+    #[cfg(feature = "z3-backend")]
     use crate::z3_shim::ast::Ast;
     match expr {
         syn::Expr::Binary(b) => {
@@ -1444,6 +1525,18 @@ pub fn translate_bool_to_z3<'a, 'ctx>(
                  },
                  _ => Err("Arithmetic unary op in boolean context".to_string()),
              }
+        }
+        // A boolean-valued identifier in boolean position -- most importantly
+        // `result` in `ensures { result }` on a bool-returning function. There
+        // was no Path arm at all, so such a contract could not be translated
+        // and was skipped without a word. Bools carry as 0/1 in the integer
+        // encoding, so the predicate is "not zero".
+        syn::Expr::Path(_) => {
+            #[cfg(feature = "z3-backend")]
+            use crate::z3_shim::ast::Ast;
+            let as_int = translate_to_z3(ctx, expr, local_vars)?;
+            let zero = ctx.mk_int(0);
+            Ok(as_int._eq(&zero).not())
         }
         syn::Expr::Group(g) => translate_bool_to_z3(ctx, &g.expr, local_vars, sym_ctx),
         syn::Expr::Paren(p) => translate_bool_to_z3(ctx, &p.expr, local_vars, sym_ctx),

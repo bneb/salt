@@ -1,0 +1,18 @@
+// RTV-6 (red team R2/R3 + seeker.rs:313 memo): hex const args. seeker's
+// decision memo asks base10_digits vs base10_parse; this probe pins what the
+// evaluator does with 0x10 today. If 0x10 normalizes to 16 and shares ONE
+// identity with ::<16>, spelling law holds. If it misparses as 10 or splits,
+// that is a NEW wrong-code sibling of T-a/T-c.
+package main
+
+struct S<const K: i64> { v: i64 }
+
+impl<const K: i64> S<K> {
+    pub fn mk() -> S<K> { return S { v: K }; }
+}
+
+pub fn main() -> i32 {
+    let a = S::<0x10>::mk();
+    let b = S::<16>::mk();
+    return ((a.v + b.v) as i32);
+}

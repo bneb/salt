@@ -27,9 +27,20 @@ pub enum ProofHint {
     
     /// Suggest a safer type or operation
     NarrowType(String),
-    
+
     /// Generic hint for edge cases
     Note(String),
+
+    /// The failing argument is a `mut` local reassigned inside a `while`
+    /// loop -- its value is deliberately untracked outside the loop's own
+    /// `invariant`/guard (see docs/SPEC.md's havoc entry), so `requires`/
+    /// `assert` are the wrong kind of fix here; only `invariant` reaches
+    /// this check. Carries the condition already rewritten into the
+    /// caller's own terms (arguments substituted for the callee's
+    /// parameter names) when that rewrite succeeded, so the suggested
+    /// text is directly usable rather than referencing names out of scope
+    /// at the call site.
+    AddInvariant(Option<String>),
 }
 
 impl fmt::Display for ProofHint {
@@ -43,8 +54,12 @@ impl fmt::Display for ProofHint {
                 write!(f, "add 'requires {} < {}' OR 'assert {} < {}'", index, bound, index, bound),
             ProofHint::NarrowType(suggestion) => 
                 write!(f, "{}", suggestion),
-            ProofHint::Note(msg) => 
+            ProofHint::Note(msg) =>
                 write!(f, "{}", msg),
+            ProofHint::AddInvariant(Some(cond)) =>
+                write!(f, "this argument is reassigned inside a `while` loop, which discards its tracked value for soundness (docs/SPEC.md's havoc entry) -- if `{}` should hold whenever this call executes, add 'invariant {};' to that loop, not a requires/assert", cond, cond),
+            ProofHint::AddInvariant(None) =>
+                write!(f, "this argument is reassigned inside a `while` loop, which discards its tracked value for soundness (docs/SPEC.md's havoc entry) -- state what this call needs as an 'invariant' on that loop, not a requires/assert"),
         }
     }
 }
@@ -130,8 +145,22 @@ impl fmt::Display for VerificationFailure {
 
 /// Classify a constraint string and generate appropriate hints
 fn classify_constraint(constraint: &str) -> Vec<ProofHint> {
+    // Pattern: a mut local reassigned inside a while loop. Named literally
+    // `{var}_havoc_{id}` at the one site that mints them
+    // (codegen/stmt/while_stmt.rs) -- checked first and returned alone,
+    // because the other patterns below would suggest `requires`/`assert`,
+    // which don't apply to a local's value inside a loop and would send
+    // the developer to fix the wrong kind of thing. The call site in
+    // verification/mod.rs upgrades this to AddInvariant(Some(text)) when
+    // it can rewrite the callee's clause into the caller's own terms;
+    // this generic fallback is for callers of classify_constraint (present
+    // or future) that don't have that context available.
+    if constraint.contains("_havoc_") {
+        return vec![ProofHint::AddInvariant(None)];
+    }
+
     let mut hints = Vec::new();
-    
+
     // Pattern: Bounds check (idx < len, i < capacity, etc.)
     if constraint.contains(" < ") {
         let parts: Vec<&str> = constraint.split(" < ").collect();
@@ -231,10 +260,37 @@ mod tests {
         let output = format!("{}", hint);
         assert_eq!(output, "important info");
     }
-    
+
+    #[test]
+    fn test_proof_hint_display_add_invariant_with_text() {
+        let hint = ProofHint::AddInvariant(Some("off < buf.len".to_string()));
+        let output = format!("{}", hint);
+        assert!(output.contains("invariant off < buf.len;"));
+        assert!(output.contains("while"));
+        assert!(!output.to_lowercase().contains("requires '") && !output.contains("add 'requires"));
+    }
+
+    #[test]
+    fn test_proof_hint_display_add_invariant_without_text() {
+        let hint = ProofHint::AddInvariant(None);
+        let output = format!("{}", hint);
+        assert!(output.contains("invariant"));
+        assert!(output.contains("while"));
+    }
+
     // ========================================================================
     // classify_constraint Tests - All pattern branches
     // ========================================================================
+
+    #[test]
+    fn test_havoc_classification_takes_priority() {
+        // A havoc'd variable's constraint often also contains " < " (bounds
+        // shape) or other patterns below -- havoc must win, since
+        // `requires`/`assert` are the wrong fix for a loop-local value.
+        let hints = classify_constraint("off_havoc_23 < capacity");
+        assert_eq!(hints.len(), 1);
+        assert!(matches!(&hints[0], ProofHint::AddInvariant(None)));
+    }
     
     #[test]
     fn test_bounds_check_classification() {

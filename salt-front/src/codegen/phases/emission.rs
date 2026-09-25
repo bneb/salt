@@ -173,6 +173,25 @@ pub struct EmissionState {
     /// Popped when leaving the loop body. Sound because invariants are
     /// proven at loop entry and the guard is asserted before body execution.
     pub loop_assumptions: Vec<syn::Expr>,
+    /// Facts true for the rest of the enclosing block, from two sources:
+    /// equalities (`name == init_expr`) for non-`mut` locals, one entry per
+    /// `let name = init_expr;` (see `assert_local_expr_in_z3` in
+    /// codegen/stmt/mod.rs); and, after a `while` loop, the standard
+    /// Hoare post-loop fact `invariant && !cond` (see
+    /// `verify_while_loop_post_body` in codegen/stmt/while_stmt.rs) --
+    /// sound because base case and inductive step are both already proven
+    /// before that fact is pushed, so this states nothing not already
+    /// established.
+    ///
+    /// Deliberately separate from `path_conditions` rather than pushed onto
+    /// it: that Vec assumes every push is popped in strict LIFO order by
+    /// the if/else branch (or loop) that pushed it, and neither a
+    /// let-binding's nor a post-loop fact's scope nests that way (each
+    /// lives until its enclosing BLOCK ends, not around a single branch).
+    /// Reusing it would risk popping someone else's guard. `emit_block` and
+    /// `emit_block_expr` each snapshot this Vec's length on entry and
+    /// truncate back to it on exit instead.
+    pub scoped_facts: Vec<syn::Expr>,
 }
 
 impl EmissionState {

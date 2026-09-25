@@ -1,0 +1,15 @@
+// RT probe WS-R2/R4: UNARY PLUS const in turbofish (`+5`).
+// Like negatives, `+5` parses as Expr::Unary(Plus) not Expr::Lit, exercising
+// the `_ => {}` arm on both router versions. Records current behavior.
+package main
+
+struct P<const K: i64> { v: i64 }
+
+impl<const K: i64> P<K> {
+    pub fn mk() -> P<K> { return P { v: K }; }
+}
+
+pub fn main() -> i32 {
+    let a = P::<+5>::mk();
+    return a.v as i32;
+}

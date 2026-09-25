@@ -494,6 +494,7 @@ pub(crate) fn prove_for_loop_invariants(
     iv_ssa: &str,
     start_expr: &Option<Box<syn::Expr>>,
 ) -> Result<Vec<syn::Expr>, String> {
+    #[cfg(feature = "z3-backend")]
     use crate::z3_shim::ast::Ast;
     if ctx.config.no_verify { return Ok(vec![]); }
     let sc = crate::codegen::verification::SymbolicContext::new(ctx.z3_ctx);

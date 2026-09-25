@@ -1,0 +1,25 @@
+// Z3 Contract Test: reading an Optional-state pointer through .read()
+// must be rejected without narrowing first.
+// Expected: REJECTED
+//
+// Coverage companion to test_use_after_free_via_read_rejected.salt: that
+// one exercises check_deref's Freed branch through emit_method_call's
+// now-fixed try_emit_special_method call; this one exercises the
+// Optional branch, reached via a different state transition (any call to
+// an extern function taking a pointer argument marks that argument
+// Optional afterward -- emit_low_level_call, call_helpers.rs -- since an
+// arbitrary FFI call might have invalidated it). Same fixed code path,
+// different PointerState variant, checked independently rather than
+// assumed to work because Freed did.
+package test_deref_optional_via_read_rejected
+
+use std.core.ptr.Ptr
+
+extern fn maybe_frees(p: Ptr<i32>);
+
+pub fn optional_state_via_read() -> i32 {
+    let p: Ptr<i32> = Ptr::<i32>::empty();
+    maybe_frees(p);
+    let v: i32 = p.read();
+    return v;
+}

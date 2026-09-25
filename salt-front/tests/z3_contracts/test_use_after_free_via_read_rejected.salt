@@ -1,0 +1,32 @@
+// Z3 Contract Test: reading a freed pointer through an unsafe Ptr method
+// (.read()) must be rejected.
+// Expected: REJECTED
+//
+// Not a Z3/contracts bug at all -- this is the flow-sensitive 3-state
+// pointer tracker (pointer_state.rs), a plain Rust check with no solver
+// involved. check_deref computed the right answer (Freed) the whole
+// time; its caller just never listened. try_emit_special_method
+// (special_methods.rs) calls check_deref for unsafe Ptr methods
+// (read/write/offset/etc.) and returns Err on a real violation, Ok(None)
+// when this method name isn't a special method at all. Its caller in
+// emit_method_call (calls.rs) used `if let Ok(Some(res)) = ...`, which
+// treats those two outcomes identically -- a genuine Err silently fell
+// through to ordinary, unchecked method resolution instead of aborting.
+// `free(p); p.read();`, no cross-function state, no contracts anywhere
+// in this file -- compiled clean with zero error and zero runtime check
+// before this fix. Found by accident while investigating an unrelated
+// question about pending_pointer_state's cross-function scoping; that
+// investigation turned up nothing, this is what it actually found.
+// Fixed by propagating with `?` instead of matching on Ok(Some(_)).
+package test_use_after_free_via_read_rejected
+
+use std.core.ptr.Ptr
+
+extern fn free(p: Ptr<i32>);
+
+pub fn use_after_free() -> i32 {
+    let p: Ptr<i32> = Ptr::<i32>::empty();
+    free(p);
+    let v: i32 = p.read();
+    return v;
+}

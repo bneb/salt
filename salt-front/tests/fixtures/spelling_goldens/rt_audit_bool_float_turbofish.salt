@@ -1,0 +1,17 @@
+// RT-AUDIT (red team R2e): NON-INTEGER consts in turbofish. scan_types
+// resolve_generic_arg falls back to Struct("0") for any non-Integer eval
+// (scan_types.rs:147/:149). If true/false or floats are accepted here,
+// DISTINCT values must NOT collide on one identity.
+package main
+
+struct B<const FLAG: bool> { v: bool }
+
+impl<const FLAG: bool> B<FLAG> {
+    pub fn mk(v: bool) -> B<FLAG> { return B { v: v }; }
+}
+
+pub fn main() -> i32 {
+    let t = B::<true>::mk(true);
+    let f = B::<false>::mk(false);
+    return (if t.v && !f.v { 1 } else { 0 });
+}

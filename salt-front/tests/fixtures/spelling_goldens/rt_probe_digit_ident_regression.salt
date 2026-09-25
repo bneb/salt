@@ -1,0 +1,16 @@
+// WS-R3/P2 (T-a) guard regression rail: the proposed is_value_spelled_leaf
+// guard must reject literal leaves ("-7", "007") WITHOUT over-rejecting
+// legitimate digit-CONTAINING identifiers. `S_7` is a real symbol and must
+// still package-qualify to main__S_7 exactly as at HEAD 51f10fd.
+package main
+
+struct S_7 { v: i64 }
+
+impl S_7 {
+    pub fn mk() -> S_7 { return S_7 { v: 7 }; }
+}
+
+pub fn main() -> i32 {
+    let s = S_7::mk();
+    return s.v as i32;
+}

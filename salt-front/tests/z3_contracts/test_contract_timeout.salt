@@ -1,7 +1,7 @@
 // =============================================================================
 // Z3 Regression Test: COMPLEX CONTRACT — TIMEOUT → RUNTIME FALLBACK
 // =============================================================================
-// Expected: Z3 cannot determine satisfiability within 100ms → runtime assertion
+// Expected: Z3 cannot determine satisfiability within its proof budget → runtime assertion
 // If this produces a compile error: Z3 timeout handling is broken
 // If this succeeds silently: Z3 is proving a complex constraint (unexpected pass)
 //

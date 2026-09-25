@@ -88,7 +88,7 @@ echo ""
 # BUILD SALT COMPILER (salt-front) if not already built
 # =============================================================================
 build_salt_compiler() {
-    if [[ -f "$SALT_FRONT/target/release/salt-front" ]]; then
+    if [[ -f "$SALT_FRONT/target/release/saltc" ]]; then
         echo "  [✓] salt-front already built (release)"
         return
     fi
@@ -115,7 +115,7 @@ build_kernel() {
     # Step 1: Salt → MLIR
     echo "  [1/5] Compiling Salt → MLIR..."
     build_salt_compiler
-    SALT_BIN="$SALT_FRONT/target/release/salt-front"
+    SALT_BIN="$SALT_FRONT/target/release/saltc"
     for SALT_FILE in "${KERNEL_SALT_FILES[@]}"; do
         BASENAME=$(basename "$SALT_FILE" .salt)
         "$SALT_BIN" "$SALT_FILE" --lib \
@@ -203,7 +203,7 @@ build_basalt() {
     echo "🧠 Building Basalt (LLM inference benchmark)"
     echo "  ────────────────────────────────────────────────"
 
-    SALT_BIN="$SALT_FRONT/target/release/salt-front"
+    SALT_BIN="$SALT_FRONT/target/release/saltc"
     OUT="$TMP_DIR"
     COMBINED="$OUT/basalt_combined.salt"
 

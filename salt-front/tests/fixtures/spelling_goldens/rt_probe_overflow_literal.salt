@@ -1,0 +1,15 @@
+// RT probe WS-R2/R4: literal exceeding i64 range (> i64::MAX).
+// base10_parse::<i64>() fails -> `if let Ok` silently drops the arg on BOTH
+// router versions. Pins current behavior for post-commit diff.
+package main
+
+struct O<const K: i64> { v: i64 }
+
+impl<const K: i64> O<K> {
+    pub fn mk() -> O<K> { return O { v: K }; }
+}
+
+pub fn main() -> i32 {
+    let a = O::<99999999999999999999>::mk();
+    return a.v as i32;
+}

@@ -1,0 +1,20 @@
+// Z3 Contract Test: an addition provably within its type's range must
+// have its runtime overflow check elided entirely (zero-cost), not just
+// proven-and-checked-anyway.
+// Expected: PASS, and the emitted MLIR must NOT contain a call to
+// __salt_overflow_panic for this function.
+//
+// Salt already runtime-checks +/-/* by default outside release builds
+// (emit_overflow_check, binary_ops.rs: widen to a bigger int, do the op,
+// truncate, compare -- panic on mismatch). try_elide_overflow_check adds
+// the missing compile-time half: prove the widen-check can never fire,
+// and skip emitting it, the same proof-or-panic shape as every other
+// contract in this suite, applied to arithmetic itself instead of an
+// explicit requires/ensures. a and b are each bounded to [0, 100] by
+// this function's own requires, so their sum is at most 200 -- nowhere
+// near i32's range -- and Z3 should discharge that instantly.
+package test_overflow_elide_add_proved
+
+pub fn safe_add(a: i32, b: i32) -> i32
+    requires(a >= 0 && a <= 100 && b >= 0 && b <= 100)
+{ return a + b; }

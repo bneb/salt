@@ -22,6 +22,26 @@ Prerequisites:
 | Dependency | Role |
 |:-----------|:-----|
 | LLVM 21 | `mlir-opt`, `mlir-translate`, `clang` |
+
+`salt-opt` pins this version. `find_package(MLIR REQUIRED CONFIG)` accepts
+whatever `MLIR_DIR` points at, which let the build drift: a stale cache in
+`salt-opt/build/` was configured against LLVM 18 while the binary in use
+linked LLVM 21. `salt-opt/CMakeLists.txt` now fails at configure time on a
+mismatch rather than producing a compiler that emits IR for the wrong
+version — that skew surfaces downstream as an inexplicable codegen bug, a
+long way from its cause.
+
+On Homebrew:
+
+```
+cmake -S salt-opt -B salt-opt/build -DCMAKE_BUILD_TYPE=Release \
+  -DLLVM_DIR=$(brew --prefix llvm@21)/lib/cmake/llvm \
+  -DMLIR_DIR=$(brew --prefix llvm@21)/lib/cmake/mlir
+cmake --build salt-opt/build -j
+```
+
+To move the supported version, set `-DSALT_LLVM_MAJOR=<n>` and update this
+table in the same change.
 | Rust 1.75+ | Salt compiler (`salt-front/`) |
 | Z3 4.12+ | Formal verification of memory-safety contracts |
 | Python 3 | Build scripts, fuzzing, integration tests |
@@ -209,9 +229,12 @@ Each unsafe operation needs a `requires` clause. The engine uses Weakest Precond
    ```
 
 4. **CI checks** (`.github/workflows/ci.yml`):
-   - `cargo build --release`
-   - `cargo test --release`
-   - `cargo clippy -- -D warnings`
+   - `build-and-test` (salt-front): `cargo build --release`, `cargo test --release`,
+     `cargo clippy -- -D warnings`, Z3 contracts, proof-ratio gate (45% proven floor),
+     MLIR determinism gate, swallowed-error gate, spelling-goldens gate.
+   - `salt-wasm`, `salt-lsp`, `salt-build`, `sp` (`tools/*`): build + test, plus
+     clippy for the crates that are currently clean (see each job's comments in
+     `ci.yml` for the ones that aren't yet).
 
 5. **Atomic changes:** Public API changes must update the corresponding `docs/` spec files in the same PR.
 

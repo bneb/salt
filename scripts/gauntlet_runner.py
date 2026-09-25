@@ -75,8 +75,8 @@ def benchmark_salt(path, iterations=50):
     start = time.time()
     try:
         # Pass --release to suppress debug traces
-        run_cmd(f"./salt-front/target/debug/salt-front {path} --release > {mlir_path}", silence=True)
-        run_cmd(f"./salt/build/salt-opt --verify --emit-llvm {mlir_path} --output {ll_path}", silence=True)
+        run_cmd(f"./salt-front/target/debug/saltc {path} --release -o {mlir_path}", silence=True)
+        run_cmd(f"./salt-opt/build/salt-opt --verify --emit-llvm {mlir_path} --output {ll_path}", silence=True)
         run_cmd(f"clang {ll_path} benchmarks/bridge.c -o {bin_path} -O3", silence=True)
     except Exception as e:
         print(f"Build Failed: {e}")

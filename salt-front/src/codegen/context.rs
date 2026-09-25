@@ -232,6 +232,29 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
         if let Some(i) = candidates.iter().position(|i| i.name == name) {
             return Some(candidates[i].clone());
         }
+
+        // NB-6 first-use completion: a requested spelling that is a proper
+        // PARAMETER-BOUNDARY prefix of exactly one registered instance
+        // resolves to it ("first use completes; cache is authoritative").
+        // Boundary check requires the next byte to be '_' so partial
+        // segment matches (i7 vs i64) never complete.
+        let mut completions: Vec<_> = self.discovery.struct_registry.values()
+            .filter(|i| {
+                i.name.starts_with(name)
+                    && i.name.as_bytes().get(name.len()) == Some(&b'_')
+            })
+            .collect();
+        completions.sort_by(|a, b| a.name.cmp(&b.name));
+        // Deterministic shortest-wins: competing completions arise from the
+        // SAME unbound placeholder spelled via different module paths
+        // (A vs main__A); they denote ONE instance. Distinct allocators
+        // remain reachable via explicit full turbofish.
+        if let Some(c) = completions.into_iter().next() {
+            return Some(c.clone());
+        }
+
+        // Legacy suffix fallback (shortest __suffix match) — retained LAST
+        // so first-use completion takes precedence when applicable.
         candidates.into_iter().next().cloned()
     }
 
@@ -324,6 +347,23 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
 
     pub fn is_consumed(&self, var_name: &str) -> bool {
         self.control_flow.consumed_vars.contains(var_name)
+    }
+
+
+    /// NB move-semantics twin (LoweringContext fields are direct refs).
+    pub(crate) fn transfer_ownership_by_var_lc(&mut self, var_name: &str) -> bool {
+        let mut removed = false;
+        for scope in self.control_flow.cleanup_stack.iter_mut().rev() {
+            if let Some(pos) = scope.iter().position(|t| t.var_name == var_name) {
+                scope.remove(pos);
+                removed = true;
+                break;
+            }
+        }
+        if removed {
+            let _ = self.ownership_tracker.mark_moved(var_name, self.z3_solver);
+        }
+        removed
     }
 
     pub fn mark_devoured(&mut self, var_name: &str) {
@@ -625,6 +665,10 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
     pub fn lookup_struct_by_type(&self, ty: &Type) -> Option<crate::registry::StructInfo> {
         match ty {
             Type::Struct(name) => {
+                // NB-6 first-use completion (mirror of struct_lookup twin).
+                if let Some(done) = self.find_struct_by_name(name) {
+                    return Some(done);
+                }
                 let mut candidates: Vec<_> = self.discovery.struct_registry.iter()
                     .filter(|(key, info)| info.name == *name || key.name == *name || key.mangle() == *name)
                     .map(|(_, info)| info).collect();
@@ -632,7 +676,19 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
                 if let Some(i) = candidates.iter().position(|i| i.name == *name) {
                     return Some(candidates[i].clone());
                 }
-                candidates.into_iter().next().cloned()
+                // NB-6 first-use completion: a requested spelling that is a
+                // proper PARAMETER-BOUNDARY prefix of registered instances
+                // resolves to the SHORTEST one (ties = same unbound
+                // placeholder via different module paths; distinct
+                // allocators need explicit full turbofish).
+                let mut completions: Vec<_> = self.discovery.struct_registry.iter()
+                    .filter(|(_, info)| {
+                        info.name.starts_with(name.as_str())
+                            && info.name.as_bytes().get(name.len()) == Some(&b'_')
+                    })
+                    .map(|(_, info)| info).collect();
+                completions.sort_by(|a, b| a.name.cmp(&b.name));
+                completions.into_iter().next().cloned()
             }
             _ => None,
         }
@@ -750,6 +806,24 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
             out.push_str(&format!("    func.call @{}({}) : (!llvm.ptr) -> ()\n", task.drop_fn, task.value));
         }
         Ok(())
+    }
+
+    /// NB move-semantics: removes any cleanup task whose var_name matches
+    /// (by-value argument move into a callee) and records the Z3 Moved
+    /// transition. Returns true when a tracked task was removed.
+    pub fn transfer_ownership_by_var(&mut self, var_name: &str) -> bool {
+        let mut removed = false;
+        for scope in self.control_flow.cleanup_stack.iter_mut().rev() {
+            if let Some(pos) = scope.iter().position(|t| t.var_name == var_name) {
+                scope.remove(pos);
+                removed = true;
+                break;
+            }
+        }
+        if removed {
+            let _ = self.ownership_tracker.mark_moved(var_name, self.z3_solver);
+        }
+        removed
     }
 
     pub fn release_by_var_name(&mut self, var_name: &str) {

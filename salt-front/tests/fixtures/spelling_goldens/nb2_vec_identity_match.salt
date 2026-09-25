@@ -1,0 +1,17 @@
+package main
+
+use std.collections.vec.Vec;
+
+fn drain<U>(v: Vec<U>) -> i64 {
+    match v {
+        w => { return w.len() as i64; }
+    }
+}
+
+pub fn main() -> i32 {
+    let mut v = Vec::<i64>::new();
+    v.push(1);
+    v.push(2);
+    let n = drain(v);
+    return n as i32;
+}

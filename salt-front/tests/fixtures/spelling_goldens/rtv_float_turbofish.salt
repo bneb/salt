@@ -1,0 +1,19 @@
+// RTV-4 (red team R2): Float const-generic policy probe. scan_types.rs:147
+// falls back to Struct("0") and expr/resolver.rs:96 drops non-Int literals,
+// so F::<2.5> vs F::<1.5> must collapse today. Post-fix decision needed:
+// Display spelling ("2.5") would NOT be caught by A's is_value_spelled_leaf
+// ('.' breaks all-digit) -> funnel would mint pkg__2_5 ghosts unless the
+// encoding is digit-safe (bits) or the guard grows.
+package main
+
+struct F<const D: f64> { v: f64 }
+
+impl<const D: f64> F<D> {
+    pub fn mk() -> F<D> { return F { v: D }; }
+}
+
+pub fn main() -> i32 {
+    let a = F::<2.5>::mk();
+    let b = F::<1.5>::mk();
+    return ((a.v + b.v) as i32);
+}

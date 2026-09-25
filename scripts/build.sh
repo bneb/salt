@@ -27,7 +27,7 @@ cd "$SALT_FRONT"
 if [[ "${1:-}" == "--release" ]]; then
     echo "🔨 Building salt-front (release)..."
     cargo build --release
-    echo "✅ Release build complete: $SALT_FRONT/target/release/salt-front"
+    echo "✅ Release build complete: $SALT_FRONT/target/release/saltc"
 elif [[ "${1:-}" == "--test" ]]; then
     echo "🧪 Building and testing salt-front..."
     cargo test 2>&1 | tail -20
@@ -35,7 +35,7 @@ elif [[ "${1:-}" == "--test" ]]; then
 else
     echo "🔨 Building salt-front (debug)..."
     cargo build
-    echo "✅ Debug build complete: $SALT_FRONT/target/debug/salt-front"
+    echo "✅ Debug build complete: $SALT_FRONT/target/debug/saltc"
 fi
 
     for mod in \

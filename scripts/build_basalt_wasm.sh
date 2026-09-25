@@ -47,7 +47,7 @@ echo "Built source: $COMBINED_SRC"
 
 # 2. salt-front → MLIR
 echo "Running salt-front..."
-"$SALT_FRONT/target/release/salt-front" "$COMBINED_SRC" > "$OUT_DIR/basalt.mlir"
+"$SALT_FRONT/target/release/saltc" "$COMBINED_SRC" > "$OUT_DIR/basalt.mlir"
 
 # 3. mlir-opt (optimization & lowering)
 echo "Running mlir-opt..."

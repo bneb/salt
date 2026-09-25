@@ -7,7 +7,9 @@
 //! then the condition holds under all possible executions, and the compiler
 //! can elide the runtime check entirely.
 
-use crate::z3_shim::{Context, Solver, SatResult, ast::{Int, Ast}};
+use crate::z3_shim::{Context, Solver, SatResult, ast::Int};
+#[cfg(feature = "z3-backend")]
+use crate::z3_shim::ast::Ast;
 use std::collections::HashMap;
 use crate::hir::ids::VarId;
 

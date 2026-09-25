@@ -173,6 +173,21 @@ three-site guessing game into two surgical fixes.
 3. Monomorphization hygiene: dedup identical instantiations, compile-time
    budget alarm (`monomorphization_stress` as the canary), p50/p95 tracked.
 
+
+**Retro (federated sessions, rounds 7–20):** Sprint 3's "generics that earn
+trust" thesis was stress-tested by an adversarial-probe campaign that found
+and closed the entire ghost-identity family at its root — arity-tolerant
+unification, prefix-tolerant numeric promotion, value-spelled-leaf guards,
+move-transfer hooks for by-value resources into callees, and an actionable
+[E003] for uninferrable type parameters. A typed identity scaffold
+(`InstanceId`, refusing constructors) and a single registration chokepoint
+(`define_instance`) landed unwired ahead of the S3-6 schema migration.
+Mechanical enforcement grew a spelling-goldens gate (16+ pinned emission
+contracts incl. stderr refusal rows) and artifact-absence checks. Open:
+full local type inference (WS-7), instance-key arity normalization for
+allocator placeholders (S3 final), naming-collision ICE (NB-1).
+
+---
 **Exit criteria**
 - Generic-default matrix (required/defaulted × override/omit × generic/concrete
   receiver) fully green and committed as one test file.

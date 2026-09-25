@@ -1,0 +1,10 @@
+// Z3 Contract Test: an addition with no constraints on its operands
+// must keep its runtime overflow check -- confirms the elision feature
+// never over-elides when it genuinely has nothing to go on.
+// Expected: PASS (compiles -- this is not a rejection test), AND the
+// emitted MLIR MUST contain a call to __salt_overflow_panic, matching
+// exactly what this function compiled to before try_elide_overflow_check
+// existed. No behavior change for the case elision can't help with.
+package test_overflow_check_kept_unconstrained
+
+pub fn unsafe_add(a: i32, b: i32) -> i32 { return a + b; }

@@ -1,0 +1,17 @@
+// RT probe WS-R2/R4: NEGATIVE const in turbofish (`S::<-7>`).
+// syn parses `-7` in const-generic position as Expr::Unary(Neg), NOT
+// Expr::Lit, so BOTH old (`Type::Struct(val.to_string())`) and new
+// (`GenericArg::Const(Integer).to_legacy_type()`) routers fall into the
+// `_ => {}` arm and push nothing. Expected: identical pre/post behavior.
+package main
+
+struct S<const K: i64> { v: i64 }
+
+impl<const K: i64> S<K> {
+    pub fn mk() -> S<K> { return S { v: K }; }
+}
+
+pub fn main() -> i32 {
+    let a = S::<-7>::mk();
+    return a.v as i32;
+}

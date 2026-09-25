@@ -1,0 +1,6 @@
+package main
+
+pub fn main() -> i32 {
+    let f: f64 = 1.5e3;
+    return 0;
+}

@@ -1,0 +1,20 @@
+// Z3 Contract Test: a function's own `requires` must be assumed as a fact
+// while verifying calls IT makes to other functions.
+// Expected: PASS
+//
+// `requires { x <= LIMIT }` parses as Expr::Block. caller_preconditions was
+// correctly pushed/popped around the function body and correctly consumed
+// at the callee-requires check site -- but translate_bool_to_z3 has no arm
+// for Expr::Block, so every entry silently failed to translate and never
+// reached the solver. `requires(x <= LIMIT)` (paren form) was never
+// affected, which is why this stayed hidden: the plumbing looked complete
+// end to end, and the paren form exercised it correctly.
+package test_composability_requires_proved
+
+const LIMIT: u64 = 100;
+
+fn g(x: u64) requires { x <= LIMIT } { }
+
+pub fn f(x: u64) requires { x <= LIMIT } {
+    g(x);
+}

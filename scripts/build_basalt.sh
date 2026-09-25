@@ -53,7 +53,7 @@ build_basalt() {
     echo "Built source: $COMBINED"
 
     echo "Running salt-front..."
-    $SF/target/release/salt-front "$COMBINED" --no-verify | grep -v "^DEBUG" | grep -v "^Debug" > $OUT/basalt.mlir
+    $SF/target/release/saltc "$COMBINED" --no-verify | grep -v "^DEBUG" | grep -v "^Debug" > $OUT/basalt.mlir
 
     echo "Running mlir-opt..."
     mlir-opt $OUT/basalt.mlir \

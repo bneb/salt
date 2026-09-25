@@ -7,6 +7,47 @@ use super::emit_expr;
 use super::literals::emit_enum_constructor;
 use super::call_helpers::{emit_low_level_call, handle_post_call_state};
 #[allow(clippy::too_many_arguments)] // REASON: all 9 params independently meaningful; bundling would obscure intent
+/// NB move-semantics: bare-path args bound to OWNED by-value params take
+/// ownership from their Ptr-tracked source locals. Returns unique var names
+/// used exactly once across ALL positional args (conservative).
+#[allow(clippy::cmp_owned)] // REASON: SSA ids embed var names; Ident lacks str-eq on this toolchain version
+pub(crate) fn collect_owned_arg_moves(
+    args: &[syn::Expr],
+    arg_tys: &[Type],
+    local_vars: &HashMap<String, (Type, LocalKind)>,
+) -> Vec<String> {
+    let mut moved: Vec<String> = Vec::new();
+    for (i, arg_expr) in args.iter().enumerate() {
+        let owned = matches!(
+            arg_tys.get(i),
+            Some(Type::Struct(_)) | Some(Type::Concrete(..))
+        );
+        if !owned {
+            continue;
+        }
+        if let syn::Expr::Path(p) = arg_expr {
+            if p.path.segments.len() == 1 {
+                let name = p.path.segments[0].ident.to_string();
+                if matches!(local_vars.get(&name), Some((_, LocalKind::Ptr(_)))) {
+                    moved.push(name);
+                }
+            }
+        }
+    }
+    moved.sort();
+    moved.dedup();
+    moved.retain(|name| {
+        args.iter().filter(|a| matches!(
+            &**a,
+            syn::Expr::Path(pp)
+                if pp.path.segments.len() == 1
+                    && pp.path.segments[0].ident.to_string() == *name
+        )).count() == 1
+    });
+    moved
+}
+
+#[allow(clippy::too_many_arguments)] // REASON: all 9 params independently meaningful; bundling would obscure intent
 fn emit_function_call(
     ctx: &mut LoweringContext,
     out: &mut String,
@@ -135,11 +176,14 @@ pub fn emit_method_call(ctx: &mut LoweringContext, out: &mut String, m: &syn::Ex
         }
     }
     
-    // 0. Try Intrinsic (Primitive Methods like popcount)
+    // 0. Try Intrinsic (Primitive Methods like popcount). `?` propagates a
+    // real error (e.g. wrong arg count) instead of silently falling
+    // through to generic method resolution on it -- see the identical fix
+    // just below for try_emit_special_method.
     let mut intrinsic_args = Vec::new();
     intrinsic_args.push(*m.receiver.clone());
     intrinsic_args.extend(m.args.iter().cloned());
-    if let Ok(Some(res)) = ctx.emit_intrinsic(out, &m.method.to_string(), &intrinsic_args, local_vars, expected_ty) {
+    if let Some(res) = ctx.emit_intrinsic(out, &m.method.to_string(), &intrinsic_args, local_vars, expected_ty)? {
          return Ok(res);
     }
     
@@ -210,10 +254,18 @@ pub fn emit_method_call(ctx: &mut LoweringContext, out: &mut String, m: &syn::Ex
     // Canonicalize receiver type to prevent raw Struct("Node")
     cached_receiver_ty = crate::codegen::type_bridge::resolve_codegen_type(ctx, &cached_receiver_ty);
 
-    // Try special methods
-    if let Ok(Some(res)) = crate::codegen::expr::special_methods::try_emit_special_method(
+    // Try special methods. `?` here is load-bearing: try_emit_special_method
+    // returns Err for a real violation (e.g. check_deref rejecting a
+    // freed/uninitialized/empty/optional receiver on an unsafe Ptr method
+    // like .read()/.write()/.offset()), and Ok(None) only when this method
+    // name isn't a special method at all. `if let Ok(Some(res)) = ...`
+    // used to treat those two outcomes identically, silently falling
+    // through to generic method resolution on a real error -- which meant
+    // check_deref's rejection was discarded and the call compiled as an
+    // ordinary, unchecked method call. See test_use_after_free_via_read_rejected.salt.
+    if let Some(res) = crate::codegen::expr::special_methods::try_emit_special_method(
         ctx, out, m, local_vars, expected_ty, &cached_receiver_val, &cached_receiver_ty
-    ) {
+    )? {
         return Ok(res);
     }
 
@@ -552,6 +604,12 @@ fn emit_function_args(
 
     let mut args_vals = Vec::new();
     let mut inferred_tys = Vec::new();
+
+    // NB move-semantics: by-value owned args take ownership from their
+    // source locals (single-use only; conservative).
+    for name in collect_owned_arg_moves(args_vec, arg_tys, local_vars) {
+        let _ = ctx.transfer_ownership_by_var(&name);
+    }
 
     for (i, arg_expr) in args_vec.iter().enumerate() {
         let (mut val, mut ty) = super::emit_expr(ctx, out, arg_expr, local_vars, None)?;

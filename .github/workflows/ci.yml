@@ -8,10 +8,29 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - name: Install Z3
-        run: sudo apt-get update && sudo apt-get install -y libz3-dev
+      # Pinned rather than apt's libz3-dev (4.8.12 on ubuntu-latest): the
+      # proof budget is a Z3 rlimit, whose units vary by version, and the Z3
+      # contract expectations and proof_baseline.json are calibrated to this
+      # version. Under 4.8.12, test_ensures_timeout_runtime_check defers to a
+      # runtime check instead of rejecting at compile time.
+      - name: Install Z3 4.16.0
+        run: |
+          curl -sSfL -o /tmp/z3.zip https://github.com/Z3Prover/z3/releases/download/z3-4.16.0/z3-4.16.0-x64-glibc-2.39.zip
+          echo "7288c49a5bd6dbafd7b0b0d1f65956b91672da24b08f09242919af159be3418e  /tmp/z3.zip" | sha256sum -c -
+          unzip -q /tmp/z3.zip -d /tmp/z3 && sudo mv /tmp/z3/* /opt/z3
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I/opt/z3/include" >> "$GITHUB_ENV"
+          # -L on rustc's own link line: with only LIBRARY_PATH, the runner
+          # image's preinstalled libz3-dev (4.8.12) wins the link.
+          echo "RUSTFLAGS=-L native=/opt/z3/bin" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/opt/z3/bin" >> "$GITHUB_ENV"
+          /opt/z3/bin/z3 --version
       - name: Build
         run: cargo build --release
+        working-directory: salt-front
+      - name: Check saltc loads the pinned Z3
+        run: |
+          ldd target/release/saltc | grep libz3
+          ldd target/release/saltc | grep -q '=> /opt/z3/bin/' || { echo "saltc is not loading the pinned Z3 from /opt/z3/bin"; exit 1; }
         working-directory: salt-front
       - name: Test
         run: cargo test --release
@@ -23,8 +42,142 @@ jobs:
         run: SALTC=./target/release/saltc bash tests/z3_contracts/run_tests.sh
         working-directory: salt-front
       - name: Proof-ratio gate
-        run: SALTC=./target/release/saltc bash scripts/proof_gate.sh
+        run: SALTC=./target/release/saltc bash ../scripts/proof_gate.sh
+        working-directory: salt-front
         env:
           MIN_PROVEN_PCT: "45"
       - name: MLIR determinism gate
-        run: SALTC=./target/release/saltc bash scripts/mlir_determinism_gate.sh
+        run: SALTC=./target/release/saltc bash ../scripts/mlir_determinism_gate.sh
+        working-directory: salt-front
+      - name: Swallowed-error gate
+        run: bash scripts/no_swallowed_errors_gate.sh
+      - name: Spelling-goldens gate
+        run: SALTC=./target/release/saltc bash ../scripts/spelling_goldens_gate.sh
+        working-directory: salt-front
+
+  # salt-front compiled WITHOUT the z3-backend feature -- the path used by
+  # tools/salt-wasm. Exercised here as its own job (rather than assumed) because
+  # this configuration had never been built in CI before 2026-09; it had quietly
+  # bitrotted (dead z3-sys dependency plus 9 compile errors in z3_stub.rs).
+  salt-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - name: Build
+        run: cargo build --release --target wasm32-unknown-unknown
+        working-directory: tools/salt-wasm
+      - name: Clippy
+        run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
+        working-directory: tools/salt-wasm
+
+  salt-lsp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install Z3
+        run: sudo apt-get update && sudo apt-get install -y libz3-dev
+      - name: Build
+        run: cargo build --release
+        working-directory: tools/salt-lsp
+      - name: Test
+        run: cargo test --release
+        working-directory: tools/salt-lsp
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+        working-directory: tools/salt-lsp
+
+  salt-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Build
+        run: cargo build --release
+        working-directory: tools/salt-build
+      - name: Test
+        run: cargo test --release
+        working-directory: tools/salt-build
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+        working-directory: tools/salt-build
+
+  sp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Build
+        run: cargo build --release
+        working-directory: tools/sp
+      - name: Test
+        run: cargo test --release
+        working-directory: tools/sp
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+        working-directory: tools/sp
+
+  # C++/CMake/MLIR optimizer backend. Ubuntu has no salt-opt coverage before
+  # this job; LLVM/MLIR 21 dev packages come from apt.llvm.org (not in
+  # Ubuntu's own repos -- Noble tops out at MLIR 20). Also builds salt-front,
+  # since salt-opt/tests/run_execution.py drives the real saltc -> salt-opt
+  # -> clang pipeline end to end rather than testing salt-opt in isolation.
+  salt-opt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Z3
+        run: sudo apt-get update && sudo apt-get install -y libz3-dev
+      - name: Install LLVM/MLIR 21
+        run: |
+          wget https://apt.llvm.org/llvm.sh -O /tmp/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 21
+          sudo apt-get install -y llvm-21-dev libmlir-21-dev mlir-21-tools
+          sudo ln -sf /usr/bin/clang-21 /usr/bin/clang
+      - name: Build salt-front
+        run: cargo build --release
+        working-directory: salt-front
+      - name: Configure salt-opt
+        run: |
+          cmake -S salt-opt -B salt-opt/build -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_DIR=/usr/lib/llvm-21/lib/cmake/llvm \
+            -DMLIR_DIR=/usr/lib/llvm-21/lib/cmake/mlir
+      - name: Build salt-opt
+        run: cmake --build salt-opt/build -j
+      - name: Run salt-opt test suite
+        working-directory: salt-opt/tests
+        run: |
+          run_case() {
+            file=$1; expected=$2
+            actual=0
+            python3 run_execution.py "$file" || actual=$?
+            if [ "$actual" -ne "$expected" ]; then
+              echo "FAIL: $file expected exit $expected, got $actual" >&2
+              return 1
+            fi
+            echo "OK: $file (exit $actual)"
+          }
+          run_case hello.salt 42
+          run_case verification_pass.salt 0
+          run_case concept_basic.salt 0
+          run_case concept_generic.salt 0
+          # verification_fail.salt is expected to be REJECTED at compile time
+          # (Z3 proves the b != 0 contract false). run_execution.py's Step 1
+          # exits 1 in that case -- that failure IS the pass condition here.
+          run_case verification_fail.salt 1
+          # opt_option_test.salt is excluded: saltc currently fails to resolve
+          # the Option::Some constructor ("Undefined function or symbol:
+          # 'Some'"), a pre-existing generic-enum-identity bug -- tracked
+          # separately, not papered over here.

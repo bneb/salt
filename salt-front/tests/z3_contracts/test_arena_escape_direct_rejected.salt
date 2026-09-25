@@ -1,0 +1,23 @@
+// Z3 Contract Test: returning a pointer allocated from a function-local
+// arena must be rejected -- the arena (and everything allocated from it)
+// dies when the function returns.
+// Expected: REJECTED
+//
+// arena_escape_tracker (the "Scope Ladder" depth-based taint tracker)
+// had no coverage at all in this suite before this fixture -- found
+// while auditing it for cross-function state persistence (see
+// test_cross_fn_arena_escape_proved.salt) and adding this as the
+// baseline sanity check the audit needed anyway: confirms
+// check_return_escape actually fires for a real, single-function
+// violation, not just that the cross-function case happens to compile
+// clean for unrelated reasons.
+package test_arena_escape_direct_rejected
+
+use std.core.ptr;
+use std.core.arena;
+
+pub fn direct() -> Ptr<i32> {
+    let arena = Arena::new(4096);
+    let p = arena.alloc_array::<i32>(4);
+    return p;
+}

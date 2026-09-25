@@ -1,0 +1,41 @@
+// Z3 Contract Test: unsigned types must carry their type's non-negativity
+// (and, for narrower types, full range) as an implicit fact for the solver.
+// Expected: PASS
+//
+// assert_type_bounds already exists and already asserts u8/u16/u32/u64/i8/i16
+// range facts correctly -- but only for the direct arguments of ONE call-site
+// requires check. It was never applied to (a) the postcondition/ensures
+// check at all, or (b) locals referenced only in a path condition rather
+// than passed as an argument to the specific call being verified. Both gaps
+// are covered below.
+package test_unsigned_bound_proved
+
+// (a) The ensures/postcondition path never called assert_type_bounds at all.
+// A trivially-true fact about any real unsigned value failed to prove.
+pub fn always_nonneg(x: u32) -> u32
+    ensures { result >= 0 }
+{
+    return x;
+}
+
+fn sub_checked(a: u32, b: u32) -> u32 requires { b <= a } { return a - b; }
+
+// (b) The real shape this was needed for. dense_idx is never passed to
+// sub_checked -- it appears only in the guard -- so the call-site bounds
+// injection (keyed off sub_checked's own formal parameters) never touched
+// it. "dense_idx < count" only implies "count >= 1" if dense_idx is known
+// non-negative, and nothing supplied that fact. This forced KeuOS's ECS
+// sparse-set code to add a redundant `if count == 0` guard purely for the
+// prover, on every one of 11 identical call sites.
+pub fn last_dense_index(count: u32, dense_idx: u32) -> u32 {
+    if dense_idx >= count { return 0; }
+    return sub_checked(count, 1);
+}
+
+// Non-regression: the EXISTING narrower bounds (i8's [-128, 127]) must
+// keep working once the bounds-injection is generalized beyond call
+// arguments. If this stops proving, the refactor broke what already worked.
+fn accepts_small(x: i8) -> i8 requires { x <= 127 } { return x; }
+pub fn always_in_i8_range(x: i8) -> i8 {
+    return accepts_small(x);
+}

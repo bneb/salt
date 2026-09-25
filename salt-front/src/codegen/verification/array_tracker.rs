@@ -159,6 +159,7 @@ pub(crate) fn prove_for_loop_concrete(
     end_val: i64,
     var_name: &str,
 ) -> Result<Vec<syn::Expr>, String> {
+    #[cfg(feature = "z3-backend")]
     use crate::z3_shim::ast::Ast;
     if ctx.config.no_verify { return Ok(vec![]); }
     let sc = crate::codegen::verification::SymbolicContext::new(ctx.z3_ctx);

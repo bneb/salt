@@ -8,7 +8,7 @@
 //!   [workspace]    — members, shared dependencies
 
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Top-level salt.toml manifest structure.
@@ -17,9 +17,9 @@ use std::path::Path;
 pub struct Manifest {
     pub package: Package,
     #[serde(default)]
-    pub dependencies: HashMap<String, Dependency>,
+    pub dependencies: BTreeMap<String, Dependency>,
     #[serde(default, rename = "dev-dependencies")]
-    pub dev_dependencies: HashMap<String, Dependency>,
+    pub dev_dependencies: BTreeMap<String, Dependency>,
     #[serde(default)]
     pub build: Option<BuildConfig>,
     #[serde(default)]
@@ -58,20 +58,36 @@ fn default_edition() -> String {
 #[serde(untagged)]
 pub enum Dependency {
     /// Inline table: { path = "../foo" }
-    Path { path: String },
+    Path {
+        path: String,
+        // Parsed so it can be refused: the enum is untagged, so an unknown
+        // key is dropped silently. Feature flags aren't implemented;
+        // resolver::Requirement::new rejects a non-empty list, as for Full.
+        #[serde(default)]
+        features: Vec<String>,
+    },
     /// Inline table with git source: { git = "...", rev = "..." }
     Git {
         git: String,
+        // rev/branch/tag are parsed so the documented git-dependency shape is
+        // accepted, but nothing in the shipped binary reads them:
+        // resolver::Requirement::new rejects every Git dependency until git
+        // resolution exists.
         #[serde(default)]
+        #[allow(dead_code)]
         rev: Option<String>,
         #[serde(default)]
+        #[allow(dead_code)]
         branch: Option<String>,
         #[serde(default)]
+        #[allow(dead_code)]
         tag: Option<String>,
     },
     /// Inline table with version + features: { version = "1.0", features = ["x"] }
     Full {
         version: String,
+        // Feature flags aren't implemented; resolver::Requirement::new rejects
+        // a non-empty list rather than silently dropping it.
         #[serde(default)]
         features: Vec<String>,
     },
@@ -79,11 +95,17 @@ pub enum Dependency {
     Version(String),
 }
 
+// local_path/version/source_display are exercised by this module's own tests
+// (below) but have no caller in the shipped binary: resolver.rs pattern-matches
+// Dependency variants directly instead of going through these accessors. Kept
+// as tested scaffolding rather than wired in, since there's no missing call
+// site to attach them to.
+#[allow(dead_code)]
 impl Dependency {
     /// Get the local filesystem path for a path dependency.
     pub fn local_path(&self) -> Option<&str> {
         match self {
-            Dependency::Path { path } => Some(path),
+            Dependency::Path { path, .. } => Some(path),
             _ => None,
         }
     }
@@ -100,7 +122,7 @@ impl Dependency {
     /// Human-readable source description.
     pub fn source_display(&self) -> String {
         match self {
-            Dependency::Path { path } => format!("path:{}", path),
+            Dependency::Path { path, .. } => format!("path:{}", path),
             Dependency::Git { git, rev, .. } => {
                 if let Some(r) = rev {
                     format!("git+{}?rev={}", git, &r[..7.min(r.len())])
@@ -127,7 +149,11 @@ pub struct BuildConfig {
 }
 
 /// Per-profile build settings.
+// Parsed so `[build.release]`/`[build.debug]` (documented at the top of this
+// file) are accepted, but not yet consumed: cmd_build only ever reads
+// BuildConfig's `target`, never `release`/`debug`.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct ProfileConfig {
     #[serde(default)]
     pub opt: Option<String>,
@@ -144,7 +170,7 @@ pub struct Workspace {
     #[serde(default)]
     pub members: Vec<String>,
     #[serde(default)]
-    pub dependencies: HashMap<String, Dependency>,
+    pub dependencies: BTreeMap<String, Dependency>,
 }
 
 /// Load and parse a salt.toml manifest file.
@@ -190,6 +216,45 @@ version = "0.1.0"
         assert_eq!(manifest.package.version, "0.1.0");
         assert_eq!(manifest.package.edition, "2026");
         assert_eq!(manifest.package.entry, "src/main.salt");
+    }
+
+    #[test]
+    fn test_dependencies_iterate_in_sorted_order() {
+        // The resolver walks dependencies in this order and selects each
+        // package at its first visit, and the build-cache key hashes search
+        // roots in this order, so it must not vary from run to run. 8 names:
+        // an unordered map lands sorted by chance with probability 1/8!.
+        let toml = r#"
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+theta = "1"
+eta = "1"
+zeta = "1"
+epsilon = "1"
+delta = "1"
+gamma = "1"
+beta = "1"
+alpha = "1"
+
+[dev-dependencies]
+theta = "1"
+eta = "1"
+zeta = "1"
+epsilon = "1"
+delta = "1"
+gamma = "1"
+beta = "1"
+alpha = "1"
+"#;
+        let manifest: Manifest = toml::from_str(toml).unwrap();
+        let sorted = ["alpha", "beta", "delta", "epsilon", "eta", "gamma", "theta", "zeta"];
+        let deps: Vec<&str> = manifest.dependencies.keys().map(String::as_str).collect();
+        let dev: Vec<&str> = manifest.dev_dependencies.keys().map(String::as_str).collect();
+        assert_eq!(deps, sorted);
+        assert_eq!(dev, sorted);
     }
 
     #[test]
@@ -252,6 +317,7 @@ entry = "lib.salt"
     fn test_dependency_source_display() {
         let path_dep = Dependency::Path {
             path: "../foo".to_string(),
+            features: vec![],
         };
         assert_eq!(path_dep.source_display(), "path:../foo");
 
