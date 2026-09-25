@@ -224,32 +224,12 @@ version = "0.1.0"
         // package at its first visit, and the build-cache key hashes search
         // roots in this order, so it must not vary from run to run. 8 names:
         // an unordered map lands sorted by chance with probability 1/8!.
-        let toml = r#"
-[package]
-name = "app"
-version = "0.1.0"
-
-[dependencies]
-theta = "1"
-eta = "1"
-zeta = "1"
-epsilon = "1"
-delta = "1"
-gamma = "1"
-beta = "1"
-alpha = "1"
-
-[dev-dependencies]
-theta = "1"
-eta = "1"
-zeta = "1"
-epsilon = "1"
-delta = "1"
-gamma = "1"
-beta = "1"
-alpha = "1"
-"#;
-        let manifest: Manifest = toml::from_str(toml).unwrap();
+        let unsorted = ["theta", "eta", "zeta", "epsilon", "delta", "gamma", "beta", "alpha"];
+        let table: String = unsorted.iter().map(|name| format!("{} = \"1\"\n", name)).collect();
+        let toml = format!(
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\n{table}\n[dev-dependencies]\n{table}"
+        );
+        let manifest: Manifest = toml::from_str(&toml).unwrap();
         let sorted = ["alpha", "beta", "delta", "epsilon", "eta", "gamma", "theta", "zeta"];
         let deps: Vec<&str> = manifest.dependencies.keys().map(String::as_str).collect();
         let dev: Vec<&str> = manifest.dev_dependencies.keys().map(String::as_str).collect();

@@ -698,13 +698,16 @@ json = { version = "1.0", features = ["streaming"] }
     }
 
     /// Writes package `name` at `version` into `dir`, with `deps` as its
-    /// [dependencies] table and a source file naming the version.
+    /// [dependencies] table and an entry, src/lib.salt, naming the version.
     fn write_package(dir: &Path, name: &str, version: &str, deps: &str) {
         fs::create_dir_all(dir.join("src")).unwrap();
         fs::write(dir.join("src/lib.salt"), format!("package {}\n// version {}\n", name, version)).unwrap();
         fs::write(
             dir.join("salt.toml"),
-            format!("[package]\nname = \"{}\"\nversion = \"{}\"\n\n[dependencies]\n{}", name, version, deps),
+            format!(
+                "[package]\nname = \"{}\"\nversion = \"{}\"\nentry = \"src/lib.salt\"\n\n[dependencies]\n{}",
+                name, version, deps
+            ),
         )
         .unwrap();
     }
@@ -749,18 +752,8 @@ json = { version = "1.0", features = ["streaming"] }
 
         // Publish three versions into the isolated $HOME/.salt/publish, each
         // with distinct source so the test can tell which one was extracted.
-        let lib = tmp.join("mylib");
-        fs::create_dir_all(lib.join("src")).unwrap();
-        let source = |version: &str| format!("package mylib\n// version {}\n", version);
         for version in ["0.3.0", "0.3.1", "0.4.0"] {
-            fs::write(lib.join("src/lib.salt"), source(version)).unwrap();
-            fs::write(
-                lib.join("salt.toml"),
-                format!("[package]\nname = \"mylib\"\nversion = \"{}\"\nentry = \"src/lib.salt\"\n", version),
-            )
-            .unwrap();
-            let lib_manifest = crate::manifest::load(&lib.join("salt.toml")).unwrap();
-            crate::publish::publish(&lib_manifest, &lib).unwrap();
+            publish_package(&tmp, "mylib", version, "");
         }
 
         // The constraint admits 0.3.x only; 0.4.0 is newer but must be skipped.
@@ -774,7 +767,7 @@ json = { version = "1.0", features = ["streaming"] }
         assert_eq!(dep.entry, dep.root_path.join("src/lib.salt"), "the compiler loads the extracted package's entry");
         assert_eq!(
             fs::read_to_string(&dep.entry).unwrap(),
-            source("0.3.1"),
+            "package mylib\n// version 0.3.1\n",
             "the extracted package must be the version that was reported"
         );
 
