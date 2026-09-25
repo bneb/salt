@@ -45,7 +45,7 @@ pub struct Package {
     pub repository: Option<String>,
 }
 
-fn default_entry() -> String {
+pub(crate) fn default_entry() -> String {
     "src/main.salt".to_string()
 }
 

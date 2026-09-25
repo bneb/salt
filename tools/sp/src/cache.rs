@@ -7,6 +7,7 @@
 //! Cache hits skip all compilation for instant no-op builds.
 
 use crate::manifest::Manifest;
+use crate::resolver::ResolvedDep;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
@@ -49,6 +50,7 @@ impl ArtifactCache {
         project_dir: &Path,
         release: bool,
         search_roots: &[PathBuf],
+        deps: &[ResolvedDep],
     ) -> Result<String, String> {
         let mut hasher = Sha256::new();
 
@@ -86,13 +88,19 @@ impl ArtifactCache {
         update_field(&mut hasher, target.as_bytes());
 
         // 5. Dependency roots hash (transitive cache key fix)
-        //    Hash the resolved search roots to detect when deps change, one
-        //    digest per root so a file can't move between roots unseen.
+        //    Hash the search roots and each dependency's package directory,
+        //    one digest per root so a file can't move between roots unseen.
         let mut dep_hasher = Sha256::new();
-        for root in search_roots {
+        for root in search_roots.iter().chain(deps.iter().map(|d| &d.root_path)) {
             if root.exists() {
                 update_field(&mut dep_hasher, &tree_digest(root)?);
             }
+        }
+        // saltc also gets each dependency's name and entry (`--dep`)
+        for dep in deps {
+            let entry = dep.entry.strip_prefix(&dep.root_path).unwrap_or(&dep.entry);
+            update_field(&mut dep_hasher, dep.name.as_bytes());
+            update_field(&mut dep_hasher, entry.display().to_string().as_bytes());
         }
         let deps_hash = dep_hasher.finalize();
         update_field(&mut hasher, &deps_hash);
@@ -275,12 +283,12 @@ mod tests {
         };
         fs::create_dir_all(tmp.join("cache")).unwrap();
 
-        let key1 = cache.compute_key(&manifest, &tmp, false, &[]).unwrap();
-        let key2 = cache.compute_key(&manifest, &tmp, false, &[]).unwrap();
+        let key1 = cache.compute_key(&manifest, &tmp, false, &[], &[]).unwrap();
+        let key2 = cache.compute_key(&manifest, &tmp, false, &[], &[]).unwrap();
         assert_eq!(key1, key2, "same source must produce same hash");
 
         // Different profile = different hash
-        let key3 = cache.compute_key(&manifest, &tmp, true, &[]).unwrap();
+        let key3 = cache.compute_key(&manifest, &tmp, true, &[], &[]).unwrap();
         assert_ne!(key1, key3, "release vs debug must produce different hash");
 
         let _ = fs::remove_dir_all(&tmp);
@@ -309,7 +317,7 @@ mod tests {
             cache_dir: project_dir.join("cache"),
         };
         cache
-            .compute_key(manifest, project_dir, false, search_roots)
+            .compute_key(manifest, project_dir, false, search_roots, &[])
             .unwrap()
     }
 
@@ -460,5 +468,37 @@ mod tests {
 
         let _ = fs::remove_dir_all(&tree);
         let _ = fs::remove_dir_all(&entry);
+    }
+
+    /// A dependency's name and entry reach saltc as `--dep <name>=<entry>`, so
+    /// changing either must change the key even when no source changes.
+    #[test]
+    fn test_key_covers_dependency_name_and_entry() {
+        let tmp = crate::test_support::temp_path("sp_test_hash_dep_entry");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("app/src")).unwrap();
+        fs::create_dir_all(tmp.join("dep/src")).unwrap();
+        fs::write(tmp.join("app/src/main.salt"), "package main\nfn main() { }").unwrap();
+        fs::write(tmp.join("app/salt.toml"), "[package]\nname = \"app\"\nversion = \"0.1.0\"\n").unwrap();
+        fs::write(tmp.join("dep/src/lib.salt"), "package dep\n").unwrap();
+        fs::write(tmp.join("dep/src/other.salt"), "package dep\n").unwrap();
+
+        let manifest = crate::manifest::load(&tmp.join("app/salt.toml")).unwrap();
+        let cache = ArtifactCache { cache_dir: tmp.join("cache") };
+        let dep = |name: &str, entry: &str| ResolvedDep {
+            name: name.to_string(),
+            source: "test".to_string(),
+            root_path: tmp.join("dep"),
+            resolved_version: None,
+            entry: tmp.join("dep").join(entry),
+        };
+        let key = |d: ResolvedDep| cache.compute_key(&manifest, &tmp.join("app"), false, &[], &[d]).unwrap();
+
+        let base = key(dep("dep", "src/lib.salt"));
+        assert_eq!(base, key(dep("dep", "src/lib.salt")));
+        assert_ne!(base, key(dep("dep", "src/other.salt")), "entry change must change the key");
+        assert_ne!(base, key(dep("renamed", "src/lib.salt")), "name change must change the key");
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 }

@@ -1,6 +1,8 @@
 use std::fs;
+use std::path::PathBuf;
 
 use crate::cli_build;
+use crate::codegen::module_loader::{self, ModuleSearch};
 
 
 pub struct CliConfig {
@@ -19,6 +21,17 @@ pub struct CliConfig {
     pub emit_sir: bool,
     pub target_name: Option<String>,
     pub pkg_root: Option<String>,
+    pub module_search: ModuleSearch,
+}
+
+/// Parses a `--dep` value, `<name>=<file>`.
+fn parse_dep(spec: &str) -> anyhow::Result<(String, PathBuf)> {
+    match spec.split_once('=') {
+        Some((name, file)) if !name.is_empty() && !file.is_empty() => {
+            Ok((name.to_string(), PathBuf::from(file)))
+        }
+        _ => anyhow::bail!("[E004] --dep expects <name>=<file>, got '{}'", spec),
+    }
 }
 
 pub fn parse_args(args: Vec<String>) -> anyhow::Result<Option<CliConfig>> {
@@ -38,7 +51,8 @@ pub fn parse_args(args: Vec<String>) -> anyhow::Result<Option<CliConfig>> {
     let mut emit_sir = false;
     let mut target_name: Option<String> = None;
     let mut pkg_root: Option<String> = None;
-    
+    let mut module_search = ModuleSearch::default();
+
     let mut i = 1;
     while i < args.len() {
         let arg = &args[i];
@@ -56,6 +70,10 @@ pub fn parse_args(args: Vec<String>) -> anyhow::Result<Option<CliConfig>> {
             println!("  --lib              Library mode (no main entry point required)");
             println!("  --sip              Mode B SIP safety enforcement (rejects raw pointer creation)");
             println!("  --skip-scan        Skip import scanning");
+            println!("  --root <dir>       Also resolve `use a.b` to <dir>/a/b.salt or <dir>/a/b/mod.salt (repeatable)");
+            println!("  --dep <name>=<file>");
+            println!("                     Resolve `use <name>` to <file>, and `use <name>.a` to a.salt or");
+            println!("                     a/mod.salt beside <file> (repeatable)");
             println!("  -g, --debug-info   Emit DWARF debug info (MLIR loc annotations)");
             println!("  --emit-sir         Emit SIR (Salt Intermediate Representation) as JSON");
             println!("  --disable-alias-scopes  Suppress LLVM alias scope metadata");
@@ -130,6 +148,22 @@ pub fn parse_args(args: Vec<String>) -> anyhow::Result<Option<CliConfig>> {
             } else {
                 anyhow::bail!("[E004] --pkg requires a directory argument");
             }
+        } else if arg == "--root" {
+            if i + 1 < args.len() {
+                module_search.roots.push(PathBuf::from(&args[i+1]));
+                i += 1;
+            } else {
+                anyhow::bail!("[E004] --root requires a directory argument");
+            }
+        } else if arg == "--dep" {
+            let Some(spec) = args.get(i + 1) else {
+                anyhow::bail!("[E004] --dep requires a <name>=<file> argument");
+            };
+            let (name, file) = parse_dep(spec)?;
+            if module_search.deps.insert(name.clone(), file).is_some() {
+                anyhow::bail!("[E004] --dep given twice for package '{}'", name);
+            }
+            i += 1;
         } else if arg == "-g" || arg == "--debug-info" {
             debug_info = true;
         } else if arg == "--deny-deferred" {
@@ -181,6 +215,7 @@ pub fn parse_args(args: Vec<String>) -> anyhow::Result<Option<CliConfig>> {
         emit_sir,
         target_name,
         pkg_root,
+        module_search,
     }))
 }
 
@@ -191,6 +226,7 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
         Some(c) => c,
         None => return Ok(()),
     };
+    module_loader::set_module_search(config.module_search.clone());
 
     let code = fs::read_to_string(&config.path).map_err(|e| {
         anyhow::anyhow!("[E001] Failed to read source file '{}': {}", config.path, e)
@@ -271,6 +307,7 @@ pub fn load_imports(
 
     // Read salt.toml for the package name if a package root is specified
     let salt_pkg_name = pkg_root.and_then(read_package_name);
+    let search = module_loader::module_search();
 
     for imp in &file.imports {
         // Convert package path to file path
@@ -337,6 +374,17 @@ pub fn load_imports(
                     format!("../../../{}", rel_path), format!("../../../{}", rel_path_mod),
                     format!("../../../{}", rel_path_lower), format!("../../../{}", rel_path_mod_lower),
                 ]);
+                // Then `--root` dirs, and a `--dep` package's namespace only
+                // inside the package: the same order as ModuleLoader.
+                for root in &search.roots {
+                    for rel in [&rel_path, &rel_path_mod, &rel_path_lower, &rel_path_mod_lower] {
+                        search_paths.push(root.join(rel).to_string_lossy().into_owned());
+                    }
+                }
+                let in_package = module_loader::package_candidates(&search.deps, &pkg_name);
+                if !in_package.is_empty() {
+                    search_paths = in_package.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+                }
 
                 found_path = rel_path.clone();
                 for search_path in &search_paths {
@@ -442,7 +490,7 @@ pub fn load_imports(
                         crate::errors::coded(
                             "W008",
                             format!(
-                                "could not find imported module '{}' (searched cwd and parent directories)",
+                                "could not find imported module '{}' (searched cwd, parent directories, --root dirs and --dep packages)",
                                 original_parts.join(".")
                             )
                         )
