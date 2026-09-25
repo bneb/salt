@@ -1,6 +1,7 @@
 // src/codegen/module_loader.rs
 
-use std::collections::{HashMap, HashSet};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::fs;
 
@@ -9,9 +10,57 @@ use crate::registry::{Registry, ModuleInfo};
 
 const MAX_RECURSION_DEPTH: usize = 33;
 
+/// Where imports resolve beyond the built-in cwd-relative roots, from the
+/// CLI's `--root` and `--dep` flags.
+#[derive(Clone, Debug, Default)]
+pub struct ModuleSearch {
+    /// Extra search roots, tried after the built-in ones.
+    pub roots: Vec<PathBuf>,
+    /// Package name → the package's root module file; see `package_candidates`.
+    pub deps: BTreeMap<String, PathBuf>,
+}
+
+thread_local! {
+    static MODULE_SEARCH: RefCell<ModuleSearch> = const {
+        RefCell::new(ModuleSearch { roots: Vec::new(), deps: BTreeMap::new() })
+    };
+}
+
+/// Sets the module search used by compilations on this thread. The CLI sets
+/// it once per invocation, before loading imports; thread-local rather than
+/// global so that in-process tests can't see each other's settings.
+pub fn set_module_search(search: ModuleSearch) {
+    MODULE_SEARCH.with(|s| *s.borrow_mut() = search);
+}
+
+pub fn module_search() -> ModuleSearch {
+    MODULE_SEARCH.with(|s| s.borrow().clone())
+}
+
+/// Candidate files for `namespace` inside a `--dep` package, most specific
+/// first: `pkg` is the package's root module file itself, and `pkg.a.b` is
+/// `a/b.salt` or `a/b/mod.salt` beside that file. Empty when `namespace`
+/// doesn't start with a known package name. A package owns its namespace:
+/// when this is non-empty, nothing outside it is searched.
+pub fn package_candidates(deps: &BTreeMap<String, PathBuf>, namespace: &str) -> Vec<PathBuf> {
+    let (name, rest) = match namespace.split_once('.') {
+        Some((name, rest)) => (name, Some(rest)),
+        None => (namespace, None),
+    };
+    let Some(root_module) = deps.get(name) else { return Vec::new() };
+    let Some(rest) = rest else { return vec![root_module.clone()] };
+    let base = root_module
+        .parent()
+        .unwrap_or(Path::new(""))
+        .join(rest.replace('.', "/"));
+    vec![base.with_extension("salt"), base.join("mod.salt")]
+}
+
 pub struct ModuleLoader {
     /// Search roots: [./src, ../std, /usr/lib/salt/std]
     root_paths: Vec<PathBuf>,
+    /// `--dep` packages, each resolving its own namespace (see `package_candidates`).
+    packages: BTreeMap<String, PathBuf>,
     /// Tracks modules already processed to avoid redundant parsing
     loaded_modules: HashSet<String>,
     /// Tracks modules currently in the recursion stack to detect cycles
@@ -28,6 +77,7 @@ impl ModuleLoader {
     pub fn new(roots: Vec<PathBuf>) -> Self {
         Self {
             root_paths: roots,
+            packages: BTreeMap::new(),
             loaded_modules: HashSet::new(),
             loading_stack: Vec::new(),
             dependency_graph: HashMap::new(),
@@ -36,10 +86,26 @@ impl ModuleLoader {
         }
     }
 
+    /// Resolves `name` and `name.…` only inside these packages, never
+    /// through the roots (see `package_candidates`).
+    pub fn with_packages(mut self, packages: BTreeMap<String, PathBuf>) -> Self {
+        self.packages = packages;
+        self
+    }
+
     /// Maps a namespace (e.g., "std.collections.Vec") to a physical path.
+    /// A `--dep` package's namespace resolves only inside the package (see
+    /// `package_candidates`); any other namespace tries each root in turn:
     /// Priority 1: root/std/collections/Vec.salt
     /// Priority 2: root/std/collections/Vec/mod.salt
     pub fn resolve_filepath(&self, namespace: &str) -> Result<PathBuf, String> {
+        let in_package = package_candidates(&self.packages, namespace);
+        if !in_package.is_empty() {
+            return in_package.iter().find(|p| p.exists()).cloned().ok_or_else(|| {
+                format!("Could not resolve module '{}' in its --dep package. Searched: {:?}", namespace, in_package)
+            });
+        }
+
         let is_std = namespace.starts_with("std.");
         let relative_path_str = namespace.replace('.', "/");
         let relative_path = Path::new(&relative_path_str);
@@ -200,15 +266,24 @@ impl ModuleLoader {
                             self.loading_stack.pop();
                             return res;
                         },
-                        Err(_) => return Err(e), // Return original error
+                        Err(_) => {
+                            self.loading_stack.pop();
+                            return Err(e); // Return original error
+                        }
                     }
                 }
+                self.loading_stack.pop();
                 return Err(e);
             }
         };
 
-        let code = fs::read_to_string(&path)
-            .map_err(|e| format!("Failed to read '{}': {}", path.display(), e))?;
+        let code = match fs::read_to_string(&path) {
+            Ok(code) => code,
+            Err(e) => {
+                self.loading_stack.pop();
+                return Err(format!("Failed to read '{}': {}", path.display(), e));
+            }
+        };
         
         let processed = crate::preprocess(&code);
         let ast: SaltFile = match syn::parse_str(&processed) {
@@ -418,3 +493,97 @@ impl ModuleLoader {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn deps(name: &str, root_module: &Path) -> BTreeMap<String, PathBuf> {
+        BTreeMap::from([(name.to_string(), root_module.to_path_buf())])
+    }
+
+    /// A scratch directory for one test, emptied first so reruns start clean.
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("saltc_module_loader_{}", name));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write(path: &Path, contents: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    }
+
+    #[test]
+    fn package_candidates_maps_the_package_namespace() {
+        let deps = deps("mylib", Path::new("/pkg/src/lib.salt"));
+        assert_eq!(package_candidates(&deps, "mylib"), [PathBuf::from("/pkg/src/lib.salt")]);
+        assert_eq!(
+            package_candidates(&deps, "mylib.util.fmt"),
+            [PathBuf::from("/pkg/src/util/fmt.salt"), PathBuf::from("/pkg/src/util/fmt/mod.salt")]
+        );
+        assert!(package_candidates(&deps, "other.util").is_empty());
+        assert!(package_candidates(&deps, "mylibx.util").is_empty(), "a name prefix isn't the package");
+    }
+
+    #[test]
+    fn resolve_filepath_confines_a_package_namespace_to_the_package() {
+        let dir = scratch("package_namespace");
+        let root_module = dir.join("pkg/src/lib.salt");
+        write(&root_module, "package mylib\n");
+        write(&dir.join("pkg/src/util.salt"), "package mylib.util\n");
+        // Same-named decoys under a search root.
+        write(&dir.join("root/mylib/util.salt"), "package mylib.util\n");
+        write(&dir.join("root/mylib/extra.salt"), "package mylib.extra\n");
+        write(&dir.join("root/other.salt"), "package other\n");
+
+        let loader = ModuleLoader::new(vec![dir.join("root")]).with_packages(deps("mylib", &root_module));
+        assert_eq!(loader.resolve_filepath("mylib").unwrap(), root_module);
+        assert_eq!(loader.resolve_filepath("mylib.util").unwrap(), dir.join("pkg/src/util.salt"));
+        let err = loader.resolve_filepath("mylib.extra").unwrap_err();
+        assert!(err.contains("Could not resolve module 'mylib.extra'"), "{}", err);
+        assert_eq!(loader.resolve_filepath("other").unwrap(), dir.join("root/other.salt"), "other namespaces still use the roots");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // A failed load_module must leave `loading_stack` as it found it. A stale
+    // entry makes a later request for that module report a false
+    // "Circular dependency detected", and enough of them trip the nesting
+    // limit for every module loaded afterwards.
+
+    #[test]
+    fn failed_load_fails_the_same_way_when_retried() {
+        let dir = scratch("failed_retry");
+        fs::create_dir_all(dir.join("unreadable.salt")).unwrap(); // resolves, can't be read
+        write(&dir.join("imports_missing.salt"), "package imports_missing\n\nuse missing.x\n");
+        let mut loader = ModuleLoader::new(vec![dir.clone()]);
+        let mut registry = Registry::new();
+
+        // No parent to fall back to; parent fallback fails too; unreadable
+        // file; a dependency fails while the importer is on the stack.
+        for namespace in ["missing", "missing.item", "unreadable", "imports_missing"] {
+            let first = loader.load_module(namespace, &mut registry).unwrap_err();
+            let retry = loader.load_module(namespace, &mut registry).unwrap_err();
+            assert_eq!(retry, first, "retrying '{}'", namespace);
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn failed_loads_do_not_use_up_the_nesting_limit() {
+        let dir = scratch("nesting_limit");
+        write(&dir.join("good.salt"), "package good\n");
+        let mut loader = ModuleLoader::new(vec![dir.clone()]);
+        let mut registry = Registry::new();
+
+        for i in 0..=MAX_RECURSION_DEPTH {
+            assert!(loader.load_module(&format!("missing{}", i), &mut registry).is_err());
+        }
+        loader.load_module("good", &mut registry).expect("a valid module loads after failed ones");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

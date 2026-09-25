@@ -1357,6 +1357,11 @@ saltc <file.salt> [-o <path>] [flags]
   --verify               Enable contract verification (default: on)
   --danger-no-verify     Skip all verification (debug builds only)
   --skip-scan            Skip import dependency scanning
+  --root <dir>           Also resolve `use a.b` to <dir>/a/b.salt or <dir>/a/b/mod.salt
+                         (repeatable; searched after the current directory and its parents)
+  --dep <name>=<file>    Package <name>'s root module is <file>: `use <name>` loads it, and
+                         `use <name>.a` loads a.salt or a/mod.salt beside it, never a file
+                         outside the package (repeatable)
   --emit-sir             Emit SIR as JSON for tooling
   -g, --debug-info       Emit DWARF debug information
   --disable-alias-scopes Suppress LLVM alias scope metadata

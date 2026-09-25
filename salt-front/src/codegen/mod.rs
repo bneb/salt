@@ -196,13 +196,16 @@ pub fn set_proof_stats_json(on: bool) {
 
     fn load_modules(file: &SaltFile) -> Result<(ModuleLoader, Registry), String> {
         let mut loader_registry = Registry::new();
-        let mut loader = ModuleLoader::new(vec![
+        let search = crate::codegen::module_loader::module_search();
+        let mut roots = vec![
             std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
             std::path::PathBuf::from("."),
             std::path::PathBuf::from(".."),
             std::path::PathBuf::from("../std"),
             std::path::PathBuf::from("../../std"),
-        ]);
+        ];
+        roots.extend(search.roots);
+        let mut loader = ModuleLoader::new(roots).with_packages(search.deps);
         // Every failure is collected (not just the first) so a source file
         // with several broken imports gets one diagnostic naming all of
         // them, instead of forcing a fix-recompile-fix cycle one import at

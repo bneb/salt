@@ -26,14 +26,20 @@ pub struct ResolvedDep {
     pub root_path: PathBuf,
     /// The pinned version after resolution (None for path deps).
     pub resolved_version: Option<String>,
+    /// The package's root module, from its manifest's `entry`: the file the
+    /// compiler loads for `use <name>` (sp passes `--dep <name>=<entry>`).
+    pub entry: PathBuf,
 }
 
 /// Resolve the build order and search roots for a project.
 ///
 /// Returns:
 ///   - build_order: list of .salt files in compilation order (deps first)
-///   - search_roots: list of paths for the compiler's `--roots` flag
-///   - resolved_deps: resolved dependency metadata (for lockfile generation)
+///   - search_roots: directories for the compiler's `--root` flag: the
+///     project's sources and the stdlib. Dependencies aren't among them; the
+///     compiler finds each one by name, from its `ResolvedDep::entry`.
+///   - resolved_deps: resolved dependency metadata (for the compiler's
+///     `--dep` flag and lockfile generation)
 pub fn resolve(
     manifest: &Manifest,
     project_dir: &Path,
@@ -47,21 +53,13 @@ pub fn resolve(
     for dep_name in manifest.dependencies.keys() {
         let resolved = resolver.resolve_root_dep(dep_name)?;
 
+        // Collect .salt files from the dependency
         for r in &resolved {
-            // Add the dep's src/ directory (or root) as a search root
-            let src_dir = r.root_path.join("src");
-            if src_dir.exists() {
-                search_roots.push(src_dir);
-            } else {
-                search_roots.push(r.root_path.clone());
-            }
-
-            // Collect .salt files from the dependency
             let dep_files = collect_salt_files(&r.root_path)?;
             build_order.extend(dep_files);
         }
 
-        // Track resolved dep metadata for lockfile
+        // Track resolved dep metadata for the compiler and the lockfile
         resolved_deps.extend(resolved);
     }
 
@@ -327,11 +325,21 @@ fn select(
         None
     };
 
+    // The compiler's `--dep` needs this package's root module, from its own
+    // manifest's `entry` (the manifest default if it has none).
+    let entry = dir.join(
+        manifest
+            .as_ref()
+            .map(|m| m.package.entry.clone())
+            .unwrap_or_else(crate::manifest::default_entry),
+    );
+
     let resolved = ResolvedDep {
         name: name.to_string(),
         source,
         root_path: dir.clone(),
         resolved_version: published_version.as_ref().map(Version::to_string),
+        entry,
     };
     let version = published_version.or_else(|| {
         manifest
@@ -638,6 +646,39 @@ json = { version = "1.0", features = ["streaming"] }
         let _ = fs::remove_dir_all(&tmp);
     }
 
+    #[test]
+    fn test_resolve_path_dep_entry() {
+        let tmp = crate::test_support::temp_path("sp_test_resolve_path_entry");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp.join("home"));
+        fs::create_dir_all(tmp.join("with_manifest/src")).unwrap();
+        fs::create_dir_all(tmp.join("bare/src")).unwrap();
+        fs::write(
+            tmp.join("with_manifest/salt.toml"),
+            "[package]\nname = \"with_manifest\"\nversion = \"1.0.0\"\nentry = \"src/lib.salt\"\n",
+        )
+        .unwrap();
+
+        let manifest = app_with(
+            &tmp,
+            "with_manifest = { path = \"../with_manifest\" }\nbare = { path = \"../bare\" }\n",
+        );
+        let (_order, search_roots, resolved) = resolve(&manifest, &tmp.join("app")).unwrap();
+
+        let entry_of = |name: &str| &resolved.iter().find(|d| d.name == name).unwrap().entry;
+        let with_manifest = tmp.join("with_manifest").canonicalize().unwrap();
+        let bare = tmp.join("bare").canonicalize().unwrap();
+        assert_eq!(entry_of("with_manifest"), &with_manifest.join("src/lib.salt"), "entry comes from the dependency's manifest");
+        assert_eq!(entry_of("bare"), &bare.join("src/main.salt"), "no salt.toml: the manifest default");
+        assert!(
+            !search_roots.iter().any(|r| r.starts_with(&with_manifest) || r.starts_with(&bare)),
+            "dependencies reach the compiler by name (--dep), not as search roots: {search_roots:?}"
+        );
+
+        drop(home);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
     /// App project under `root/app` with `deps` as its [dependencies] table.
     fn app_with(root: &Path, deps: &str) -> Manifest {
         let app = root.join("app");
@@ -715,7 +756,7 @@ json = { version = "1.0", features = ["streaming"] }
             fs::write(lib.join("src/lib.salt"), source(version)).unwrap();
             fs::write(
                 lib.join("salt.toml"),
-                format!("[package]\nname = \"mylib\"\nversion = \"{}\"\n", version),
+                format!("[package]\nname = \"mylib\"\nversion = \"{}\"\nentry = \"src/lib.salt\"\n", version),
             )
             .unwrap();
             let lib_manifest = crate::manifest::load(&lib.join("salt.toml")).unwrap();
@@ -724,20 +765,17 @@ json = { version = "1.0", features = ["streaming"] }
 
         // The constraint admits 0.3.x only; 0.4.0 is newer but must be skipped.
         let manifest = app_depending_on(&tmp, "mylib", ">=0.3.0, <0.4.0");
-        let (_order, search_roots, resolved) = resolve(&manifest, &tmp.join("app")).unwrap();
+        let (_order, _search_roots, resolved) = resolve(&manifest, &tmp.join("app")).unwrap();
 
         assert_eq!(resolved.len(), 1, "exactly one dependency should resolve: {resolved:?}");
         let dep = &resolved[0];
         assert_eq!(dep.name, "mylib");
         assert_eq!(dep.resolved_version.as_deref(), Some("0.3.1"), "highest version matching the constraint");
+        assert_eq!(dep.entry, dep.root_path.join("src/lib.salt"), "the compiler loads the extracted package's entry");
         assert_eq!(
-            fs::read_to_string(dep.root_path.join("src/lib.salt")).unwrap(),
+            fs::read_to_string(&dep.entry).unwrap(),
             source("0.3.1"),
             "the extracted package must be the version that was reported"
-        );
-        assert!(
-            search_roots.iter().any(|r| r.starts_with(&dep.root_path)),
-            "compiler search roots should include the extracted package: {search_roots:?}"
         );
 
         drop(home);

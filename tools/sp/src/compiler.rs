@@ -4,6 +4,8 @@
 //! This gives us control over flags, caching, and error formatting.
 
 use crate::manifest::Manifest;
+use crate::resolver::ResolvedDep;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -22,12 +24,38 @@ fn extract_error_message(output: &std::process::Output) -> String {
     }
 }
 
+/// saltc arguments that say where imports resolve: `--root` for each search
+/// root, and `--dep <name>=<entry>` for each dependency, so that
+/// `use <name>.…` loads the dependency's root module.
+fn module_search_args(search_roots: &[PathBuf], deps: &[ResolvedDep]) -> Result<Vec<OsString>, String> {
+    let mut args = Vec::new();
+    for root in search_roots {
+        args.push(OsString::from("--root"));
+        args.push(root.clone().into_os_string());
+    }
+    for dep in deps {
+        if !dep.entry.is_file() {
+            return Err(format!(
+                "dependency '{}' entry point not found: {} (set `entry` under [package] in its salt.toml)",
+                dep.name,
+                dep.entry.display()
+            ));
+        }
+        let mut spec = OsString::from(format!("{}=", dep.name));
+        spec.push(&dep.entry);
+        args.push(OsString::from("--dep"));
+        args.push(spec);
+    }
+    Ok(args)
+}
+
 /// Compile a Salt project by invoking salt-front directly.
 pub fn build(
     manifest: &Manifest,
     project_dir: &Path,
     release: bool,
     search_roots: &[PathBuf],
+    deps: &[ResolvedDep],
 ) -> Result<PathBuf, String> {
     let entry = project_dir.join(&manifest.package.entry);
     if !entry.exists() {
@@ -50,14 +78,7 @@ pub fn build(
         cmd.arg("--release");
     }
 
-    // Pass search roots for dependency resolution
-    if !search_roots.is_empty() {
-        let roots_str: Vec<String> = search_roots
-            .iter()
-            .map(|r| r.to_string_lossy().to_string())
-            .collect();
-        cmd.env("SALT_SEARCH_ROOTS", roots_str.join(":"));
-    }
+    cmd.args(module_search_args(search_roots, deps)?);
 
     let output = cmd.output()
         .map_err(|e| format!("failed to run {}: {}", salt_front.display(), e))?;
@@ -108,6 +129,7 @@ pub fn check(
     manifest: &Manifest,
     project_dir: &Path,
     search_roots: &[PathBuf],
+    deps: &[ResolvedDep],
 ) -> Result<(), String> {
     let entry = project_dir.join(&manifest.package.entry);
     if !entry.exists() {
@@ -119,14 +141,7 @@ pub fn check(
     cmd.arg(&entry);
     cmd.arg("--lib");
     cmd.arg("--disable-alias-scopes");
-
-    if !search_roots.is_empty() {
-        for root in search_roots {
-            if root.exists() {
-                cmd.env("SALT_INCLUDE", root.to_string_lossy().to_string());
-            }
-        }
-    }
+    cmd.args(module_search_args(search_roots, deps)?);
 
     let output = cmd.output()
         .map_err(|e| format!("failed to run saltc: {}", e))?;

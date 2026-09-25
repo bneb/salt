@@ -371,6 +371,7 @@ mod tests {
         crate::resolver::ResolvedDep {
             name: name.to_string(),
             source: format!("test:{}", name),
+            entry: root_path.join("src/lib.salt"),
             root_path,
             resolved_version: version.map(str::to_string),
         }

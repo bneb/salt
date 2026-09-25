@@ -159,8 +159,8 @@ fn main() {
 
 // ─── sp new ──────────────────────────────────────────────────────────────────
 
-fn generate_manifest(project_name: &str) -> String {
-    format!("[package]\nname = \"{project_name}\"\nversion = \"0.1.0\"\nedition = \"2026\"\nentry = \"src/main.salt\"\n")
+fn generate_manifest(project_name: &str, entry_path: &str) -> String {
+    format!("[package]\nname = \"{project_name}\"\nversion = \"0.1.0\"\nedition = \"2026\"\nentry = \"{entry_path}\"\n")
 }
 
 fn generate_entry_source(project_name: &str, lib: bool) -> String {
@@ -188,9 +188,8 @@ fn cmd_new(name: &str, lib: bool) -> Result<(), String> {
     std::fs::create_dir_all(project_dir.join("src")).map_err(|e| format!("failed to create src/: {}", e))?;
     std::fs::create_dir_all(project_dir.join("tests")).map_err(|e| format!("failed to create tests/: {}", e))?;
 
-    std::fs::write(project_dir.join("salt.toml"), generate_manifest(&project_name)).map_err(|e| format!("failed to write salt.toml: {}", e))?;
-    
     let entry_path = if lib { "src/lib.salt" } else { "src/main.salt" };
+    std::fs::write(project_dir.join("salt.toml"), generate_manifest(&project_name, entry_path)).map_err(|e| format!("failed to write salt.toml: {}", e))?;
     std::fs::write(project_dir.join(entry_path), generate_entry_source(&project_name, lib)).map_err(|e| format!("failed to write {}: {}", entry_path, e))?;
 
     std::fs::write(project_dir.join("tests/test_smoke.salt"), generate_test_source(&project_name, lib)).map_err(|e| format!("failed to write test: {}", e))?;
@@ -244,7 +243,7 @@ fn cmd_build(path: &Path, release: bool, _package: Option<&str>) -> Result<(), S
 
     // Check cache
     let cache = cache::ArtifactCache::new()?;
-    let cache_key = cache.compute_key(&manifest, path, release, &search_roots)?;
+    let cache_key = cache.compute_key(&manifest, path, release, &search_roots, &resolved)?;
 
     if let Some(cached) = cache.lookup(&cache_key) {
         let elapsed = start.elapsed();
@@ -258,7 +257,7 @@ fn cmd_build(path: &Path, release: bool, _package: Option<&str>) -> Result<(), S
 
     // Compile via salt-front with search roots
     println!("   🔨 Compiling {} module(s)...", build_order.len());
-    let output = compiler::build(&manifest, path, release, &search_roots)?;
+    let output = compiler::build(&manifest, path, release, &search_roots, &resolved)?;
 
     // Store in cache
     if let Ok(ref out) = Ok::<_, String>(output.clone()) {
@@ -366,8 +365,8 @@ fn cmd_check(path: &Path) -> Result<(), String> {
     );
 
     // Resolve deps and compile with --verify flag
-    let (_build_order, search_roots, _resolved) = resolver::resolve(&manifest, path)?;
-    compiler::check(&manifest, path, &search_roots)?;
+    let (_build_order, search_roots, resolved) = resolver::resolve(&manifest, path)?;
+    compiler::check(&manifest, path, &search_roots, &resolved)?;
 
     let elapsed = start.elapsed();
     println!(

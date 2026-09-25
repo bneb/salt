@@ -117,6 +117,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - name: Install Z3
+        run: sudo apt-get update && sudo apt-get install -y libz3-dev
+      # tests/dependency_imports.rs drives sp against salt-front/target/release/saltc.
+      - name: Build saltc
+        run: cargo build --release
+        working-directory: salt-front
       - name: Build
         run: cargo build --release
         working-directory: tools/sp
