@@ -1,0 +1,27 @@
+// Z3 Contract Test: a call's requires clause, substituted into a while
+// loop's own variable names, must be tried automatically as a candidate
+// invariant -- proving this needs no manually-written `invariant`.
+// Expected: PASS
+//
+// Before this fix, `need_positive(y)` here hard-failed on the havoc'd
+// `y` unconditionally (see test_havoc_invariant_hint.salt for that
+// shape, and docs/SPEC.md's havoc entry for the full account) --
+// `invariant y > 0;` had to be written by hand. `collect_call_requires_
+// candidates` (while_stmt.rs) now proposes it directly from
+// need_positive's own contract, and `filter_call_requires_candidates`
+// confirms it holds at loop entry (y starts at the literal 5) before
+// trusting it.
+package test_houdini_call_requires_proved
+
+fn need_positive(y: i64) requires { y > 0 } { }
+
+pub fn f(n: i64) {
+    let mut i: i64 = 0;
+    let mut y: i64 = 5;
+    while i < n {
+        invariant i >= 0;
+        need_positive(y);
+        y = y + 1;
+        i = i + 1;
+    }
+}

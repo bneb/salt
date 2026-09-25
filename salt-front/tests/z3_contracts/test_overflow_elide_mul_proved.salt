@@ -1,0 +1,13 @@
+// Z3 Contract Test: same as test_overflow_elide_add_proved.salt, for
+// multiplication -- confirms try_elide_overflow_check's operator match
+// handles Mul, and that the nonlinear Z3 query it produces resolves
+// cheaply rather than exhibiting the scaling cliff found elsewhere this
+// session for bitwise operators (Int<->BV<->Int conversion specifically,
+// not nonlinear arithmetic in general -- see Z3_PROOF_RLIMIT's doc
+// comment).
+// Expected: PASS, no __salt_overflow_panic call emitted.
+package test_overflow_elide_mul_proved
+
+pub fn safe_mul(a: i32, b: i32) -> i32
+    requires(a >= -100 && a <= 100 && b >= -100 && b <= 100)
+{ return a * b; }

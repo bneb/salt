@@ -17,8 +17,7 @@ Salt is a systems programming language with Z3-verified safety, arena-based memo
 
 | Doc | Description |
 |-----|-------------|
-| [SPEC.md](../SPEC.md) | **Language specification** — types, control flow, traits, verification, sugar |
-| [SPEC.md](SPEC.md) | Language & compiler architecture — MLIR dialect specification |
+| [SPEC.md](SPEC.md) | **Language specification** — lexical structure, types, expressions, statements, functions, modules, verification, memory model, concurrency, patterns, preprocessor, stdlib, FFI |
 
 ### Architecture & Design
 
@@ -26,7 +25,6 @@ Salt is a systems programming language with Z3-verified safety, arena-based memo
 |-----|-------------|
 | [ARCH.md](ARCH.md) | Compiler pipeline, components, Z3 verification strategy |
 | [PILLARS.md](philosophy/PILLARS.md) | Design philosophy: Fast · Ergonomic · Verified |
-| Region Model | Why regions beat borrow checking for bare-metal (file archived) |
 
 ### Language Features
 
@@ -51,7 +49,7 @@ Salt is a systems programming language with Z3-verified safety, arena-based memo
 
 | Doc | Description |
 |-----|-------------|
-| [System ABI](abi/KEUOS_ABI.md) | Definitive ABI specification for targeting KeuOS |
+| [System ABI](abi/KEUOS_ABI_STABLE.md) | Definitive ABI specification for targeting KeuOS |
 | [Driver Model](keuos_driver_model.md) | Device drivers in KeuOS |
 
 
@@ -105,8 +103,7 @@ fn main() -> i32 {
 
 ```bash
 cd salt-front && cargo build --release
-./target/release/salt-front examples/hello_world.salt -o hello
-DYLD_LIBRARY_PATH=/opt/homebrew/lib ./hello
+./target/release/saltc ../examples/hello_world.salt --lib -o /dev/null
 ```
 
 > [!TIP]

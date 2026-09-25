@@ -1,0 +1,16 @@
+// RT probe WS-R2/R4: i64::MAX boundary literal — the largest value that
+// still succeeds base10_parse::<i64>(). Display(i64) prints
+// "9223372036854775807" identically through old and new spellings.
+package main
+
+struct M<const K: i64> { v: i64 }
+
+impl<const K: i64> M<K> {
+    pub fn mk() -> M<K> { return M { v: K }; }
+}
+
+pub fn main() -> i32 {
+    let a = M::<9223372036854775807>::mk();
+    let b = M::<9223372036854775806>::mk();
+    return ((a.v - b.v) & 0xFF) as i32;
+}

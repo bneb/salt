@@ -1,0 +1,18 @@
+// Z3 Contract Test: a postcondition's type-bounds scoping must reach
+// identifiers used only in the RETURN expression, not just ones written
+// in the ensures clause's own text.
+// Expected: PASS
+//
+// `ensures { result > 0 }` on `return n + 1` needs n's u64 non-negativity
+// to derive anything -- but `n` doesn't appear in the ensures clause text,
+// only inside the WP binding `result == n + 1`. assert_scope_type_bounds
+// was scoped to collect_ident_names(actual_ens) alone, so `n` was invisible
+// to this specific check and Z3 could pick n = -1, rejecting code that is
+// always true for real u64 arithmetic. Found while testing Tier 2's
+// composability fixes and confirmed to predate them (reproduces identically
+// on the commit before either fix).
+package test_ensures_return_expr_bounds_proved
+
+fn g(n: u64) -> u64 ensures { result > 0 } {
+    return n + 1;
+}

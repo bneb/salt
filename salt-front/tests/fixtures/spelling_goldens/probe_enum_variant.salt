@@ -1,0 +1,11 @@
+package main
+
+enum Color {
+    Red,
+    Green,
+}
+
+pub fn main() -> i32 {
+    let c = Color::Red;
+    return 0;
+}

@@ -1,0 +1,12 @@
+// Z3 Contract Test: a false bool postcondition must be rejected.
+// Expected: REJECTED (VERIFICATION ERROR)
+//
+// Companion to test_bool_postcondition_proved. Making bool postconditions
+// checkable is only worth anything if a false one now fails.
+package test_bool_postcondition_rejected
+
+pub fn lies() -> bool
+    ensures { result }
+{
+    return false;
+}

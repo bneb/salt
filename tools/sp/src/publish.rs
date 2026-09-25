@@ -4,7 +4,7 @@
 //! The resolver extracts them to ~/.salt/packages/<name>-<version>/
 //! for use as dependencies.
 
-use crate::manifest::Manifest;
+use crate::manifest::{Dependency, Manifest};
 use crate::semver;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -31,6 +31,9 @@ fn packages_dir() -> Result<PathBuf, String> {
 /// Output: ~/.salt/publish/<name>-<version>.tar.gz
 /// Archive contains: salt.toml, all .salt files from src/
 pub fn publish(manifest: &Manifest, project_dir: &Path) -> Result<(), String> {
+    // Before creating the archive, which would replace one already published.
+    reject_path_dependencies(manifest)?;
+
     let pub_dir = publish_dir()?;
     let archive_name = format!("{}-{}.tar.gz", manifest.package.name, manifest.package.version);
     let archive_path = pub_dir.join(&archive_name);
@@ -100,6 +103,33 @@ pub fn publish(manifest: &Manifest, project_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Consumers resolve a published package's dependencies from its copy
+/// extracted to ~/.salt/packages/, where a relative path leads nowhere, so
+/// a path dependency would break every one of them. Dev-dependencies are
+/// fine: nothing resolves a dependency's dev-dependencies.
+fn reject_path_dependencies(manifest: &Manifest) -> Result<(), String> {
+    let paths: Vec<String> = manifest
+        .dependencies
+        .iter()
+        .filter_map(|(name, dep)| match dep {
+            Dependency::Path { path, .. } => Some(format!("\n    {} = {{ path = \"{}\" }}", name, path)),
+            _ => None,
+        })
+        .collect();
+    if paths.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "cannot publish '{}' with path dependencies:{}\n  \
+         Packages that use '{}' resolve its dependencies from the copy extracted to \
+         ~/.salt/packages/, where these paths don't exist.\n  \
+         Hint: publish each of them with `sp publish` and depend on it by version.",
+        manifest.package.name,
+        paths.concat(),
+        manifest.package.name
+    ))
+}
+
 /// Collect all .salt files under a directory.
 fn collect_source_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
     if !dir.exists() {
@@ -126,8 +156,10 @@ fn collect_source_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), Stri
 
 /// Find all published versions of a package.
 ///
-/// Returns sorted list of (version, archive_path) for all published
-/// versions of the given package name.
+/// Returns (version, archive_path) for every published version of the
+/// given package name, sorted by version, then by path: archives published
+/// as "0.1" and "0.1.0" both hold 0.1.0, and must come out in the same
+/// order on every run.
 pub fn find_published(name: &str) -> Result<Vec<(semver::Version, PathBuf)>, String> {
     let dir = publish_dir()?;
     let mut results = Vec::new();
@@ -159,14 +191,22 @@ pub fn find_published(name: &str) -> Result<Vec<(semver::Version, PathBuf)>, Str
         }
     }
 
-    results.sort_by(|a, b| a.0.cmp(&b.0));
+    results.sort();
     Ok(results)
 }
 
 /// Extract a published package to the local packages cache.
 ///
+/// `archive_path` is the archive `find_published` listed for `version`. It
+/// can't be rebuilt from `version`: the file name keeps the version as it
+/// was published ("two-0.1.tar.gz"), while `version` is normalized (0.1.0).
+///
 /// Returns the path to the extracted package directory.
-pub fn extract_package(name: &str, version: &str) -> Result<PathBuf, String> {
+pub fn extract_package(
+    name: &str,
+    version: &semver::Version,
+    archive_path: &Path,
+) -> Result<PathBuf, String> {
     let pkg_dir = packages_dir()?.join(format!("{}-{}", name, version));
 
     // Skip if already extracted
@@ -174,20 +214,8 @@ pub fn extract_package(name: &str, version: &str) -> Result<PathBuf, String> {
         return Ok(pkg_dir);
     }
 
-    let pub_dir = publish_dir()?;
-    let archive_path = pub_dir.join(format!("{}-{}.tar.gz", name, version));
-
-    if !archive_path.exists() {
-        return Err(format!(
-            "published package '{}-{}' not found in {}",
-            name,
-            version,
-            pub_dir.display()
-        ));
-    }
-
     // Extract
-    let file = std::fs::File::open(&archive_path)
+    let file = std::fs::File::open(archive_path)
         .map_err(|e| format!("failed to open {}: {}", archive_path.display(), e))?;
     let decoder = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
@@ -209,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_collect_source_files_finds_salt_files() {
-        let tmp = std::env::temp_dir().join("sp_test_publish_collect");
+        let tmp = crate::test_support::temp_path("sp_test_publish_collect");
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(tmp.join("src")).unwrap();
         fs::write(tmp.join("src/main.salt"), "package main").unwrap();
@@ -227,10 +255,100 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
     }
 
+    /// A package named `withpath` under `root`, with `manifest_tail`
+    /// appended to its salt.toml.
+    fn package_with(root: &Path, manifest_tail: &str) -> (PathBuf, Manifest) {
+        let dir = root.join("withpath");
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/lib.salt"), "package withpath\n").unwrap();
+        fs::write(
+            dir.join("salt.toml"),
+            format!("[package]\nname = \"withpath\"\nversion = \"1.0.0\"\n\n{}", manifest_tail),
+        )
+        .unwrap();
+        let manifest = crate::manifest::load(&dir.join("salt.toml")).unwrap();
+        (dir, manifest)
+    }
+
+    #[test]
+    fn test_publish_rejects_path_dependencies() {
+        let tmp = crate::test_support::temp_path("sp_test_publish_path_dep");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp.join("home"));
+        let (dir, manifest) = package_with(
+            &tmp,
+            "[dependencies]\nhelper = { path = \"../helper\" }\nother = \"1\"\n",
+        );
+
+        let err = publish(&manifest, &dir).expect_err("no consumer could resolve ../helper");
+        assert!(err.contains("cannot publish 'withpath'"), "{err}");
+        assert!(err.contains("helper = { path = \"../helper\" }"), "{err}");
+        assert!(!err.contains("other"), "only path dependencies are the problem: {err}");
+        assert!(
+            !tmp.join("home/.salt/publish/withpath-1.0.0.tar.gz").exists(),
+            "nothing may be published"
+        );
+
+        drop(home);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_publish_allows_path_dev_dependencies() {
+        let tmp = crate::test_support::temp_path("sp_test_publish_path_dev_dep");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp.join("home"));
+        // Consumers never resolve a dependency's dev-dependencies.
+        let (dir, manifest) = package_with(&tmp, "[dev-dependencies]\nhelper = { path = \"../helper\" }\n");
+
+        publish(&manifest, &dir).expect("a path dev-dependency doesn't reach consumers");
+        assert!(tmp.join("home/.salt/publish/withpath-1.0.0.tar.gz").exists());
+
+        drop(home);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
     #[test]
     fn test_find_published_empty_dir() {
-        // Should return empty list for non-existent publish dir
-        let results = find_published("nonexistent").unwrap_or_default();
+        let tmp = crate::test_support::temp_path("sp_test_find_published_empty");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp);
+
+        // $HOME/.salt/publish doesn't exist yet.
+        let results = find_published("nonexistent").expect("a missing publish dir is not an error");
         assert!(results.is_empty());
+
+        drop(home);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_find_published_sorts_by_version_then_path() {
+        let tmp = crate::test_support::temp_path("sp_test_find_published_order");
+        let _ = fs::remove_dir_all(&tmp);
+        let home = crate::test_support::HomeGuard::new(&tmp);
+        let dir = tmp.join(".salt/publish");
+        fs::create_dir_all(&dir).unwrap();
+        // Only the names matter. two-0.1 and two-0.1.0 both hold 0.1.0.
+        for archive in ["two-0.2.tar.gz", "two-0.1.tar.gz", "two-0.1.0.tar.gz", "two-0.0.9.tar.gz"] {
+            fs::write(dir.join(archive), b"").unwrap();
+        }
+
+        let found: Vec<(String, String)> = find_published("two")
+            .unwrap()
+            .into_iter()
+            .map(|(v, p)| (v.to_string(), p.file_name().unwrap().to_string_lossy().into_owned()))
+            .collect();
+        let expected = [
+            ("0.0.9", "two-0.0.9.tar.gz"),
+            ("0.1.0", "two-0.1.0.tar.gz"),
+            ("0.1.0", "two-0.1.tar.gz"),
+            ("0.2.0", "two-0.2.tar.gz"),
+        ]
+        .map(|(v, f)| (v.to_string(), f.to_string()));
+        assert_eq!(found, expected);
+
+        drop(home);
+        let _ = fs::remove_dir_all(&tmp);
     }
 }

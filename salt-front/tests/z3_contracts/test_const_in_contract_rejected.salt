@@ -1,0 +1,16 @@
+// Z3 Contract Test: resolving constants must NOT weaken soundness.
+// Expected: REJECTED (VERIFICATION ERROR)
+//
+// The companion to test_const_in_contract_proved. Once a constant lowers to
+// its value, a contract that is genuinely false must still be caught -- the
+// fix must make true contracts provable, not make all contracts pass.
+package test_const_in_contract_rejected
+
+const MAX_LEN: u32 = 100;
+
+// No guard: `a` can exceed MAX_LEN, so this postcondition is false.
+pub fn unguarded(a: u32) -> u32
+    ensures { result < MAX_LEN }
+{
+    return a;
+}

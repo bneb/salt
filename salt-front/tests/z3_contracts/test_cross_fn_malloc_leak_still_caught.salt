@@ -1,0 +1,27 @@
+// Z3 Contract Test: a real leak in one function must still be caught
+// when a second, later function reuses the same variable name for its
+// own (correctly resolved) allocation.
+// Expected: REJECTED (the leak in first(), not anything about second())
+//
+// The adversarial angle test_cross_fn_malloc_tracker_proved.salt can't
+// cover: malloc_tracker.track() unconditionally overwrites whatever was
+// at its key, so a *leaked* (never freed or returned) entry is the only
+// state shape that could conceivably survive one function's fresh
+// activity and be missed by another's -- confirms the leak-detection
+// mechanism itself stays armed in a multi-function file, not silently
+// defeated by unrelated reuse of the same name elsewhere in the file.
+package test_cross_fn_malloc_leak_still_caught
+
+extern fn malloc(size: i64) -> Ptr<i32>;
+extern fn free(p: Ptr<i32>);
+
+pub fn first() -> i32 {
+    let p: Ptr<i32> = malloc(4);
+    return 0;
+}
+
+pub fn second() -> i32 {
+    let p: Ptr<i32> = malloc(4);
+    free(p);
+    return 0;
+}

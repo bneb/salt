@@ -119,9 +119,12 @@ impl<'a> CodegenContext<'a> {
         self.generic_impls_mut().insert(name.clone(), (f.clone(), current_imports));
     }
 
-    /// Resolves a fn's signature with its generic params hydrated in scope
-    /// and stored as substitutable placeholders, so downstream consumers
-    /// bind values instead of minting param-name ghost identities.
+    /// Resolves a fn's signature with its generic params hydrated in scope.
+    /// Hydration is the load-bearing layer (retiring it resurrects phantom
+    /// pre-scan registrations -- see handoff ROUND 10 bisect); the raw
+    /// spellings it yields are stored as-is: every downstream consumer
+    /// normalizes without an explicit binding pass (RT retirement audit,
+    /// .round1-staging/wsr3ret/VERDICT.md).
     fn scan_fn_signature(&self, f: &SaltFn) -> (Type, Vec<Type>) {
         let (raw_ret, raw_args) = crate::codegen::scoped_generic_hydration(self, &f.generics, || {
             let ret_ty = if let Some(rt) = &f.ret_type {
@@ -134,11 +137,7 @@ impl<'a> CodegenContext<'a> {
                 .collect();
             (ret_ty, args)
         });
-        let ret_ty = crate::codegen::bind_signature_placeholders(&raw_ret, &f.generics);
-        let args: Vec<Type> = raw_args.iter()
-            .map(|a| crate::codegen::bind_signature_placeholders(a, &f.generics))
-            .collect();
-        (ret_ty, args)
+        (raw_ret, raw_args)
     }
 
     fn scan_def_impl(&self, i: &SaltImpl, pkg_prefix: &str, path: &[String]) {
@@ -383,7 +382,7 @@ impl<'a> CodegenContext<'a> {
 
         let (fields, field_order, field_alignments) = self.build_struct_fields(s);
 
-        self.struct_registry_mut().insert(key, crate::registry::StructInfo {
+        self.define_struct_instance(key, crate::registry::StructInfo {
             name: name.clone(),
             fields,
             field_order,
@@ -448,7 +447,7 @@ impl<'a> CodegenContext<'a> {
                 specialization: None,
             };
 
-            self.enum_registry_mut().insert(key, crate::registry::EnumInfo {
+            self.define_enum_instance(key, crate::registry::EnumInfo {
                 name,
                 variants,
                 max_payload_size: max_size,
@@ -464,6 +463,7 @@ fn z3_prove_atomic_alignment(
     struct_name: &str,
     byte_offset: usize,
 ) -> Result<(), String> {
+    #[cfg(feature = "z3-backend")]
     use crate::z3_shim::ast::Ast;
     let z3_cfg = crate::z3_shim::Config::new();
     let z3_ctx = crate::z3_shim::Context::new(&z3_cfg);

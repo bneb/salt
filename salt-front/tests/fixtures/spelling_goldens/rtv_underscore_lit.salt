@@ -1,0 +1,18 @@
+// RTV-5 (red team R2/R3): underscore literal guard-bypass probe. If the
+// evaluator normalizes 1_000 -> Integer(1000), both spellings must share ONE
+// all-digit identity main__S_1000 (intercepted by resolution.rs:74-76, guard
+// unreached). If a "1_000" spelling leaks anywhere, A's is_value_spelled_leaf
+// MISSES it ('_' not a digit) and the funnel would mint pkg__1_000 ghosts.
+package main
+
+struct S<const K: i64> { v: i64 }
+
+impl<const K: i64> S<K> {
+    pub fn mk() -> S<K> { return S { v: K }; }
+}
+
+pub fn main() -> i32 {
+    let a = S::<1_000>::mk();
+    let b = S::<1000>::mk();
+    return ((a.v + b.v) as i32);
+}

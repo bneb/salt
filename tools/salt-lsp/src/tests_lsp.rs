@@ -62,7 +62,7 @@ mod lsp_tests {
         let mut prev_line: i32 = -1;
         for t in &tokens {
             let abs_line = prev_line + t.delta_line as i32;
-            assert!(abs_line >= prev_line as i32,
+            assert!(abs_line >= prev_line,
                 "tokens must be in monotonic line order");
             prev_line = abs_line;
         }

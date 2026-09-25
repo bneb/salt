@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "kind": "salt-compile-timing-baseline",
+  "generated_utc": "2026-08-26T11:59:40Z",
+  "hostname": "Kevins-MacBook-Air-2.local",
+  "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "saltc": "salt-front/target/release/saltc",
+  "saltc_version": "saltc 1.2.0",
+  "runs": 5,
+  "warmup": 2,
+  "timeout_secs": 120.0,
+  "regression_threshold_pct": 10.0,
+  "programs": {
+    "bench_contract_heavy": {
+      "status": "ok",
+      "mean_s": 0.441724,
+      "min_s": 0.437969,
+      "max_s": 0.445996,
+      "median_s": 0.441125,
+      "samples_s": [
+        0.444282,
+        0.437969,
+        0.439251,
+        0.445996,
+        0.441125
+      ],
+      "sources": [
+        "benchmarks/fixtures/bench_contract_heavy.salt"
+      ],
+      "source_bytes": 2896
+    },
+    "bench_loop_kernel": {
+      "status": "ok",
+      "mean_s": 0.019029,
+      "min_s": 0.018773,
+      "max_s": 0.019598,
+      "median_s": 0.018919,
+      "samples_s": [
+        0.018919,
+        0.019002,
+        0.018773,
+        0.018852,
+        0.019598
+      ],
+      "sources": [
+        "benchmarks/fixtures/bench_loop_kernel.salt"
+      ],
+      "source_bytes": 2333
+    },
+    "bench_medium_structs": {
+      "status": "ok",
+      "mean_s": 0.02156,
+      "min_s": 0.020033,
+      "max_s": 0.023203,
+      "median_s": 0.021871,
+      "samples_s": [
+        0.020033,
+        0.021984,
+        0.023203,
+        0.021871,
+        0.02071
+      ],
+      "sources": [
+        "benchmarks/fixtures/bench_medium_structs.salt"
+      ],
+      "source_bytes": 3335
+    },
+    "bench_multifile_app": {
+      "status": "ok",
+      "mean_s": 0.019094,
+      "min_s": 0.018743,
+      "max_s": 0.01981,
+      "median_s": 0.018924,
+      "samples_s": [
+        0.018745,
+        0.018743,
+        0.019251,
+        0.01981,
+        0.018924
+      ],
+      "sources": [
+        "benchmarks/fixtures/bench_multifile_app/geom.salt",
+        "benchmarks/fixtures/bench_multifile_app/stats.salt",
+        "benchmarks/fixtures/bench_multifile_app/main.salt"
+      ],
+      "source_bytes": 2813
+    },
+    "bench_small_arith": {
+      "status": "ok",
+      "mean_s": 0.020998,
+      "min_s": 0.020472,
+      "max_s": 0.02253,
+      "median_s": 0.020636,
+      "samples_s": [
+        0.020472,
+        0.020537,
+        0.020636,
+        0.02253,
+        0.020813
+      ],
+      "sources": [
+        "benchmarks/fixtures/bench_small_arith.salt"
+      ],
+      "source_bytes": 1722
+    }
+  },
+  "created_utc": "2026-08-26T11:59:40Z"
+}

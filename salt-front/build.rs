@@ -9,6 +9,17 @@ use std::path::Path;
 
 fn main() {
     println!("cargo:rerun-if-changed=std/");
+
+    #[cfg(target_os = "macos")]
+    {
+        if Path::new("/opt/homebrew/lib").is_dir() {
+            println!("cargo:rustc-link-search=native=/opt/homebrew/lib");
+        }
+        if Path::new("/usr/local/lib").is_dir() {
+            println!("cargo:rustc-link-search=native=/usr/local/lib");
+        }
+    }
+
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let std_dir = Path::new(&manifest_dir).join("std");
     if !std_dir.is_dir() {

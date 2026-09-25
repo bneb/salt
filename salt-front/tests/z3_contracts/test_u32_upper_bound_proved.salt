@@ -1,0 +1,21 @@
+// Z3 Contract Test: u32 must carry its actual upper bound (4294967295),
+// not just non-negativity.
+// Expected: PASS
+//
+// assert_bound_for_type grouped u32 with u64/usize and asserted only
+// `>= 0` for all three -- correct for u64/usize (their real ceiling is
+// astronomically unlikely to matter for a typical contract) but wrong
+// for u32, whose ceiling (2^32 - 1) is well within range of ordinary
+// arithmetic a contract might actually depend on. A trivially-true fact
+// about any real u32 value failed to prove, with Z3 offering
+// x = 4294967296 -- one more than u32::MAX -- as a "counterexample."
+package test_u32_upper_bound_proved
+
+pub fn identity_u32(x: u32) -> u32
+    ensures(result <= 4294967295)
+{ return x; }
+
+pub fn main() -> i32 {
+    let _a = identity_u32(5);
+    return 0;
+}

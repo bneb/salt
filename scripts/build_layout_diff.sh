@@ -32,7 +32,7 @@ for mod in "${DEPS[@]}"; do
 done
 
 echo "🔧 [Layout_Diff] Compiling merged Salt source..."
-"$SALT_FRONT/target/release/salt-front" "$MERGED_SALT" --release > "$TMP_DIR/layout_diff.mlir"
+"$SALT_FRONT/target/release/saltc" "$MERGED_SALT" --release > "$TMP_DIR/layout_diff.mlir"
 
 echo "🔧 [Layout_Diff] Optimizing MLIR..."
 mlir-opt "$TMP_DIR/layout_diff.mlir" --allow-unregistered-dialect \

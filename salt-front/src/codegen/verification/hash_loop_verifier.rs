@@ -10,7 +10,9 @@
 //! - Epilogue covers exactly remaining bytes  
 //! - Complete coverage: main + epilogue = [0, len)
 
-use crate::z3_shim::{Context, Solver, ast::{Ast, Bool, Int}};
+use crate::z3_shim::{Context, Solver, ast::{Bool, Int}};
+#[cfg(feature = "z3-backend")]
+use crate::z3_shim::ast::Ast;
 
 /// Z3 Hash Loop Verifier - Proves Loop Bound Safety
 pub struct HashLoopVerifier<'a> {

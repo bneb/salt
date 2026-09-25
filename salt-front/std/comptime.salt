@@ -5,7 +5,6 @@ package std.comptime
 
 import std.string.String;
 import std.collections.vec.Vec;
-import std.mem.allocator.HeapAllocator;
 
 // Fatal-error protocol: matches std.core.option / std.core.result convention.
 extern fn exit(code: i32);
@@ -78,7 +77,7 @@ impl Token {
 
 /// TokenStream holds a sequence of tokens from a prefixed string
 struct TokenStream {
-    tokens: Vec<Token, HeapAllocator>,
+    tokens: Vec<Token>,
     prefix: String,  // e.g., "f", "sql", "regex"
 }
 
@@ -86,7 +85,8 @@ impl TokenStream {
     /// Create a new empty token stream
     pub fn new(prefix: String) -> TokenStream {
         return TokenStream {
-            tokens: Vec::<Token, HeapAllocator>::new(HeapAllocator { _pad: 0 }, 16),
+            // NB-6: Vec is single-parameter; allocator argument removed.
+            tokens: Vec::<Token>::new(16),
             prefix: prefix,
         };
     }
@@ -262,7 +262,7 @@ pub fn tokenize(prefix: String, content: String) -> TokenStream {
 /// [SPEC] Hex string prefix handler
 /// Takes hex characters and produces a Vec<u8> initialization
 #[string_prefix("hex")]
-pub comptime fn hex_handler(tokens: Vec<Token, HeapAllocator>) -> String {
+pub comptime fn hex_handler(tokens: Vec<Token>) -> String {
     // 1. Validation: Ensure we only have one string literal token
     if tokens.len != 1 {
         println("Panic: hex prefix expects a single string literal");

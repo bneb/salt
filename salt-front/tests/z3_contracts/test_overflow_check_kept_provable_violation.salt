@@ -1,0 +1,21 @@
+// Z3 Contract Test: an addition that PROVABLY overflows given its own
+// requires clause must still just keep the runtime check -- NOT become
+// a hard compile error.
+// Expected: PASS (compiles cleanly; traps at runtime if actually called
+// with a >= i32::MAX), AND __salt_overflow_panic must be present.
+//
+// This is the deliberate design boundary, not an oversight: an ordinary,
+// unconstrained `a + b` has a trivial counterexample (i32::MAX + 1) for
+// nearly any function that doesn't happen to bound its inputs, so
+// treating "Z3 found a way this could overflow" as a compile error would
+// turn most ordinary arithmetic in the language into a compile failure.
+// try_elide_overflow_check only ever ELIDES (on UNSAT); a proven
+// violation is treated exactly like an undecidable one -- the existing
+// runtime check stays, silently, same as if elision had never run at
+// all. See try_elide_overflow_check's own doc comment for the full
+// reasoning.
+package test_overflow_check_kept_provable_violation
+
+pub fn always_overflows(a: i32) -> i32
+    requires(a >= 2147483647)
+{ return a + 1; }

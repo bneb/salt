@@ -1,0 +1,9 @@
+package main
+use std.collections.vec.Vec;
+fn len_of<U>(v: Vec<U>) -> i64 { return v.len(); }
+pub fn main() -> i32 {
+    let mut v = Vec::new();
+    v.push(1);
+    let n = len_of(v);
+    return n as i32;
+}

@@ -8,7 +8,7 @@
 Arena allocator, `Result<T,E>`, `Option<T>`, `Ptr<T>`, `Box<T>`, `StringView`, iterators, slices, memory operations, slab allocator, formatting.
 
 ### Collections (`std.collections`)
-`Vec<T,A>` (generic allocator), `HashMap<K,V>` (Swiss-table with bit-group probing).
+`Vec<T>` (heap-backed; allocator params are not part of type identity), `HashMap<K,V>` (Swiss-table with bit-group probing).
 
 ### String (`std.string`)
 Flat `String` type (`{data: Ptr<u8>, len: i64, cap: i64}`) with f-string support, `Eq`, `Writer` impl.

@@ -16,9 +16,42 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 # 1. Configuration
+#
+# SALT_LLVM_MAJOR pins the toolchain. find_package(MLIR REQUIRED CONFIG) with
+# no version accepts whatever MLIR_DIR happens to point at, and that is how
+# this build drifted: CONTRIBUTING.md documents LLVM 21, a stale cache in
+# build/ was configured against llvm@18, and the salt-opt binary actually in
+# use links llvm@21. Three answers to one question, none of them checked.
+#
+# The version skew is not cosmetic. salt-opt emits LLVM IR that a separate
+# llc consumes downstream, so a mismatch shows up as an inexplicable codegen
+# bug a long way from its cause. Fail at configure time instead.
+set(SALT_LLVM_MAJOR 21 CACHE STRING "Required LLVM/MLIR major version")
+
 find_package(MLIR REQUIRED CONFIG)
 find_package(LLVM REQUIRED CONFIG)
 find_package(Z3 REQUIRED)
+
+if(NOT LLVM_VERSION_MAJOR VERSION_EQUAL SALT_LLVM_MAJOR)
+  message(FATAL_ERROR
+    "LLVM ${LLVM_VERSION_MAJOR} found, but this project requires LLVM "
+    "${SALT_LLVM_MAJOR} (see CONTRIBUTING.md).\n"
+    "  LLVM_DIR = ${LLVM_DIR}\n"
+    "  MLIR_DIR = ${MLIR_DIR}\n"
+    "Point both at the right install, e.g. on Homebrew:\n"
+    "  -DLLVM_DIR=$(brew --prefix llvm@${SALT_LLVM_MAJOR})/lib/cmake/llvm\n"
+    "  -DMLIR_DIR=$(brew --prefix llvm@${SALT_LLVM_MAJOR})/lib/cmake/mlir\n"
+    "Or set -DSALT_LLVM_MAJOR=${LLVM_VERSION_MAJOR} if you intend to move the "
+    "supported version, and update CONTRIBUTING.md to match.")
+endif()
+
+if(NOT MLIR_VERSION_MAJOR VERSION_EQUAL SALT_LLVM_MAJOR)
+  message(FATAL_ERROR
+    "MLIR ${MLIR_VERSION_MAJOR} does not match LLVM ${SALT_LLVM_MAJOR}. "
+    "MLIR_DIR = ${MLIR_DIR}")
+endif()
+
+message(STATUS "salt-opt: LLVM/MLIR ${LLVM_VERSION_MAJOR} (pinned)")
 
 list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
 list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")

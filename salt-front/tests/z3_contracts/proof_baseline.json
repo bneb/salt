@@ -1,7 +1,7 @@
 {
   "aggregate": {
-    "proven": 58,
-    "total": 117
+    "proven": 100,
+    "total": 222
   },
   "rows": [
     {
@@ -16,8 +16,13 @@
     },
     {
       "name": "test_binary_search.salt",
-      "proven": 0,
-      "total": 1
+      "proven": 1,
+      "total": 6
+    },
+    {
+      "name": "test_bool_postcondition_proved.salt",
+      "proven": 6,
+      "total": 8
     },
     {
       "name": "test_bubble_sort.salt",
@@ -35,14 +40,29 @@
       "total": 4
     },
     {
+      "name": "test_composability_ensures_proved.salt",
+      "proven": 2,
+      "total": 2
+    },
+    {
+      "name": "test_composability_requires_proved.salt",
+      "proven": 1,
+      "total": 1
+    },
+    {
       "name": "test_comprehensive.salt",
-      "proven": 9,
-      "total": 16
+      "proven": 11,
+      "total": 19
+    },
+    {
+      "name": "test_const_in_contract_proved.salt",
+      "proven": 4,
+      "total": 4
     },
     {
       "name": "test_contract_library.salt",
       "proven": 0,
-      "total": 4
+      "total": 7
     },
     {
       "name": "test_contract_proved.salt",
@@ -52,11 +72,31 @@
     {
       "name": "test_contract_timeout.salt",
       "proven": 0,
+      "total": 8
+    },
+    {
+      "name": "test_cross_fn_arena_escape_proved.salt",
+      "proven": 0,
       "total": 1
     },
     {
       "name": "test_cross_fn_chain.salt",
-      "proven": 1,
+      "proven": 2,
+      "total": 3
+    },
+    {
+      "name": "test_cross_fn_malloc_tracker_proved.salt",
+      "proven": 0,
+      "total": 0
+    },
+    {
+      "name": "test_cross_fn_symbolic_tracker_proved.salt",
+      "proven": 2,
+      "total": 4
+    },
+    {
+      "name": "test_ensures_deferred_runtime_check.salt",
+      "proven": 0,
       "total": 2
     },
     {
@@ -67,6 +107,11 @@
     {
       "name": "test_ensures_nonzero_proved.salt",
       "proven": 2,
+      "total": 2
+    },
+    {
+      "name": "test_ensures_return_expr_bounds_proved.salt",
+      "proven": 1,
       "total": 2
     },
     {
@@ -82,7 +127,7 @@
     {
       "name": "test_for_loop_slice.salt",
       "proven": 2,
-      "total": 5
+      "total": 6
     },
     {
       "name": "test_forall_requires_proved.salt",
@@ -90,9 +135,19 @@
       "total": 3
     },
     {
+      "name": "test_houdini_call_requires_proved.salt",
+      "proven": 1,
+      "total": 3
+    },
+    {
+      "name": "test_i32_i64_full_range_proved.salt",
+      "proven": 2,
+      "total": 4
+    },
+    {
       "name": "test_insertion_sort.salt",
       "proven": 2,
-      "total": 5
+      "total": 6
     },
     {
       "name": "test_insertion_sort_concrete.salt",
@@ -100,14 +155,54 @@
       "total": 0
     },
     {
+      "name": "test_let_binding_proved.salt",
+      "proven": 5,
+      "total": 8
+    },
+    {
       "name": "test_loop_call_precond_proved.salt",
       "proven": 2,
-      "total": 5
+      "total": 6
     },
     {
       "name": "test_matmul_operator.salt",
       "proven": 0,
       "total": 0
+    },
+    {
+      "name": "test_overflow_check_kept_provable_violation.salt",
+      "proven": 0,
+      "total": 2
+    },
+    {
+      "name": "test_overflow_check_kept_unconstrained.salt",
+      "proven": 0,
+      "total": 1
+    },
+    {
+      "name": "test_overflow_elide_add_proved.salt",
+      "proven": 1,
+      "total": 2
+    },
+    {
+      "name": "test_overflow_elide_mul_proved.salt",
+      "proven": 1,
+      "total": 2
+    },
+    {
+      "name": "test_overflow_elide_sub_proved.salt",
+      "proven": 1,
+      "total": 2
+    },
+    {
+      "name": "test_overflow_elide_unsigned_proved.salt",
+      "proven": 1,
+      "total": 2
+    },
+    {
+      "name": "test_overflow_elide_untranslatable_operand.salt",
+      "proven": 0,
+      "total": 1
     },
     {
       "name": "test_preservation.salt",
@@ -121,13 +216,13 @@
     },
     {
       "name": "test_selection_sort.salt",
-      "proven": 4,
-      "total": 5
+      "proven": 5,
+      "total": 7
     },
     {
       "name": "test_slice_cursor_proved.salt",
       "proven": 2,
-      "total": 4
+      "total": 5
     },
     {
       "name": "test_slice_len_construction_proved.salt",
@@ -142,17 +237,17 @@
     {
       "name": "test_string_ops.salt",
       "proven": 0,
-      "total": 3
+      "total": 7
     },
     {
       "name": "test_strings.salt",
       "proven": 0,
-      "total": 2
+      "total": 3
     },
     {
       "name": "test_strings_symbolic.salt",
       "proven": 0,
-      "total": 5
+      "total": 12
     },
     {
       "name": "test_struct_field_bounds.salt",
@@ -162,12 +257,37 @@
     {
       "name": "test_type_bounds.salt",
       "proven": 6,
-      "total": 12
+      "total": 15
+    },
+    {
+      "name": "test_u32_upper_bound_proved.salt",
+      "proven": 1,
+      "total": 1
+    },
+    {
+      "name": "test_u64_max_literal_proved.salt",
+      "proven": 2,
+      "total": 2
+    },
+    {
+      "name": "test_unsigned_bound_proved.salt",
+      "proven": 4,
+      "total": 4
     },
     {
       "name": "test_while_invariant.salt",
       "proven": 1,
-      "total": 1
+      "total": 2
+    },
+    {
+      "name": "test_while_post_loop_proved.salt",
+      "proven": 1,
+      "total": 2
+    },
+    {
+      "name": "test_while_post_loop_var_reuse_proved.salt",
+      "proven": 1,
+      "total": 4
     }
   ]
 }

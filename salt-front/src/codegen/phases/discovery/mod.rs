@@ -11,7 +11,6 @@ use crate::codegen::trait_registry::TraitRegistry;
 
 use crate::codegen::passes::liveness::LivenessResult;
 
-pub mod scanner;
 
 /// Phase 1: Template and registry discovery (read-mostly after initialization)
 pub struct DiscoveryState {
@@ -42,6 +41,11 @@ pub struct DiscoveryState {
     pub generic_impls: HashMap<String, (SaltFn, Vec<ImportDecl>)>,
     /// The unified entity registry from collector phase
     pub entity_registry: EntityRegistry,
+    /// S3 bridge: typed per-instance identities keyed by TODAY'S legacy
+    /// TypeKey. Written only by define_*_instance (the chokepoint); string
+    /// spaces retire in S4/S5 once consumers read from here instead.
+    pub(crate) instance_ids: std::collections::HashMap<crate::types::TypeKey,
+        crate::codegen::types::instance_id::InstanceId>,
     /// String prefix handlers: prefix -> handler function name
     /// e.g., "f" -> "std__string__fstring_handler", "sql" -> "sql_handler"
     pub string_prefix_handlers: HashMap<String, String>,
@@ -87,6 +91,7 @@ impl DiscoveryState {
             imports: Vec::new(),
             generic_impls: HashMap::new(),
             entity_registry: EntityRegistry::default(),
+            instance_ids: std::collections::HashMap::new(),
             string_prefix_handlers: HashMap::new(),
             comptime_ready: false,
             pulse_functions: HashMap::new(),

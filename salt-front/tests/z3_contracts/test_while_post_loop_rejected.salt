@@ -1,0 +1,18 @@
+// Z3 Contract Test: the post-loop fact must not over-justify a claim the
+// invariant and exit condition don't actually establish.
+// Expected: FAIL (verification error)
+//
+// invariant (i >= 0) && !cond (i >= n) does NOT imply i >= 10 -- e.g.
+// n = 0 means the loop never runs and i stays 0.
+package test_while_post_loop_rejected
+
+fn need_at_least_ten(y: i64) requires { y >= 10 } { }
+
+pub fn f(n: i64) {
+    let mut i: i64 = 0;
+    while i < n {
+        invariant i >= 0;
+        i = i + 1;
+    }
+    need_at_least_ten(i);
+}

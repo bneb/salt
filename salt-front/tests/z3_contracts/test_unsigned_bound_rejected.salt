@@ -1,0 +1,15 @@
+// Z3 Contract Test: a genuinely unguarded, genuinely underflowing call must
+// still be rejected once unsigned non-negativity is available to the solver.
+// Expected: REJECTED (VERIFICATION ERROR)
+//
+// Companion to test_unsigned_bound_proved.salt. Asserting x >= 0 for an
+// unsigned x is a TRUE fact -- it can only let MORE things prove, never
+// fewer -- but the fix must not accidentally widen what a real
+// requires{b<=a} contract accepts. x >= 0 and y >= 0 do not imply x >= y.
+package test_unsigned_bound_rejected
+
+fn sub_checked(a: u32, b: u32) -> u32 requires { b <= a } { return a - b; }
+
+pub fn unguarded(x: u32, y: u32) -> u32 {
+    return sub_checked(x, y);
+}

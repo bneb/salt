@@ -8,6 +8,7 @@ use crate::common::mangling::Mangler;
 
 use crate::codegen::tracer::TypeTracer;
 use crate::codegen::seeker_resolve::is_task_concrete;
+use crate::codegen::types::generic_arg::GenericArg;
 
 /// The "Visitor" Pattern (The LLVM/Clang Standard)
 /// Instead of a manual match block that is prone to human error, we implement a Trait-Based AST Walker (Seeker).
@@ -415,11 +416,11 @@ impl<'a, 'ctx> LoweringContext<'a, 'ctx> {
                          syn::GenericArgument::Type(ty) => {
                              params.push(crate::codegen::type_bridge::resolve_type(self, &crate::grammar::SynType::from_std(ty.clone()).map_err(|e| e.to_string())?));
                          }
-                         syn::GenericArgument::Const(syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(i), .. })) => {
-                             if let Ok(val) = i.base10_parse::<i64>() {
-                                 params.push(Type::Struct(val.to_string()));
-                             }
-                         }
+                                                  syn::GenericArgument::Const(const_expr) => {
+                                                      // T-b refusal + T-c value semantics, uniform
+                                                      // with expr/resolver.rs (see from_const_expr).
+                                                      params.push(GenericArg::from_const_expr(const_expr, self.evaluator)?.to_legacy_type());
+                                                  }
                          _ => {}
                      }
                  }

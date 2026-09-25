@@ -56,13 +56,18 @@ pub fn unify_types(
         {
             unify_types(&p_args[0], c_elem, map)?;
         }
-        // Recurse into Concrete args
-        (Type::Concrete(n1, args1), Type::Concrete(n2, args2)) if args1.len() == args2.len() => {
-            // Allow matching even with qualified vs unqualified names
-            if n1 == n2 || n1.ends_with(&format!("__{}", n2)) || n2.ends_with(&format!("__{}", n1)) {
-                for (a1, a2) in args1.iter().zip(args2.iter()) {
-                    unify_types(a1, a2, map)?;
-                }
+        // Recurse into Concrete args.
+        // NB-5c: bind over the PREFIX when arities differ (e.g. use-site
+        // Vec<U> vs std Vec<T,A> -- the trailing allocator param has no
+        // use-site counterpart). The old args1.len()==args2.len() gate
+        // silently no-opped, leaving use-site params (U) unresolved.
+        (Type::Concrete(n1, args1), Type::Concrete(n2, args2))
+            if n1 == n2
+                || n1.ends_with(&format!("__{}", n2))
+                || n2.ends_with(&format!("__{}", n1)) =>
+        {
+            for (a1, a2) in args1.iter().zip(args2.iter()) {
+                unify_types(a1, a2, map)?;
             }
         }
         // Recurse into Reference

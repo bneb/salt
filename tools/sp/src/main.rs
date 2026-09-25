@@ -12,6 +12,7 @@
 //!   sp clean        — Remove build artifacts
 //!   sp add <dep>    — Add a dependency (future: registry)
 //!   sp fetch        — Download dependencies without building
+//!   sp publish      — Package the project for distribution
 
 mod manifest;
 mod resolver;
@@ -20,6 +21,8 @@ mod cache;
 mod semver;
 mod publish;
 mod lockfile;
+#[cfg(test)]
+mod test_support;
 
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
@@ -124,6 +127,13 @@ enum Commands {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
+
+    /// Package the project for distribution
+    Publish {
+        /// Path to project directory
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
 }
 
 fn main() {
@@ -138,6 +148,7 @@ fn main() {
         Commands::Clean { path } => cmd_clean(&path),
         Commands::Add { dep, path, dev } => cmd_add(&dep, &path, dev),
         Commands::Fetch { path } => cmd_fetch(&path),
+        Commands::Publish { path } => cmd_publish(&path),
     };
 
     if let Err(e) = result {
@@ -215,11 +226,20 @@ fn cmd_build(path: &Path, release: bool, _package: Option<&str>) -> Result<(), S
     );
 
     // Resolve dependencies — collect search roots for the compiler
-    let (build_order, search_roots, _resolved) = resolver::resolve(&manifest, path)?;
+    let (build_order, search_roots, resolved) = resolver::resolve(&manifest, path)?;
 
     let dep_count = manifest.dependencies.len();
     if dep_count > 0 {
         println!("   {} dependency(ies) resolved", dep_count);
+    }
+
+    // Before the cache check, so a cache hit still (re)creates a missing
+    // salt.lock; output is deterministic, so an unchanged tree rewrites it
+    // byte-identically. A failure only warns (like cache.store below): the
+    // build doesn't depend on it.
+    match write_lockfile(&manifest, path, &resolved) {
+        Ok(()) => println!("   🔒 Wrote salt.lock"),
+        Err(e) => eprintln!("\x1b[1;33mwarning\x1b[0m: salt.lock not written: {}", e),
     }
 
     // Check cache
@@ -253,6 +273,18 @@ fn cmd_build(path: &Path, release: bool, _package: Option<&str>) -> Result<(), S
     );
 
     Ok(())
+}
+
+/// Generate and persist salt.lock: the root package plus the resolved
+/// version and content hash of each version dependency. Nothing reads it
+/// back yet.
+fn write_lockfile(
+    manifest: &manifest::Manifest,
+    project_dir: &Path,
+    resolved: &[resolver::ResolvedDep],
+) -> Result<(), String> {
+    let lockfile = lockfile::generate(manifest, resolved)?;
+    lockfile.save(&project_dir.join("salt.lock"))
 }
 
 // ─── sp run ──────────────────────────────────────────────────────────────────
@@ -425,6 +457,24 @@ fn cmd_add(dep: &str, path: &Path, dev: bool) -> Result<(), String> {
         name, version, section
     );
 
+    // What `sp add` writes is a version dependency, which resolves only from
+    // ~/.salt/publish. Dev-dependencies aren't resolved by anything yet.
+    if !dev {
+        match publish::find_published(name) {
+            Ok(found) if found.is_empty() => eprintln!(
+                "\x1b[1;33mwarning\x1b[0m: nothing named '{}' is published in ~/.salt/publish, \
+                 so `sp build` will fail until it is.\n  \
+                 Publish it with `sp publish` from its directory.",
+                name
+            ),
+            Ok(_) => {}
+            Err(e) => eprintln!(
+                "\x1b[1;33mwarning\x1b[0m: couldn't check whether '{}' is published: {}",
+                name, e
+            ),
+        }
+    }
+
     Ok(())
 }
 
@@ -448,4 +498,88 @@ fn cmd_fetch(path: &Path) -> Result<(), String> {
     );
 
     Ok(())
+}
+
+// ─── sp publish ──────────────────────────────────────────────────────────────
+
+fn cmd_publish(path: &Path) -> Result<(), String> {
+    let manifest_path = path.join("salt.toml");
+    let manifest = manifest::load(&manifest_path)?;
+    publish::publish(&manifest, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn test_write_lockfile_creates_salt_lock() {
+        let tmp = crate::test_support::temp_path("sp_test_write_lockfile");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("src")).unwrap();
+        fs::write(
+            tmp.join("salt.toml"),
+            "[package]\nname = \"locktest\"\nversion = \"0.2.0\"\n",
+        )
+        .unwrap();
+        fs::write(
+            tmp.join("src/main.salt"),
+            "package main\nfn main() -> i32 { return 0; }\n",
+        )
+        .unwrap();
+
+        let manifest = manifest::load(&tmp.join("salt.toml")).unwrap();
+        let (_build_order, _search_roots, resolved) = resolver::resolve(&manifest, &tmp).unwrap();
+
+        write_lockfile(&manifest, &tmp, &resolved).unwrap();
+
+        let lock_path = tmp.join("salt.lock");
+        assert!(lock_path.exists(), "expected salt.lock to be written");
+
+        let loaded = lockfile::Lockfile::load(&lock_path).unwrap();
+        let pkg = loaded
+            .packages
+            .get("locktest")
+            .expect("main package should be locked");
+        assert_eq!(pkg.version, "0.2.0");
+        assert_eq!(pkg.hash, None, "the root package isn't content-hashed");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_cmd_publish_creates_archive() {
+        let tmp_home = crate::test_support::temp_path("sp_test_cmd_publish_home");
+        let project_dir = crate::test_support::temp_path("sp_test_cmd_publish_project");
+        let _ = fs::remove_dir_all(&tmp_home);
+        let _ = fs::remove_dir_all(&project_dir);
+        fs::create_dir_all(&tmp_home).unwrap();
+        fs::create_dir_all(project_dir.join("src")).unwrap();
+        fs::write(
+            project_dir.join("salt.toml"),
+            "[package]\nname = \"pubtest\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::write(
+            project_dir.join("src/main.salt"),
+            "package main\nfn main() -> i32 { return 0; }\n",
+        )
+        .unwrap();
+
+        let guard = crate::test_support::HomeGuard::new(&tmp_home);
+
+        cmd_publish(&project_dir).expect("cmd_publish should succeed");
+
+        let archive = tmp_home.join(".salt/publish/pubtest-0.1.0.tar.gz");
+        assert!(
+            archive.exists(),
+            "expected archive at {}",
+            archive.display()
+        );
+
+        drop(guard);
+        let _ = fs::remove_dir_all(&tmp_home);
+        let _ = fs::remove_dir_all(&project_dir);
+    }
 }

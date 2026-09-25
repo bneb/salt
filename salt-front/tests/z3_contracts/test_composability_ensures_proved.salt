@@ -1,0 +1,23 @@
+// Z3 Contract Test: a callee's `ensures` must be assumed at its own call
+// site, so the caller can rely on it for a LATER call's `requires`.
+// Expected: PASS
+//
+// `result` used to lower to a symbol literally named "result" -- the same
+// name at every call site with an ensures clause, colliding across all of
+// them -- and was never substituted to anything, so the fact asserted was
+// about a symbol nothing downstream ever referenced. It was also asserted
+// only into ctx.z3_solver, which requires/ensures checks never read (each
+// builds a fresh Solver; only while-loop invariant proving reads it
+// directly). `let y = g(); h(y);` therefore treated `y` as fully free.
+package test_composability_ensures_proved
+
+fn g() -> u64 ensures { result == 5 } {
+    return 5;
+}
+
+fn h(y: u64) requires { y > 0 } { }
+
+pub fn f() {
+    let y = g();
+    h(y);
+}

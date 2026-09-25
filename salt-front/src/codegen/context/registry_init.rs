@@ -52,7 +52,7 @@ impl<'a> CodegenContext<'a> {
                 name: struct_name.clone(),
                 specialization: None,
             };
-            self.struct_registry_mut().insert(key, StructInfo {
+            self.define_struct_instance(key, StructInfo {
                 name: mangled,
                 fields,
                 field_order: field_order.clone(),
@@ -85,7 +85,7 @@ impl<'a> CodegenContext<'a> {
                 name: enum_name.clone(),
                 specialization: None,
             };
-            self.enum_registry_mut().insert(key, new_info);
+            self.define_enum_instance(key, new_info);
         }
     }
 

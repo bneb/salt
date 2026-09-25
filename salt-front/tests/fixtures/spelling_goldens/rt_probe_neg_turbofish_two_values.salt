@@ -1,0 +1,20 @@
+// WS-R3/P2 (T-a) stronger golden per RT6 reviewer requirement: TWO distinct
+// negative turbofish values in one program.
+// Post-fix contract: EXACTLY two struct decls, !struct_main__S_-7 and
+// !struct_main__S_-13, and ZERO occurrences of the ghost family
+// (main__-7 / main__-13 / main__S_main__-N). At HEAD 51f10fd this probe
+// emits FOUR struct spellings (2 correct + 2 ghosts) and type-mismatched
+// caller spill/call/gep ops; see rt_two_values.HEAD.mlir snapshot.
+package main
+
+struct S<const K: i64> { v: i64 }
+
+impl<const K: i64> S<K> {
+    pub fn mk() -> S<K> { return S { v: K }; }
+}
+
+pub fn main() -> i32 {
+    let a = S::<-7>::mk();
+    let b = S::<-13>::mk();
+    return (a.v + b.v) as i32;
+}

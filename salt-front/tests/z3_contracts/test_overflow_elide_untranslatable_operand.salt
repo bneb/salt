@@ -1,0 +1,17 @@
+// Z3 Contract Test: when an operand can't be translated to Z3 at all,
+// the elision attempt must decline gracefully and keep the runtime
+// check -- not panic, not silently (and wrongly) elide.
+// Expected: PASS (compiles cleanly), AND __salt_overflow_panic must be
+// present for this function.
+//
+// `%` (Rem) has no arm in translate_to_z3's nested Expr::Binary handling
+// (only Add/Sub/Mul/Div/bitwise/comparisons do), so translating `a % b`
+// returns a genuine Err, not a fallback value -- exercising
+// try_elide_overflow_check's `let Ok(lhs_z3) = translate_to_z3(...) else
+// { return false }` early-return specifically, rather than only the
+// prove/disprove path every other fixture in this group exercises.
+package test_overflow_elide_untranslatable_operand
+
+pub fn weird(a: i32, b: i32, c: i32) -> i32
+    requires(a >= 0 && a <= 10 && b >= 1 && b <= 10 && c >= 0 && c <= 10)
+{ return (a % b) + c; }

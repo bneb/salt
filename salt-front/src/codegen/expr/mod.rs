@@ -639,21 +639,27 @@ fn emit_return_expr(ctx: &mut LoweringContext, out: &mut String, r: &syn::ExprRe
                 if !ensures.is_empty() {
                     let fn_name = ctx.current_fn_name().clone();
                     let file_items = &ctx.config.file.items;
-                    let (requires, param_names) = file_items.iter()
+                    let (requires, param_names, raw_ret_ty) = file_items.iter()
                         .filter_map(|item| {
                             if let crate::grammar::Item::Fn(f) = item {
                                 if f.name == fn_name || fn_name.ends_with(&f.name.to_string()) {
                                     let params: Vec<String> = f.args.iter().map(|a| a.name.to_string()).collect();
-                                    return Some((f.requires.clone(), params));
+                                    return Some((f.requires.clone(), params, f.ret_type.clone()));
                                 }
                             }
                             None
                         })
                         .next()
-                        .unwrap_or((vec![], vec![]));
+                        .unwrap_or((vec![], vec![], None));
+                    // See return_stmt.rs's identical comment: result's type
+                    // used to be hardcoded, so this check site never bounded
+                    // it by the function's actual return type either.
+                    let return_ty = raw_ret_ty.as_ref()
+                        .map(|rt| crate::codegen::type_bridge::resolve_type(ctx, rt))
+                        .unwrap_or(Type::Unit);
 
                     match crate::codegen::verification::VerificationEngine::verify_postcondition(
-                        ctx, &ensures, &requires, e, &param_names, local_vars, &fn_name,
+                        ctx, out, &ensures, &requires, e, &param_names, local_vars, &fn_name, &return_ty,
                     ) {
                         Ok(true) => {
                             out.push_str(&format!("    // z3_postcondition_verified: ensures proven for '{}'\n", fn_name));

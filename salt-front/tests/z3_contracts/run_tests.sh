@@ -115,8 +115,8 @@ else
 fi
 
 # ── Test 6: Real (exact rational) contracts — KNOWN FLAKY ──────
-# Z3's Real theory is incomplete (per FAQ). The 100ms timeout is not
-# always sufficient on CI hardware. Accept both pass and timeout.
+# Z3's Real theory is incomplete (per FAQ). The proof budget is not
+# always sufficient. Accept both pass and timeout.
 echo -n "  test_real: "
 if "$SALTC" "$SCRIPT_DIR/test_real.salt" \
     --lib --disable-alias-scopes -o /tmp/z3_test_real > /tmp/z3_out_real.txt 2>&1; then
@@ -707,6 +707,627 @@ else
     cat /tmp/z3_out_fls.txt | head -3
     FAIL=$((FAIL + 1))
     show_evidence
+fi
+
+# ── Named constants in contracts MUST resolve to their value ───
+echo -n "  test_const_in_contract_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_const_in_contract_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_const > /tmp/z3_out_const.txt 2>&1; then
+    echo "PASS (constant resolved to its value)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (constant lowered to an unconstrained symbol)"
+    cat /tmp/z3_out_const.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+# ── ...without weakening soundness ─────────────────────────────
+echo -n "  test_const_in_contract_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_const_in_contract_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_const_rej > /tmp/z3_out_const_rej.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_const_rej.txt; then
+        echo "PASS (false contract still rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_const_rej.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (false contract accepted — soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── Bool postconditions MUST be checked, not skipped ───────────
+echo -n "  test_bool_postcondition_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_bool_postcondition_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_bpc > /tmp/z3_out_bpc.txt 2>&1; then
+    echo "PASS (bool postconditions proved)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (true bool postcondition rejected)"
+    cat /tmp/z3_out_bpc.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+echo -n "  test_bool_postcondition_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_bool_postcondition_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_bpc_rej > /tmp/z3_out_bpc_rej.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_bpc_rej.txt; then
+        echo "PASS (false bool postcondition rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (false bool postcondition ACCEPTED — silently skipped)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── Unsigned types must carry non-negativity for the solver ────
+echo -n "  test_unsigned_bound_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_unsigned_bound_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_ub > /tmp/z3_out_ub.txt 2>&1; then
+    echo "PASS (unsigned bounds proved)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (unsigned non-negativity not available to the solver)"
+    cat /tmp/z3_out_ub.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+echo -n "  test_unsigned_bound_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_unsigned_bound_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_ub_rej > /tmp/z3_out_ub_rej.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|could not prove' /tmp/z3_out_ub_rej.txt; then
+        echo "PASS (genuinely unguarded subtraction still rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (unguarded subtraction ACCEPTED — soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── A deliberately weakened bound must be rejected, not compiled in
+# silence -- this query used to time out under the old 100ms wall-clock
+# watchdog (deferred to a runtime check); the rlimit-based budget decides
+# it directly instead. See the fixture's own header for the full history.
+echo -n "  test_ensures_timeout_runtime_check: "
+if ! "$SALTC" "$SCRIPT_DIR/test_ensures_timeout_runtime_check.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_etrc > /tmp/z3_out_etrc.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_etrc.txt; then
+        echo "PASS (weakened bound caught at compile time, not deferred or silent)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_etrc.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+elif grep -q '__salt_contract_violation' /tmp/z3_test_etrc \
+    && grep -qi 'WARNING: Z3 could not prove' /tmp/z3_out_etrc.txt; then
+    # Sound, but weaker than this fixture expects: Z3 ran out of budget and
+    # the compiler deferred to a runtime check. Outcomes here are calibrated
+    # to the Z3 version CI pins; an older Z3 lands in this branch.
+    echo "FAIL (deferred to a runtime check instead of compile-time rejection: sound, but this Z3 is weaker than the version CI pins)"
+    FAIL=$((FAIL + 1))
+else
+    echo "FAIL (weakened bound ACCEPTED with no runtime check — soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── A genuinely-undecided-within-budget ensures MUST still emit a
+# runtime check, not compile in silence ──
+echo -n "  test_ensures_deferred_runtime_check: "
+if "$SALTC" "$SCRIPT_DIR/test_ensures_deferred_runtime_check.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_edrc > /tmp/z3_out_edrc.txt 2>&1; then
+    if grep -q '__salt_contract_violation' /tmp/z3_test_edrc; then
+        if grep -qi 'WARNING: Z3 could not prove' /tmp/z3_out_edrc.txt; then
+            echo "PASS (deferred ensures got a real runtime check + warning)"
+            PASS=$((PASS + 1))
+            show_evidence
+        else
+            echo "FAIL (runtime check present but no warning printed)"
+            FAIL=$((FAIL + 1))
+        fi
+    else
+        echo "FAIL (compiled with ZERO enforcement — the original silent bug)"
+        cat /tmp/z3_out_edrc.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (unexpected compile error — was this supposed to stay undecided?)"
+    cat /tmp/z3_out_edrc.txt | head -5
+    FAIL=$((FAIL + 1))
+fi
+
+# ── A non-mut local must be constrained to its defining expression ──
+echo -n "  test_let_binding_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_let_binding_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_letb_proved > /tmp/z3_out_letb_proved.txt 2>&1; then
+    echo "PASS (let-bound name related to its defining expression)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (let binding still unrelated to its defining expression)"
+    cat /tmp/z3_out_letb_proved.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+echo -n "  test_let_binding_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_let_binding_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_letb_rejected > /tmp/z3_out_letb_rejected.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_letb_rejected.txt; then
+        echo "PASS (genuinely wrong validator still rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_letb_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (wrong validator ACCEPTED — soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── A function's own requires must be assumed for calls it makes ──
+echo -n "  test_composability_requires_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_composability_requires_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_cr_proved > /tmp/z3_out_cr_proved.txt 2>&1; then
+    echo "PASS (own requires justified the call it makes)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (caller_preconditions still not reaching the solver)"
+    cat /tmp/z3_out_cr_proved.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+echo -n "  test_composability_requires_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_composability_requires_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_cr_rejected > /tmp/z3_out_cr_rejected.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_cr_rejected.txt; then
+        echo "PASS (looser caller bound did not over-justify the call)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_cr_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (looser bound ACCEPTED — soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── A callee's ensures must be assumed at its own call site ──
+echo -n "  test_composability_ensures_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_composability_ensures_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_ce_proved > /tmp/z3_out_ce_proved.txt 2>&1; then
+    echo "PASS (callee ensures propagated to the caller's later call)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (apply_ensures_to_solver still not reaching the solver)"
+    cat /tmp/z3_out_ce_proved.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+echo -n "  test_composability_ensures_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_composability_ensures_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_ce_rejected > /tmp/z3_out_ce_rejected.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_ce_rejected.txt; then
+        echo "PASS (propagated ensures did not over-justify an unrelated call)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_ce_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (unrelated stronger requirement ACCEPTED — soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── Postcondition type-bounds scoping must reach the return expression ──
+echo -n "  test_ensures_return_expr_bounds_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_ensures_return_expr_bounds_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_erb_proved > /tmp/z3_out_erb_proved.txt 2>&1; then
+    echo "PASS (n's u64 bound reached the postcondition via the WP binding)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (return-expression identifiers still invisible to type bounds)"
+    cat /tmp/z3_out_erb_proved.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+echo -n "  test_ensures_return_expr_bounds_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_ensures_return_expr_bounds_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_erb_rejected > /tmp/z3_out_erb_rejected.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_erb_rejected.txt; then
+        echo "PASS (genuinely false postcondition still rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_erb_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (false postcondition ACCEPTED — soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── The Hoare post-loop fact (invariant && !cond) must be usable after a while loop ──
+echo -n "  test_while_post_loop_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_while_post_loop_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_wpl_proved > /tmp/z3_out_wpl_proved.txt 2>&1; then
+    echo "PASS (post-loop invariant reached the later requires check)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (post-loop fact still not reaching the solver)"
+    cat /tmp/z3_out_wpl_proved.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+echo -n "  test_while_post_loop_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_while_post_loop_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_wpl_rejected > /tmp/z3_out_wpl_rejected.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_wpl_rejected.txt; then
+        echo "PASS (unjustified post-loop claim still rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_wpl_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (unjustified claim ACCEPTED — soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
+echo -n "  test_while_post_loop_var_reuse_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_while_post_loop_var_reuse_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_wplr_proved > /tmp/z3_out_wplr_proved.txt 2>&1; then
+    echo "PASS (second loop's own post-fact usable despite name reuse)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (name-reuse anchoring broke a legitimate proof)"
+    cat /tmp/z3_out_wplr_proved.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+echo -n "  test_while_post_loop_var_reuse_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_while_post_loop_var_reuse_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_wplr_rejected > /tmp/z3_out_wplr_rejected.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_wplr_rejected.txt; then
+        echo "PASS (stale fact from a same-named earlier loop did not leak)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_wplr_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (absurd claim ACCEPTED — stale fact contradiction, soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── A havoc'd-argument requires failure must suggest 'invariant', not requires/assert ──
+echo -n "  test_havoc_invariant_hint: "
+if ! "$SALTC" "$SCRIPT_DIR/test_havoc_invariant_hint.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_hih > /tmp/z3_out_hih.txt 2>&1; then
+    if grep -q "add 'invariant y > 0;' to that loop" /tmp/z3_out_hih.txt; then
+        if grep -q "to the function signature\|before this line" /tmp/z3_out_hih.txt; then
+            echo "FAIL (misleading requires/assert hint present alongside the invariant one)"
+            cat /tmp/z3_out_hih.txt | head -8
+            FAIL=$((FAIL + 1))
+        else
+            echo "PASS (suggested the correct invariant, in the caller's own terms)"
+            PASS=$((PASS + 1))
+            show_evidence
+        fi
+    else
+        echo "FAIL (havoc'd argument failure did not suggest an invariant)"
+        cat /tmp/z3_out_hih.txt | head -8
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (should have been rejected — no invariant was ever added)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── Houdini-lite: a call's requires must be tried as a candidate invariant automatically ──
+echo -n "  test_houdini_call_requires_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_houdini_call_requires_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_hcr_proved > /tmp/z3_out_hcr_proved.txt 2>&1; then
+    echo "PASS (call's requires auto-discharged with no hand-written invariant)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (Houdini-lite candidate not discharging the call automatically)"
+    cat /tmp/z3_out_hcr_proved.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+echo -n "  test_houdini_call_requires_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_houdini_call_requires_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_hcr_rejected > /tmp/z3_out_hcr_rejected.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_hcr_rejected.txt; then
+        echo "PASS (candidate that fails the base case was correctly dropped, call still rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_hcr_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (a base-case-failing candidate was trusted anyway — soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── symbolic_tracker must not leak a havoc'd name across functions ──
+echo -n "  test_cross_fn_symbolic_tracker_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_cross_fn_symbolic_tracker_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_cfst_proved > /tmp/z3_out_cfst_proved.txt 2>&1; then
+    echo "PASS (same-named loop variables in different functions did not contaminate each other)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (cross-function symbolic_tracker leak reintroduced)"
+    cat /tmp/z3_out_cfst_proved.txt | head -5
+    FAIL=$((FAIL + 1))
+    show_evidence
+fi
+
+# ── pointer_tracker must not leak a Valid marking across functions ──
+echo -n "  test_cross_fn_pointer_tracker_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_cross_fn_pointer_tracker_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_cfpt_rejected > /tmp/z3_out_cfpt_rejected.txt 2>&1; then
+    if grep -q 'VERIFICATION ERROR\|Postcondition violation' /tmp/z3_out_cfpt_rejected.txt; then
+        echo "PASS (unrelated function's leftover Valid state did not leak)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_cfpt_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (an unproven pointer was ACCEPTED — cross-function pointer_tracker leak reintroduced, soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── check_deref's rejection must not be silently swallowed by its caller ──
+echo -n "  test_use_after_free_via_read_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_use_after_free_via_read_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_uafr_rejected > /tmp/z3_out_uafr_rejected.txt 2>&1; then
+    if grep -q "Cannot dereference 'Freed'" /tmp/z3_out_uafr_rejected.txt; then
+        echo "PASS (use-after-free via .read() correctly rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_uafr_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (use-after-free via .read() ACCEPTED — check_deref's rejection is being swallowed again, soundness lost)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── same fixed path, Optional state instead of Freed ──
+echo -n "  test_deref_optional_via_read_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_deref_optional_via_read_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_dor_rejected > /tmp/z3_out_dor_rejected.txt 2>&1; then
+    if grep -q "Cannot dereference 'Optional'" /tmp/z3_out_dor_rejected.txt; then
+        echo "PASS (unnarrowed Optional-state read correctly rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_dor_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (unnarrowed Optional-state read ACCEPTED — check_deref's rejection is being swallowed again)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── same fixed path, Uninitialized state via .write() instead of .read() ──
+echo -n "  test_deref_uninitialized_via_write_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_deref_uninitialized_via_write_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_duw_rejected > /tmp/z3_out_duw_rejected.txt 2>&1; then
+    if grep -q "Cannot dereference 'Uninitialized'" /tmp/z3_out_duw_rejected.txt; then
+        echo "PASS (write through an uninitialized pointer correctly rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_duw_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (write through an uninitialized pointer ACCEPTED — check_deref's rejection is being swallowed again)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── i32/i64 must carry their full range, not just be entirely unbounded ──
+echo -n "  test_i32_i64_full_range_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_i32_i64_full_range_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_i32i64_proved > /tmp/z3_out_i32i64_proved.txt 2>&1; then
+    echo "PASS (trivially-true i32/i64 range facts proved or safely deferred)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (an always-true fact about real i32/i64 values was rejected — unbounded-integer regression)"
+    cat /tmp/z3_out_i32i64_proved.txt | head -8
+    FAIL=$((FAIL + 1))
+fi
+
+# ── u32 must carry its actual ceiling (2^32 - 1), not just non-negativity ──
+echo -n "  test_u32_upper_bound_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_u32_upper_bound_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_u32ub_proved > /tmp/z3_out_u32ub_proved.txt 2>&1; then
+    echo "PASS (trivially-true u32 range fact proved or safely deferred)"
+    PASS=$((PASS + 1))
+    show_evidence
+else
+    echo "FAIL (an always-true fact about real u32 values was rejected — missing upper bound regression)"
+    cat /tmp/z3_out_u32ub_proved.txt | head -8
+    FAIL=$((FAIL + 1))
+fi
+
+# ── a contract literal at u64::MAX must actually be checked, not skipped ──
+echo -n "  test_u64_max_literal_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_u64_max_literal_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_u64max_proved > /tmp/z3_out_u64max_proved.txt 2>&1; then
+    if grep -q "0/0 checks" /tmp/z3_out_u64max_proved.txt; then
+        echo "FAIL (compiled clean but 0 checks ran — silently skipped again, not actually verified)"
+        FAIL=$((FAIL + 1))
+    else
+        echo "PASS (u64::MAX literal actually verified, not silently skipped)"
+        PASS=$((PASS + 1))
+        show_evidence
+    fi
+else
+    echo "FAIL (u64::MAX literal in a contract was wrongly rejected)"
+    cat /tmp/z3_out_u64max_proved.txt | head -8
+    FAIL=$((FAIL + 1))
+fi
+
+# ── an off-by-one-too-tight bound below u64::MAX must still be rejected ──
+echo -n "  test_u64_max_literal_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_u64_max_literal_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_u64max_rejected > /tmp/z3_out_u64max_rejected.txt 2>&1; then
+    if grep -q "VERIFICATION ERROR\|Postcondition violation" /tmp/z3_out_u64max_rejected.txt; then
+        echo "PASS (genuinely false near-max claim still rejected — literal fix isn't over-permissive)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_u64max_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (a genuinely false near-u64::MAX claim was ACCEPTED)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── try_elide_overflow_check: proven-safe arithmetic must have its
+# runtime check elided entirely (zero-cost), across each operator and
+# signedness try_elide_overflow_check's own match distinguishes ──
+for elide_case in overflow_elide_add_proved overflow_elide_sub_proved overflow_elide_mul_proved overflow_elide_unsigned_proved; do
+    echo -n "  test_${elide_case}: "
+    if "$SALTC" "$SCRIPT_DIR/test_${elide_case}.salt" \
+        --lib --disable-alias-scopes -o "/tmp/z3_test_${elide_case}" > "/tmp/z3_out_${elide_case}.txt" 2>&1; then
+        if grep -q '__salt_overflow_panic' "/tmp/z3_test_${elide_case}"; then
+            echo "FAIL (proven-safe arithmetic still emitted a runtime check — elision regressed)"
+            FAIL=$((FAIL + 1))
+        else
+            echo "PASS (runtime overflow check elided — proven safe at compile time)"
+            PASS=$((PASS + 1))
+            show_evidence
+        fi
+    else
+        echo "FAIL (unexpected compile error)"
+        cat "/tmp/z3_out_${elide_case}.txt" | head -5
+        FAIL=$((FAIL + 1))
+    fi
+done
+
+# ── The three cases elision must decline: unconstrained operands, a
+# provable violation (never a hard error -- see the fixture's own
+# header), and an untranslatable operand. All three must compile clean
+# with the runtime check still present, identical to pre-elision
+# behavior ──
+for keep_case in overflow_check_kept_unconstrained overflow_check_kept_provable_violation overflow_elide_untranslatable_operand; do
+    echo -n "  test_${keep_case}: "
+    if "$SALTC" "$SCRIPT_DIR/test_${keep_case}.salt" \
+        --lib --disable-alias-scopes -o "/tmp/z3_test_${keep_case}" > "/tmp/z3_out_${keep_case}.txt" 2>&1; then
+        if grep -q '__salt_overflow_panic' "/tmp/z3_test_${keep_case}"; then
+            echo "PASS (runtime check correctly kept, not over-elided)"
+            PASS=$((PASS + 1))
+        else
+            echo "FAIL (check missing — elision fired when it should have declined)"
+            FAIL=$((FAIL + 1))
+        fi
+    else
+        echo "FAIL (unexpected compile error — should compile clean with a runtime check)"
+        cat "/tmp/z3_out_${keep_case}.txt" | head -5
+        FAIL=$((FAIL + 1))
+    fi
+done
+
+# ── malloc_tracker cross-function audit: closes the thread left dangling
+# since the pointer_tracker fix -- confirmed already correctly scoped
+# (swap-and-restore in emit_fn), locked in as a permanent regression
+# guard rather than left as an unverified commit-message claim ──
+echo -n "  test_cross_fn_malloc_tracker_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_cross_fn_malloc_tracker_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_cfmt_proved > /tmp/z3_out_cfmt_proved.txt 2>&1; then
+    echo "PASS (same-named malloc/free in two functions did not contaminate each other)"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL (unexpected compile error)"
+    cat /tmp/z3_out_cfmt_proved.txt | head -5
+    FAIL=$((FAIL + 1))
+fi
+
+echo -n "  test_cross_fn_malloc_leak_still_caught: "
+if ! "$SALTC" "$SCRIPT_DIR/test_cross_fn_malloc_leak_still_caught.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_cfml_rejected > /tmp/z3_out_cfml_rejected.txt 2>&1; then
+    if grep -q 'Memory Leak Detected' /tmp/z3_out_cfml_rejected.txt; then
+        echo "PASS (leak in first() still caught despite second()'s unrelated reuse of the name)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_cfml_rejected.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (a genuine leak was ACCEPTED — leak detection defeated by unrelated name reuse)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── arena_escape_tracker: same audit, same closing-the-loop rationale ──
+echo -n "  test_arena_escape_direct_rejected: "
+if ! "$SALTC" "$SCRIPT_DIR/test_arena_escape_direct_rejected.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_aedr > /tmp/z3_out_aedr.txt 2>&1; then
+    if grep -q 'Arena escape violation' /tmp/z3_out_aedr.txt; then
+        echo "PASS (returning a local-arena pointer correctly rejected)"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL (rejected for the wrong reason)"
+        cat /tmp/z3_out_aedr.txt | head -5
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "FAIL (a genuine arena escape was ACCEPTED)"
+    FAIL=$((FAIL + 1))
+fi
+
+echo -n "  test_cross_fn_arena_escape_proved: "
+if "$SALTC" "$SCRIPT_DIR/test_cross_fn_arena_escape_proved.salt" \
+    --lib --disable-alias-scopes -o /tmp/z3_test_cfae_proved > /tmp/z3_out_cfae_proved.txt 2>&1; then
+    echo "PASS (unrelated function's leftover arena taint did not leak)"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL (unexpected compile error — cross-function arena taint leak reintroduced)"
+    cat /tmp/z3_out_cfae_proved.txt | head -5
+    FAIL=$((FAIL + 1))
 fi
 
 echo ""

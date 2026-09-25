@@ -1,0 +1,9 @@
+// Z3 Contract Test: same as test_overflow_elide_add_proved.salt, for
+// subtraction -- confirms try_elide_overflow_check's operator match
+// handles Sub, not just Add.
+// Expected: PASS, no __salt_overflow_panic call emitted.
+package test_overflow_elide_sub_proved
+
+pub fn safe_sub(a: i32, b: i32) -> i32
+    requires(a >= 0 && a <= 100 && b >= 0 && b <= 100)
+{ return a - b; }

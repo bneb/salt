@@ -1,0 +1,61 @@
+// Timing benchmark: small arithmetic module (fast end of the compile spectrum).
+// Part of the compiler timing harness (scripts/timing_harness.sh).
+// Measures the front-end fast path: parse, name resolution, type check,
+// constant folding, and a handful of trivially-proved Z3 contracts.
+package main
+
+pub fn add(a: i32, b: i32) -> i32
+    requires(a >= 0 && b >= 0)
+    ensures(result >= a && result >= b)
+{ return a + b; }
+
+pub fn sub_clamped(a: i32, b: i32) -> i32
+    requires(a >= 0 && b >= 0)
+    ensures(result >= 0)
+{ if a > b { return a - b; } return 0; }
+
+pub fn mul_small(a: i32, b: i32) -> i32
+    requires(a >= 0 && a <= 100 && b >= 0 && b <= 100)
+    ensures(result >= 0 && result <= 10000)
+{ return a * b; }
+
+pub fn safe_div(a: i32, b: i32) -> i32
+    requires(b != 0)
+{ return a / b; }
+
+pub fn abs_val(x: i32) -> i32
+    ensures(result >= 0)
+{ if x < 0 { return -x; } return x; }
+
+pub fn clamp(val: i32, lo: i32, hi: i32) -> i32
+    requires(lo <= hi)
+    ensures(result >= lo && result <= hi)
+{ if val < lo { return lo; } if val > hi { return hi; } return val; }
+
+pub fn lcg_next(x: i64) -> i64
+{ return (1103515245 * x + 12345) % 2147483648; }
+
+pub fn collatz_steps(mut n: i32) -> i32
+    requires(n > 0)
+{
+    let mut steps: i32 = 0;
+    while n > 1 {
+        invariant n > 0;
+        invariant steps >= 0;
+        if n % 2 == 0 { n = n / 2; } else { n = 3 * n + 1; }
+        steps = steps + 1;
+    }
+    return steps;
+}
+
+pub fn main() -> i32 {
+    let _a = add(2, 3);
+    let _b = sub_clamped(10, 4);
+    let _c = mul_small(12, 12);
+    let _d = safe_div(100, 7);
+    let _e = abs_val(-42);
+    let _f = clamp(150, 0, 100);
+    let _g = lcg_next(42);
+    let _h = collatz_steps(27);
+    return 0;
+}
