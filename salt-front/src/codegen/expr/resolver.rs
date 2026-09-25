@@ -1121,7 +1121,20 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
         // consume the same argument expressions without re-cloning.
         let call_args: Vec<syn::Expr> = call.args.iter().cloned().collect();
 
-        let enum_res = resolve_path_to_enum(self.ctx, &func_name, &explicit_generics, expected_ty, &call_args, local_vars)?;
+        // A syntactically bare single-segment call target (`Some(v)`, not
+        // `Option::Some(v)`) - captured before mangling/package-prefixing,
+        // since `func_name` alone can no longer tell an unqualified variant
+        // call apart from a genuine qualified path once a package prefix is
+        // applied (`Some` -> "main__Some" mangles to the same shape as a
+        // real 2-part `Enum__Variant`).
+        let bare_name = match &*call.func {
+            syn::Expr::Path(p) if p.path.segments.len() == 1 => {
+                Some(p.path.segments[0].ident.to_string())
+            }
+            _ => None,
+        };
+
+        let enum_res = resolve_path_to_enum(self.ctx, &func_name, bare_name.as_deref(), &explicit_generics, expected_ty, &call_args, local_vars)?;
         if let Some(res) = enum_res {
             return Ok(CallKind::EnumConstructor(res));
         }

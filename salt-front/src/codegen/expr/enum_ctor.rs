@@ -25,21 +25,58 @@ pub struct EnumVariantResolution {
 pub fn resolve_path_to_enum(
     ctx: &mut LoweringContext,
     path_str: &str,
+    bare_name: Option<&str>,
     generic_args: &[Type],
     expected_ty: Option<&Type>,
     call_args: &[syn::Expr],
     local_vars: &HashMap<String, (Type, LocalKind)>,
 ) -> Result<Option<EnumVariantResolution>, String> {
     let parts: Vec<&str> = path_str.split("__").collect();
-    if parts.len() < 2 { return Ok(None); }
+    if parts.len() >= 2 {
+        let enum_name_candidate = Mangler::mangle(&parts[..parts.len()-1]);
+        let variant_name = parts[parts.len()-1];
+        let res = resolve_enum_variant(
+            ctx, &enum_name_candidate, variant_name, generic_args, expected_ty, call_args, local_vars,
+        )?;
+        if res.is_some() { return Ok(res); }
+    }
 
-    let enum_name_candidate = Mangler::mangle(&parts[..parts.len()-1]);
-    let Some(variant_name) = parts.last() else { return Ok(None) };
+    // Unqualified variant call (`Some(v)`, not `Option::Some(v)`): `call.func`
+    // was syntactically a single bare segment, so `bare_name` is set
+    // regardless of what package-prefixing `resolve_path` applied to
+    // `path_str` above (a bare name in package-scoped code mangles to
+    // "pkg__Name", which looks like - and is tried as - a qualified 2-part
+    // path first; it is never a real one, so falling through here is the
+    // common case for package-scoped callers). There is no `Enum::` prefix
+    // to key a lookup on, so recover the enum from the expected type - the
+    // same anchor bare value-position unit variants already require (see
+    // resolve_enum_variant_suffix in literals.rs). Without an expected enum
+    // type the target is genuinely ambiguous and stays unresolved.
+    let Some(variant_name) = bare_name else { return Ok(None) };
+    let Some(enum_name_candidate) = find_unqualified_variant_enum(ctx, variant_name, expected_ty) else {
+        return Ok(None);
+    };
+    resolve_enum_variant(
+        ctx, &enum_name_candidate, variant_name, generic_args, expected_ty, call_args, local_vars,
+    )
+}
 
+/// Strict registry hit, else generic-template unification - the two steps
+/// every candidate `(enum, variant)` pair goes through, whether the pair
+/// came from a qualified path or was recovered from an unqualified one.
+fn resolve_enum_variant(
+    ctx: &mut LoweringContext,
+    enum_name_candidate: &str,
+    variant_name: &str,
+    generic_args: &[Type],
+    expected_ty: Option<&Type>,
+    call_args: &[syn::Expr],
+    local_vars: &HashMap<String, (Type, LocalKind)>,
+) -> Result<Option<EnumVariantResolution>, String> {
     // 1. Strict Registry: enum already exists in a concrete specialization.
     //    Payload conformance still applies here: before B2 this fast path
     //    bypassed every argument check, silently punning mistyped payloads.
-    if let Some(res) = lookup_specialized_enum(ctx, &enum_name_candidate, variant_name) {
+    if let Some(res) = lookup_specialized_enum(ctx, enum_name_candidate, variant_name) {
         verify_specialized_ctor_args(ctx, &res, call_args, local_vars)?;
         return Ok(Some(res));
     }
@@ -47,8 +84,30 @@ pub fn resolve_path_to_enum(
     // 2. Templates (Generic): unify generics from turbofish, the expected
     //    type, or - as a last resort - the constructor argument expressions.
     resolve_via_template(
-        ctx, &enum_name_candidate, variant_name, generic_args, expected_ty, call_args, local_vars,
+        ctx, enum_name_candidate, variant_name, generic_args, expected_ty, call_args, local_vars,
     )
+}
+
+/// Resolve an unqualified variant name (`Some`, not `Option::Some`) to the
+/// fully-qualified name of the enum declaring it, anchored on the expected
+/// type - mirrors `unify_expected_type`'s two lookups (an already-specialized
+/// registry entry, or a template reachable by name) without its mangling-
+/// quirk fallbacks, which only matter once the candidate enum is already known.
+fn find_unqualified_variant_enum(
+    ctx: &LoweringContext,
+    variant_name: &str,
+    expected_ty: Option<&Type>,
+) -> Option<String> {
+    let expected_name = match expected_ty {
+        Some(Type::Enum(name)) => name.as_str(),
+        Some(Type::Concrete(name, _)) => name.as_str(),
+        _ => return None,
+    };
+    if let Some(info) = ctx.enum_registry().values().find(|info| info.name == expected_name) {
+        return info.variants.iter().any(|(v, _, _)| v == variant_name)
+            .then(|| expected_name.to_string());
+    }
+    lookup_template_triple(ctx, expected_name, variant_name).map(|(base, _, _)| base)
 }
 
 /// Template-path resolution. Deliberate breaking change (sanctioned
