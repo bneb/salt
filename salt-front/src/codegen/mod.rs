@@ -203,8 +203,22 @@ pub fn set_proof_stats_json(on: bool) {
             std::path::PathBuf::from("../std"),
             std::path::PathBuf::from("../../std"),
         ]);
+        // Every failure is collected (not just the first) so a source file
+        // with several broken imports gets one diagnostic naming all of
+        // them, instead of forcing a fix-recompile-fix cycle one import at
+        // a time.
+        let mut unresolved: Vec<String> = Vec::new();
         for imp in &file.get_use_namespaces() {
-            let _ = loader.load_module(imp, &mut loader_registry);
+            if let Err(e) = loader.load_module(imp, &mut loader_registry) {
+                unresolved.push(e);
+            }
+        }
+        if !unresolved.is_empty() {
+            let detail = unresolved.iter().map(|e| format!("  - {}", e)).collect::<Vec<_>>().join("\n");
+            return Err(crate::errors::coded(
+                "E008",
+                format!("failed to resolve {} import(s):\n{}", unresolved.len(), detail),
+            ));
         }
         Ok((loader, loader_registry))
     }
