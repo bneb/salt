@@ -68,3 +68,50 @@ fn add_warns_when_nothing_by_that_name_is_published() {
 
     let _ = fs::remove_dir_all(&tmp);
 }
+
+/// `tmp/app`, depending on `foo` 1.0.0, which is published into `home`.
+fn app_with_published_dep(tmp: &Path, home: &Path) -> PathBuf {
+    write_package(&tmp.join("foo"), "foo");
+    assert!(sp(&tmp.join("foo"), Some(home), &["publish"]).status.success());
+    let app = tmp.join("app");
+    write_package(&app, "app");
+    let manifest = fs::read_to_string(app.join("salt.toml")).unwrap();
+    fs::write(app.join("salt.toml"), manifest + "\n[dependencies]\nfoo = \"1.0\"\n").unwrap();
+    app
+}
+
+// Both build tests hold whether or not a saltc is found: salt.lock is
+// written before the cache check and before compiling.
+#[test]
+fn build_writes_salt_lock() {
+    let tmp = temp_path("sp_cli_build_lock");
+    let _ = fs::remove_dir_all(&tmp);
+    let home = tmp.join("home");
+    let app = app_with_published_dep(&tmp, &home);
+
+    let out = sp(&app, Some(&home), &["build"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Wrote salt.lock"), "{stdout}");
+    let lock = fs::read_to_string(app.join("salt.lock")).expect("sp build writes salt.lock");
+    assert!(lock.contains("[packages.foo]\nversion = \"1.0.0\"\nhash = \"sha256:"), "{lock}");
+
+    let _ = fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn build_only_warns_when_salt_lock_cannot_be_written() {
+    let tmp = temp_path("sp_cli_build_lock_warn");
+    let _ = fs::remove_dir_all(&tmp);
+    let home = tmp.join("home");
+    let app = app_with_published_dep(&tmp, &home);
+    // A non-empty directory where salt.lock goes: nothing can replace it.
+    fs::create_dir_all(app.join("salt.lock/inside")).unwrap();
+
+    let out = sp(&app, Some(&home), &["build"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("warning") && stderr.contains("salt.lock not written"), "{stderr}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Compiling"), "the build goes on past the lockfile: {stdout}");
+
+    let _ = fs::remove_dir_all(&tmp);
+}

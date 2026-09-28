@@ -22,7 +22,11 @@ mod semver;
 mod publish;
 mod lockfile;
 #[cfg(test)]
+mod lockfile_tests;
+#[cfg(test)]
 mod test_support;
+#[cfg(test)]
+mod main_tests;
 
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
@@ -234,12 +238,8 @@ fn cmd_build(path: &Path, release: bool, _package: Option<&str>) -> Result<(), S
 
     // Before the cache check, so a cache hit still (re)creates a missing
     // salt.lock; output is deterministic, so an unchanged tree rewrites it
-    // byte-identically. A failure only warns (like cache.store below): the
-    // build doesn't depend on it.
-    match write_lockfile(&manifest, path, &resolved) {
-        Ok(()) => println!("   🔒 Wrote salt.lock"),
-        Err(e) => eprintln!("\x1b[1;33mwarning\x1b[0m: salt.lock not written: {}", e),
-    }
+    // byte-identically.
+    lockfile::write_or_warn(&manifest, path, &resolved);
 
     // Check cache
     let cache = cache::ArtifactCache::new()?;
@@ -272,18 +272,6 @@ fn cmd_build(path: &Path, release: bool, _package: Option<&str>) -> Result<(), S
     );
 
     Ok(())
-}
-
-/// Generate and persist salt.lock: the root package plus the resolved
-/// version and content hash of each version dependency. Nothing reads it
-/// back yet.
-fn write_lockfile(
-    manifest: &manifest::Manifest,
-    project_dir: &Path,
-    resolved: &[resolver::ResolvedDep],
-) -> Result<(), String> {
-    let lockfile = lockfile::generate(manifest, resolved)?;
-    lockfile.save(&project_dir.join("salt.lock"))
 }
 
 // ─── sp run ──────────────────────────────────────────────────────────────────
@@ -505,80 +493,4 @@ fn cmd_publish(path: &Path) -> Result<(), String> {
     let manifest_path = path.join("salt.toml");
     let manifest = manifest::load(&manifest_path)?;
     publish::publish(&manifest, path)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-
-    #[test]
-    fn test_write_lockfile_creates_salt_lock() {
-        let tmp = crate::test_support::temp_path("sp_test_write_lockfile");
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(tmp.join("src")).unwrap();
-        fs::write(
-            tmp.join("salt.toml"),
-            "[package]\nname = \"locktest\"\nversion = \"0.2.0\"\n",
-        )
-        .unwrap();
-        fs::write(
-            tmp.join("src/main.salt"),
-            "package main\nfn main() -> i32 { return 0; }\n",
-        )
-        .unwrap();
-
-        let manifest = manifest::load(&tmp.join("salt.toml")).unwrap();
-        let (_build_order, _search_roots, resolved) = resolver::resolve(&manifest, &tmp).unwrap();
-
-        write_lockfile(&manifest, &tmp, &resolved).unwrap();
-
-        let lock_path = tmp.join("salt.lock");
-        assert!(lock_path.exists(), "expected salt.lock to be written");
-
-        let loaded = lockfile::Lockfile::load(&lock_path).unwrap();
-        let pkg = loaded
-            .packages
-            .get("locktest")
-            .expect("main package should be locked");
-        assert_eq!(pkg.version, "0.2.0");
-        assert_eq!(pkg.hash, None, "the root package isn't content-hashed");
-
-        let _ = fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn test_cmd_publish_creates_archive() {
-        let tmp_home = crate::test_support::temp_path("sp_test_cmd_publish_home");
-        let project_dir = crate::test_support::temp_path("sp_test_cmd_publish_project");
-        let _ = fs::remove_dir_all(&tmp_home);
-        let _ = fs::remove_dir_all(&project_dir);
-        fs::create_dir_all(&tmp_home).unwrap();
-        fs::create_dir_all(project_dir.join("src")).unwrap();
-        fs::write(
-            project_dir.join("salt.toml"),
-            "[package]\nname = \"pubtest\"\nversion = \"0.1.0\"\n",
-        )
-        .unwrap();
-        fs::write(
-            project_dir.join("src/main.salt"),
-            "package main\nfn main() -> i32 { return 0; }\n",
-        )
-        .unwrap();
-
-        let guard = crate::test_support::HomeGuard::new(&tmp_home);
-
-        cmd_publish(&project_dir).expect("cmd_publish should succeed");
-
-        let archive = tmp_home.join(".salt/publish/pubtest-0.1.0.tar.gz");
-        assert!(
-            archive.exists(),
-            "expected archive at {}",
-            archive.display()
-        );
-
-        drop(guard);
-        let _ = fs::remove_dir_all(&tmp_home);
-        let _ = fs::remove_dir_all(&project_dir);
-    }
 }
