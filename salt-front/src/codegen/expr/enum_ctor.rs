@@ -35,11 +35,45 @@ pub fn resolve_path_to_enum(
 
     let enum_name_candidate = Mangler::mangle(&parts[..parts.len()-1]);
     let Some(variant_name) = parts.last() else { return Ok(None) };
+    resolve_enum_variant(
+        ctx, &enum_name_candidate, variant_name, generic_args, expected_ty, call_args, local_vars,
+    )
+}
 
+/// A bare variant call (`Some(v)`, not `Option::Some(v)`), tried only once no
+/// function or struct claimed the name. With no `Enum::` prefix the enum comes
+/// from the expected type; without one the call is ambiguous and unresolved.
+pub fn resolve_unqualified_variant(
+    ctx: &mut LoweringContext,
+    variant_name: &str,
+    generic_args: &[Type],
+    expected_ty: Option<&Type>,
+    call_args: &[syn::Expr],
+    local_vars: &HashMap<String, (Type, LocalKind)>,
+) -> Result<Option<EnumVariantResolution>, String> {
+    let Some(enum_name_candidate) = find_unqualified_variant_enum(ctx, variant_name, expected_ty) else {
+        return Ok(None);
+    };
+    resolve_enum_variant(
+        ctx, &enum_name_candidate, variant_name, generic_args, expected_ty, call_args, local_vars,
+    )
+}
+
+/// Strict registry hit, else generic-template unification: the steps every
+/// (enum, variant) pair goes through, qualified or recovered from a bare name.
+fn resolve_enum_variant(
+    ctx: &mut LoweringContext,
+    enum_name_candidate: &str,
+    variant_name: &str,
+    generic_args: &[Type],
+    expected_ty: Option<&Type>,
+    call_args: &[syn::Expr],
+    local_vars: &HashMap<String, (Type, LocalKind)>,
+) -> Result<Option<EnumVariantResolution>, String> {
     // 1. Strict Registry: enum already exists in a concrete specialization.
     //    Payload conformance still applies here: before B2 this fast path
     //    bypassed every argument check, silently punning mistyped payloads.
-    if let Some(res) = lookup_specialized_enum(ctx, &enum_name_candidate, variant_name) {
+    if let Some(res) = lookup_specialized_enum(ctx, enum_name_candidate, variant_name) {
         verify_specialized_ctor_args(ctx, &res, call_args, local_vars)?;
         return Ok(Some(res));
     }
@@ -47,8 +81,27 @@ pub fn resolve_path_to_enum(
     // 2. Templates (Generic): unify generics from turbofish, the expected
     //    type, or - as a last resort - the constructor argument expressions.
     resolve_via_template(
-        ctx, &enum_name_candidate, variant_name, generic_args, expected_ty, call_args, local_vars,
+        ctx, enum_name_candidate, variant_name, generic_args, expected_ty, call_args, local_vars,
     )
+}
+
+/// The expected enum type's name, if it declares `variant_name`: a specialized
+/// registry entry, else a template reachable by name.
+fn find_unqualified_variant_enum(
+    ctx: &LoweringContext,
+    variant_name: &str,
+    expected_ty: Option<&Type>,
+) -> Option<String> {
+    let expected_name = match expected_ty {
+        Some(Type::Enum(name)) => name.as_str(),
+        Some(Type::Concrete(name, _)) => name.as_str(),
+        _ => return None,
+    };
+    if let Some(info) = ctx.enum_registry().values().find(|info| info.name == expected_name) {
+        return info.variants.iter().any(|(v, _, _)| v == variant_name)
+            .then(|| expected_name.to_string());
+    }
+    lookup_template_triple(ctx, expected_name, variant_name).map(|(base, _, _)| base)
 }
 
 /// Template-path resolution. Deliberate breaking change (sanctioned
@@ -90,7 +143,6 @@ fn resolve_via_template(
 
     Ok(specialize_template_variant(ctx, &base_template, &final_generics, variant_name))
 }
-
 
 /// Template + definition + target variant, or None when this candidate does
 /// not denote a locally-known generic enum template.

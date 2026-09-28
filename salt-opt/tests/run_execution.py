@@ -69,8 +69,8 @@ def main():
             print("SUCCESS: hello.salt returned 42")
         elif basename == "verification_pass" and res.returncode == 0:
              print("SUCCESS: verification_pass executed (Exit 0)")
-        elif basename == "opt_option_test" and res.returncode == 1:
-             print("SUCCESS: opt_option_test Niche Optimization Verified (is_some(ptr) == 1)")
+        elif basename == "opt_option_test" and res.returncode == 10:
+             print("SUCCESS: opt_option_test returned 10 (is_some(Some) == 1, is_some(None) == 0)")
         elif basename == "verification_fail":
             pass # Expect verification error, not execution
         else:

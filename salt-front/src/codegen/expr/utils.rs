@@ -305,7 +305,18 @@ pub fn get_name_from_expr(expr: &syn::Expr) -> Option<String> {
     None
 }
 
-pub use crate::codegen::expr::enum_ctor::{resolve_path_to_enum, EnumVariantResolution};
+/// True when an import binds `name` itself: `use m.name`, `use m.f as name`
+/// or `use m.{name}`. The items a wildcard import (`use m.*`) brings in are
+/// not bound this way.
+pub fn names_an_import(imports: &[crate::grammar::ImportDecl], name: &str) -> bool {
+    imports.iter().any(|imp| {
+        let bound = imp.alias.as_ref().or(imp.name.last());
+        bound.is_some_and(|b| b == name)
+            || imp.group.as_ref().is_some_and(|g| g.iter().any(|id| id == name))
+    })
+}
+
+pub use crate::codegen::expr::enum_ctor::{resolve_path_to_enum, resolve_unqualified_variant, EnumVariantResolution};
 
 #[cfg(test)]
 mod tests {

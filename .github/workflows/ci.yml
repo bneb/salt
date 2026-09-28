@@ -175,15 +175,27 @@ jobs:
             fi
             echo "OK: $file (exit $actual)"
           }
+          # run_execution.py exits 1 on ANY pipeline failure, so a case that
+          # saltc must reject is checked for what happened: it stopped at
+          # step 1 (saltc), with the contract diagnostic that
+          # tests/z3_contracts/run_tests.sh matches. The diagnostic alone
+          # isn't enough: a check deferred to run time prints it too.
+          run_case_rejected() {
+            file=$1
+            out=$(python3 run_execution.py "$file" 2>&1) && rc=0 || rc=$?
+            if printf '%s\n' "$out" | grep -q -- '--- Step 2' \
+                || ! printf '%s\n' "$out" | grep -q 'VERIFICATION ERROR\|contract evaluates to false'; then
+              printf '%s\n' "$out" >&2
+              echo "FAIL: $file (exit $rc): saltc did not reject it with a contract violation" >&2
+              return 1
+            fi
+            echo "OK: $file (rejected by saltc: contract violation)"
+          }
           run_case hello.salt 42
           run_case verification_pass.salt 0
           run_case concept_basic.salt 0
           run_case concept_generic.salt 0
-          # verification_fail.salt is expected to be REJECTED at compile time
-          # (Z3 proves the b != 0 contract false). run_execution.py's Step 1
-          # exits 1 in that case -- that failure IS the pass condition here.
-          run_case verification_fail.salt 1
-          # opt_option_test.salt is excluded: saltc currently fails to resolve
-          # the Option::Some constructor ("Undefined function or symbol:
-          # 'Some'"), a pre-existing generic-enum-identity bug -- tracked
-          # separately, not papered over here.
+          # Z3 proves the b != 0 contract false, so saltc must refuse it.
+          run_case_rejected verification_fail.salt
+          # Exits 10 only when Some and None each take the right match arm.
+          run_case opt_option_test.salt 10
