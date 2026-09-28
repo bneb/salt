@@ -42,8 +42,7 @@ pub fn resolve_path_to_enum(
 
 /// A bare variant call (`Some(v)`, not `Option::Some(v)`), tried only once no
 /// function or struct claimed the name. With no `Enum::` prefix the enum comes
-/// from the expected type, the anchor bare unit-variant values already need
-/// (literals.rs); without one the call is ambiguous and stays unresolved.
+/// from the expected type; without one the call is ambiguous and unresolved.
 pub fn resolve_unqualified_variant(
     ctx: &mut LoweringContext,
     variant_name: &str,
