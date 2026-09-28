@@ -36,8 +36,8 @@ fn test_unqualified_local_enum_ctor_in_return_position() {
 
         fn is_some(o: Opt<i32>) -> i32 {
             match o {
-                Some(x) => 1,
-                None => 0,
+                Some(x) => { return 1; }
+                None => { return 0; }
             }
         }
 
@@ -80,8 +80,8 @@ fn test_unqualified_option_ctor_in_return_position() {
 
         fn is_some(opt: Option<i32>) -> i32 {
             match opt {
-                Some(x) => 1,
-                None => 0,
+                Some(x) => { return 1; }
+                None => { return 0; }
             }
         }
 
@@ -184,6 +184,38 @@ fn test_unqualified_ctor_disambiguates_via_expected_type() {
     assert!(result.is_ok(), "Expected-type disambiguation between same-named variants failed: {:?}", result.err());
 }
 
+/// A function named like a variant of the expected enum still wins a bare
+/// call, as it did before bare variant calls resolved at all: the variant
+/// is only a fallback for a name nothing else defines.
+#[test]
+fn test_unqualified_call_prefers_a_same_named_function() {
+    let code = r#"
+        package main
+
+        enum Wrap {
+            Val(i32),
+            Nothing,
+        }
+
+        fn Val(x: i32) -> Wrap {
+            return Wrap::Nothing
+        }
+
+        fn make() -> Wrap {
+            return Val(3)
+        }
+
+        pub fn main() -> i32 {
+            match make() {
+                Wrap::Val(v) => { return v; }
+                Wrap::Nothing => { return 7; }
+            }
+        }
+    "#;
+    let mlir = compile(code, false, None, true).expect("compiles");
+    assert!(mlir.contains("call @main__Val("), "bare Val(3) must call fn Val, not build Wrap::Val:\n{mlir}");
+}
+
 /// NEGATIVE: with no expected type to anchor resolution (no return type, no
 /// annotation), an unqualified payload-variant call must still be rejected
 /// cleanly - mirrors the existing bare-unit-variant policy in literals.rs
@@ -211,6 +243,9 @@ fn test_unqualified_ctor_without_expected_type_fails_cleanly() {
             }
         }
     "#;
-    let result = compile(code, false, None, true);
-    assert!(result.is_err(), "Unannotated unqualified ctor compiled without any way to bind T: {:?}", result.ok());
+    let err = compile(code, false, None, true)
+        .expect_err("Unannotated unqualified ctor compiled without any way to bind T");
+    // Rejected for the unresolvable call itself, not some unrelated error.
+    let msg = format!("{err:#}");
+    assert!(msg.contains("Undefined function or symbol") && msg.contains("Some"), "{msg}");
 }

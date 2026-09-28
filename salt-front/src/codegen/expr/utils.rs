@@ -305,7 +305,7 @@ pub fn get_name_from_expr(expr: &syn::Expr) -> Option<String> {
     None
 }
 
-pub use crate::codegen::expr::enum_ctor::{resolve_path_to_enum, EnumVariantResolution};
+pub use crate::codegen::expr::enum_ctor::{resolve_path_to_enum, resolve_unqualified_variant, EnumVariantResolution};
 
 #[cfg(test)]
 mod tests {

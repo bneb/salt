@@ -1,6 +1,6 @@
 use crate::codegen::context::LoweringContext;
 use crate::types::{Type, TypeKey};
-use crate::codegen::expr::utils::{resolve_path_to_enum, EnumVariantResolution, resolve_package_prefix_ctx};
+use crate::codegen::expr::utils::{get_name_from_expr, resolve_path_to_enum, resolve_unqualified_variant, EnumVariantResolution, resolve_package_prefix_ctx};
 use std::collections::{BTreeMap, HashMap};
 use crate::common::mangling::Mangler;
 use crate::grammar::SaltFn;
@@ -1105,6 +1105,26 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
         Ok(None)
     }
 
+    /// Last resort: a bare name (`Some(v)`) nothing else claimed may be a
+    /// variant of the expected enum. Trying it only here keeps a same-named
+    /// function winning, so no program that compiled before changes meaning.
+    fn resolve_bare_variant_call(
+        &mut self,
+        call: &syn::ExprCall,
+        func_name: &str,
+        generics: &[Type],
+        expected_ty: Option<&Type>,
+        call_args: &[syn::Expr],
+        local_vars: &HashMap<String, (Type, crate::codegen::context::LocalKind)>,
+    ) -> Result<CallKind, String> {
+        if let Some(variant) = get_name_from_expr(&call.func) {
+            if let Some(res) = resolve_unqualified_variant(self.ctx, &variant, generics, expected_ty, call_args, local_vars)? {
+                return Ok(CallKind::EnumConstructor(res));
+            }
+        }
+        Err(format!("Undefined function or symbol: '{}'", func_name))
+    }
+
     fn resolve_standard_call(
         &mut self,
         call: &syn::ExprCall,
@@ -1121,20 +1141,7 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
         // consume the same argument expressions without re-cloning.
         let call_args: Vec<syn::Expr> = call.args.iter().cloned().collect();
 
-        // A syntactically bare single-segment call target (`Some(v)`, not
-        // `Option::Some(v)`) - captured before mangling/package-prefixing,
-        // since `func_name` alone can no longer tell an unqualified variant
-        // call apart from a genuine qualified path once a package prefix is
-        // applied (`Some` -> "main__Some" mangles to the same shape as a
-        // real 2-part `Enum__Variant`).
-        let bare_name = match &*call.func {
-            syn::Expr::Path(p) if p.path.segments.len() == 1 => {
-                Some(p.path.segments[0].ident.to_string())
-            }
-            _ => None,
-        };
-
-        let enum_res = resolve_path_to_enum(self.ctx, &func_name, bare_name.as_deref(), &explicit_generics, expected_ty, &call_args, local_vars)?;
+        let enum_res = resolve_path_to_enum(self.ctx, &func_name, &explicit_generics, expected_ty, &call_args, local_vars)?;
         if let Some(res) = enum_res {
             return Ok(CallKind::EnumConstructor(res));
         }
@@ -1151,10 +1158,9 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
             }
         }
 
-        let target = self.identify_target(&func_name, &explicit_generics, &call.args, local_vars)
-            .ok_or_else(|| {
-                format!("Undefined function or symbol: '{}'", func_name)
-            })?;
+        let Some(target) = self.identify_target(&func_name, &explicit_generics, &call.args, local_vars) else {
+            return self.resolve_bare_variant_call(call, &func_name, &explicit_generics, expected_ty, &call_args, local_vars);
+        };
 
         // Fn/method-level unification must see ONLY the last segment's
         // turbofish args. Receiver-segment args (`Pair::<i64>::method::<f32>`)

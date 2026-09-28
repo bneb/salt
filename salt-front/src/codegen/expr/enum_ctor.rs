@@ -25,34 +25,33 @@ pub struct EnumVariantResolution {
 pub fn resolve_path_to_enum(
     ctx: &mut LoweringContext,
     path_str: &str,
-    bare_name: Option<&str>,
     generic_args: &[Type],
     expected_ty: Option<&Type>,
     call_args: &[syn::Expr],
     local_vars: &HashMap<String, (Type, LocalKind)>,
 ) -> Result<Option<EnumVariantResolution>, String> {
     let parts: Vec<&str> = path_str.split("__").collect();
-    if parts.len() >= 2 {
-        let enum_name_candidate = Mangler::mangle(&parts[..parts.len()-1]);
-        let variant_name = parts[parts.len()-1];
-        let res = resolve_enum_variant(
-            ctx, &enum_name_candidate, variant_name, generic_args, expected_ty, call_args, local_vars,
-        )?;
-        if res.is_some() { return Ok(res); }
-    }
+    if parts.len() < 2 { return Ok(None); }
 
-    // Unqualified variant call (`Some(v)`, not `Option::Some(v)`): `call.func`
-    // was syntactically a single bare segment, so `bare_name` is set
-    // regardless of what package-prefixing `resolve_path` applied to
-    // `path_str` above (a bare name in package-scoped code mangles to
-    // "pkg__Name", which looks like - and is tried as - a qualified 2-part
-    // path first; it is never a real one, so falling through here is the
-    // common case for package-scoped callers). There is no `Enum::` prefix
-    // to key a lookup on, so recover the enum from the expected type - the
-    // same anchor bare value-position unit variants already require (see
-    // resolve_enum_variant_suffix in literals.rs). Without an expected enum
-    // type the target is genuinely ambiguous and stays unresolved.
-    let Some(variant_name) = bare_name else { return Ok(None) };
+    let enum_name_candidate = Mangler::mangle(&parts[..parts.len()-1]);
+    let Some(variant_name) = parts.last() else { return Ok(None) };
+    resolve_enum_variant(
+        ctx, &enum_name_candidate, variant_name, generic_args, expected_ty, call_args, local_vars,
+    )
+}
+
+/// A bare variant call (`Some(v)`, not `Option::Some(v)`), tried only once no
+/// function or struct claimed the name. With no `Enum::` prefix the enum comes
+/// from the expected type, the anchor bare unit-variant values already need
+/// (literals.rs); without one the call is ambiguous and stays unresolved.
+pub fn resolve_unqualified_variant(
+    ctx: &mut LoweringContext,
+    variant_name: &str,
+    generic_args: &[Type],
+    expected_ty: Option<&Type>,
+    call_args: &[syn::Expr],
+    local_vars: &HashMap<String, (Type, LocalKind)>,
+) -> Result<Option<EnumVariantResolution>, String> {
     let Some(enum_name_candidate) = find_unqualified_variant_enum(ctx, variant_name, expected_ty) else {
         return Ok(None);
     };
@@ -61,9 +60,8 @@ pub fn resolve_path_to_enum(
     )
 }
 
-/// Strict registry hit, else generic-template unification - the two steps
-/// every candidate `(enum, variant)` pair goes through, whether the pair
-/// came from a qualified path or was recovered from an unqualified one.
+/// Strict registry hit, else generic-template unification: the steps every
+/// (enum, variant) pair goes through, qualified or recovered from a bare name.
 fn resolve_enum_variant(
     ctx: &mut LoweringContext,
     enum_name_candidate: &str,
@@ -88,11 +86,8 @@ fn resolve_enum_variant(
     )
 }
 
-/// Resolve an unqualified variant name (`Some`, not `Option::Some`) to the
-/// fully-qualified name of the enum declaring it, anchored on the expected
-/// type - mirrors `unify_expected_type`'s two lookups (an already-specialized
-/// registry entry, or a template reachable by name) without its mangling-
-/// quirk fallbacks, which only matter once the candidate enum is already known.
+/// The expected enum type's name, if it declares `variant_name`: a specialized
+/// registry entry, else a template reachable by name.
 fn find_unqualified_variant_enum(
     ctx: &LoweringContext,
     variant_name: &str,
@@ -149,7 +144,6 @@ fn resolve_via_template(
 
     Ok(specialize_template_variant(ctx, &base_template, &final_generics, variant_name))
 }
-
 
 /// Template + definition + target variant, or None when this candidate does
 /// not denote a locally-known generic enum template.
