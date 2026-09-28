@@ -1,6 +1,6 @@
 use crate::codegen::context::LoweringContext;
 use crate::types::{Type, TypeKey};
-use crate::codegen::expr::utils::{get_name_from_expr, resolve_path_to_enum, resolve_unqualified_variant, EnumVariantResolution, resolve_package_prefix_ctx};
+use crate::codegen::expr::utils::{get_name_from_expr, names_an_import, resolve_path_to_enum, resolve_unqualified_variant, EnumVariantResolution, resolve_package_prefix_ctx};
 use std::collections::{BTreeMap, HashMap};
 use crate::common::mangling::Mangler;
 use crate::grammar::SaltFn;
@@ -1105,9 +1105,10 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
         Ok(None)
     }
 
-    /// Last resort: a bare name (`Some(v)`) nothing else claimed may be a
-    /// variant of the expected enum. Trying it only here keeps a same-named
-    /// function winning, so no program that compiled before changes meaning.
+    /// Last resort: a bare name (`Some(v)`) that nothing else claimed and no
+    /// import binds may be a variant of the expected enum. Trying it only here
+    /// keeps a same-named function winning, so no program that compiled
+    /// before changes meaning.
     fn resolve_bare_variant_call(
         &mut self,
         call: &syn::ExprCall,
@@ -1117,7 +1118,8 @@ impl<'a, 'ctx, 'b> CallSiteResolver<'a, 'ctx, 'b> {
         call_args: &[syn::Expr],
         local_vars: &HashMap<String, (Type, crate::codegen::context::LocalKind)>,
     ) -> Result<CallKind, String> {
-        if let Some(variant) = get_name_from_expr(&call.func) {
+        let bare = get_name_from_expr(&call.func).filter(|name| !names_an_import(self.ctx.imports(), name));
+        if let Some(variant) = bare {
             if let Some(res) = resolve_unqualified_variant(self.ctx, &variant, generics, expected_ty, call_args, local_vars)? {
                 return Ok(CallKind::EnumConstructor(res));
             }

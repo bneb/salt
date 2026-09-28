@@ -255,6 +255,46 @@ fn test_unqualified_call_prefers_a_same_named_function() {
     assert!(mlir.contains("call @main__Val("), "bare Val(3) must call fn Val, not build Wrap::Val:\n{mlir}");
 }
 
+/// `IMPORT` binds `Tagged` to something std.core.option doesn't define.
+const IMPORTED_TAGGED: &str = r#"
+    package main
+
+    IMPORT
+
+    enum Beta<T> {
+        Tagged(T),
+        Empty,
+    }
+
+    fn make(v: i32) -> Beta<i32> {
+        return Tagged(v)
+    }
+
+    pub fn main() -> i32 {
+        match make(5) {
+            Beta::Tagged(v) => { return v; }
+            Beta::Empty => { return 0; }
+        }
+    }
+"#;
+
+/// A name an import binds is not a bare variant name: when the import
+/// doesn't resolve, the call stays an error instead of quietly becoming the
+/// expected enum's variant of the same name.
+#[test]
+fn test_imported_name_is_not_taken_for_a_variant() {
+    for (import, callee) in [
+        ("use std.core.option.{Tagged};", "std__core__option__Tagged"),
+        ("use std.core.option.Tagged;", "std__core__option__Tagged"),
+        ("use std.core.option.gone as Tagged;", "std__core__option__gone"),
+    ] {
+        let err = compile(&IMPORTED_TAGGED.replace("IMPORT", import), false, None, true)
+            .expect_err(import);
+        let msg = format!("{err:#}");
+        assert!(msg.contains(&format!("Undefined function or symbol: '{callee}'")), "{import}: {msg}");
+    }
+}
+
 /// NEGATIVE: with no expected type to anchor resolution (no return type, no
 /// annotation), an unqualified payload-variant call must still be rejected
 /// cleanly: nothing binds T. This must keep failing, not start guessing.
