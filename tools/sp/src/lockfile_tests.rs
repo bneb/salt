@@ -248,6 +248,28 @@ fn test_generate_sorts_transitive_dependency_names() {
 }
 
 #[test]
+fn test_generate_locks_no_deps_without_a_loadable_manifest() {
+    let app = package_dir("sp_test_lock_nomanifest_app", &[("src/main.salt", b"fn main() {}")]);
+    fs::write(app.join("salt.toml"), "[package]\nname = \"app\"\nversion = \"0.1.0\"\n").unwrap();
+    let manifest = crate::manifest::load(&app.join("salt.toml")).unwrap();
+    let missing = package_dir("sp_test_lock_nomanifest_missing", &[("src/lib.salt", b"M")]);
+    let invalid = package_dir("sp_test_lock_nomanifest_invalid", &[("src/lib.salt", b"I"), ("salt.toml", b"[package")]);
+
+    let lf = generate(
+        &manifest,
+        &[resolved("missing", missing.clone(), Some("1.0.0")), resolved("invalid", invalid.clone(), Some("1.0.0"))],
+    )
+    .unwrap();
+
+    assert!(lf.packages["missing"].deps.is_empty(), "no salt.toml: no declared deps");
+    assert!(lf.packages["invalid"].deps.is_empty(), "unparsable salt.toml: no declared deps");
+
+    for dir in [app, missing, invalid] {
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
 fn test_content_hash_distinguishes_file_boundaries() {
     // Without length-delimiting, one file whose content spells out the
     // next file's name streams the same bytes as two files:
