@@ -14,6 +14,7 @@ use crate::grammar::{EnumDef, EnumVariant, SynType};
 use crate::types::Type;
 
 mod payload;
+pub(crate) use payload::emit_payload_arg;
 use payload::{verify_ctor_arg_types, verify_specialized_ctor_args};
 
 #[derive(Debug, Clone)]

@@ -8,7 +8,10 @@
 // tracer types a call it can't resolve to a function as Unit. Emission
 // passes the payload slot's type as the argument's expected type, which
 // lets the bare-variant fallback resolve `Some(x)` as Option<i32>::Some, so
-// the check leaves exactly those calls to emission.
+// the check leaves those calls to emission. Emission then builds such a call
+// only if resolution picks a variant of the slot's type with one argument
+// per payload field: an intrinsic, struct or function of the same name, or
+// another enum's variant, is an error there.
 
 use saltc::compile;
 
@@ -32,6 +35,25 @@ fn tags(body: &str) -> Vec<&str> {
 fn compile_err(code: &str, what: &str) -> String {
     let err = compile(code, false, None, true).expect_err(what);
     format!("{err:#}")
+}
+
+/// Each `llvm.store VALUE, %payload_buf_N : TYPE, !llvm.ptr` in `body`, as
+/// (VALUE, TYPE): what a constructor stores in its payload, typed as its slot.
+fn payload_stores(body: &str) -> Vec<(&str, &str)> {
+    let stores = body.lines().map(str::trim).filter_map(|l| l.strip_prefix("llvm.store "));
+    stores
+        .filter_map(|rest| {
+            let (value, rest) = rest.split_once(", ")?;
+            let (buf, ty) = rest.split_once(" : ")?;
+            buf.starts_with("%payload_buf_").then(|| (value, ty.trim_end_matches(", !llvm.ptr")))
+        })
+        .collect()
+}
+
+/// The type `body` gives `value` where it defines it.
+fn defined_type<'a>(body: &'a str, value: &str) -> Option<&'a str> {
+    let def = format!("{value} = ");
+    body.lines().map(str::trim).find(|l| l.starts_with(&def))?.rsplit(" : ").next()
 }
 
 /// The reported case: a bare std Option constructor as the payload of a bare
@@ -60,8 +82,14 @@ fn bare_ctor_in_bare_result_ctor_payload() {
             }
         }
     "#;
-    let result = compile(code, false, None, true);
-    assert!(result.is_ok(), "Ok(Some(x)) failed: {:?}", result.err());
+    let mlir = compile(code, false, None, true).unwrap_or_else(|e| panic!("Ok(Some(x)) failed: {e:#}"));
+    // The Result's payload holds the Option<i32> the inner call built, not
+    // just a value stored under that type.
+    let body = fn_body(&mlir, "func.func private @main__wrap(");
+    let option_i32 = "!struct_std__core__option__Option_i32";
+    let &(value, ty) = payload_stores(body).last().expect("the Result's payload store");
+    assert_eq!(ty, option_i32, "payload slot type:\n{body}");
+    assert_eq!(defined_type(body, value), Some(option_i32), "stored value's type:\n{body}");
 }
 
 /// `TYPE<TYPE<i32>>` with `TYPE` std's Option or a local generic enum.
@@ -339,4 +367,83 @@ fn imported_name_in_payload_is_not_taken_for_a_variant() {
     "#;
     let msg = compile_err(code, "import binds Tagged");
     assert!(msg.contains("Undefined function or symbol: 'std__core__option__Tagged'"), "{msg}");
+}
+
+/// A deferred call must build the variant it names. Resolution tries the
+/// zeroed intrinsic first, which would store a zero Cmd<i32> instead of
+/// Cmd::zeroed(5).
+#[test]
+fn deferred_call_resolving_to_an_intrinsic_rejected() {
+    let decl = "enum Cmd<T> {\n        zeroed(T),\n        Quit,\n    }";
+    let code = opt_with(decl, "", "zeroed(v)").replace("Opt<Opt<i32>>", "Opt<Cmd<i32>>");
+    let msg = compile_err(&code, "zeroed(v)");
+    assert!(msg.contains("resolves to intrinsic zeroed"), "{msg}");
+}
+
+/// A deferred call passes one argument per payload field: `None(v)` would
+/// drop v, and `Some()` or `Some(v, 99)` would emit invalid MLIR.
+#[test]
+fn deferred_call_argument_count_checked() {
+    for call in ["None(v)", "Some()", "Some(v, 99)"] {
+        let msg = compile_err(&opt_with("", "", call), call);
+        assert!(msg.contains("Constructor argument count mismatch"), "{call}: {msg}");
+    }
+}
+
+/// Type arguments on a bare call aren't checked against the slot, so such a
+/// call isn't left to emission: `Some<i64>(v)` in an Opt<i32> slot is still
+/// rejected here.
+#[test]
+fn bare_call_with_type_arguments_still_checked() {
+    let code = opt_with("", "", "Some<i64>(v)").replace("fn wrap(v: i32)", "fn wrap(v: i64)");
+    let msg = compile_err(&code, "Some<i64>(v)");
+    assert!(msg.contains(WRAP_ARG_REJECTED), "{msg}");
+}
+
+/// Compiles `Option::Some(Some(v))` under `-> Option<Option<i32>>` with the
+/// saltc binary, next to `modules` (path, source) and importing `use_line`,
+/// and returns its stderr, which must report a failure.
+fn saltc_rejects_with_modules(name: &str, modules: &[(&str, &str)], use_line: &str) -> String {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("lib")).unwrap();
+    for (path, source) in modules {
+        std::fs::write(dir.join(path), source).unwrap();
+    }
+    let main = NESTED_OPTION.replace("DECL", &format!("use std.core.option.*;\n    {use_line}"))
+        .replace("TYPE", "Option").replace("BODY", "Option::Some(Some(v))");
+    std::fs::write(dir.join("main.salt"), main).unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_saltc"))
+        .current_dir(&dir)
+        .args(["main.salt", "-o", "out.mlir", "--root"])
+        .arg(&dir)
+        .output()
+        .expect("failed to spawn saltc");
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(!out.status.success(), "{name} compiled:\n{stderr}");
+    stderr
+}
+
+/// A function in any loaded module can claim a bare name at emission without
+/// the tracer seeing it. lib.conv is loaded only through lib.mid, and its
+/// `Some` returns Option<i64>: the deferred call must fail rather than store
+/// that value in the Option<i32> slot.
+#[test]
+fn deferred_call_resolving_to_a_module_function_rejected() {
+    let conv = "package lib.conv\n\nuse std.core.option.*;\n\npub struct Marker {\n    x: i32,\n}\n\n\
+                pub fn Some(v: i32) -> Option<i64> {\n    let w: i64 = 99;\n    return Option::Some(w);\n}\n";
+    let mid = "package lib.mid\n\nuse lib.conv.Marker;\n\npub struct Thing {\n    y: i32,\n}\n";
+    let modules = [("lib/conv.salt", conv), ("lib/mid.salt", mid)];
+    let stderr = saltc_rejects_with_modules("enum_ctor_payload_module_fn", &modules, "use lib.mid.Thing;");
+    assert!(stderr.contains("resolves to function lib__conv__Some"), "{stderr}");
+}
+
+/// Resolution can build a variant of another enum: `use lib.alt.*` sends a
+/// bare `Some` to lib.alt's own enum named Some. The built value's MLIR type
+/// must be the slot's.
+#[test]
+fn deferred_call_building_another_enum_rejected() {
+    let alt = "package lib.alt\n\npub enum Some<T> {\n    Some(T),\n    Nope,\n}\n";
+    let stderr = saltc_rejects_with_modules("enum_ctor_payload_other_enum", &[("lib/alt.salt", alt)], "use lib.alt.*;");
+    assert!(stderr.contains("resolves to lib__alt__Some::Some of type Concrete(\"lib__alt__Some\", [I32])"), "{stderr}");
 }

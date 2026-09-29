@@ -1,4 +1,5 @@
-//! Payload-slot conformance for enum constructor arguments.
+//! Payload-slot conformance for enum constructor arguments: checked at
+//! resolution, and at emission for the calls resolution defers.
 //!
 //! Split out of `enum_ctor.rs` so the file respects the 500-line budget.
 
@@ -6,6 +7,9 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::{find_unqualified_variant_enum, trace_locals_map, EnumVariantResolution};
 use crate::codegen::context::{LocalKind, LoweringContext};
+use crate::codegen::expr::emit_expr;
+use crate::codegen::expr::literals::emit_enum_constructor;
+use crate::codegen::expr::resolver::{CallKind, CallSiteResolver};
 use crate::codegen::expr::utils::get_name_from_expr;
 use crate::codegen::generic_resolver::generic_param_name;
 use crate::codegen::tracer::TypeTracer;
@@ -124,12 +128,7 @@ fn check_single_ctor_arg(
 }
 
 /// The argument's traced type, or None for one left to emission: an
-/// untraceable argument, or a bare call to a variant of the slot's enum
-/// (`Some(x)` in an Option slot). The tracer types a callee it can't resolve
-/// as Unit, but emission passes the slot as the call's expected type, builds
-/// that variant, and checks its payload then. A function the tracer resolves
-/// keeps its return type, since it claims the call at emission too; only one
-/// returning unit is left to emission, which rejects that value.
+/// untraceable argument, or a call defers_variant_call accepts.
 fn traced_or_deferred(
     ctx: &LoweringContext,
     arg: &syn::Expr,
@@ -137,14 +136,31 @@ fn traced_or_deferred(
     trace_locals: &BTreeMap<String, Type>,
 ) -> Option<Type> {
     let traced = ctx.trace_expr_type(arg, trace_locals).ok()?;
-    if traced == Type::Unit && is_bare_variant_call(ctx, arg, slot, trace_locals) {
+    if defers_variant_call(ctx, arg, slot, trace_locals, &traced) {
         return None;
     }
     Some(traced)
 }
 
-/// A call to a bare name the slot's enum declares as a variant. A name bound
-/// to an fn-pointer local doesn't count: emission calls through the local.
+/// A bare call to a variant of the slot's enum (`Some(x)` in an Option slot)
+/// that the tracer typed as Unit, as it types a callee it can't resolve.
+/// Emission passes the slot as the call's expected type and builds it with
+/// emit_deferred_variant, which checks what resolution picked. A function the
+/// tracer resolves keeps its return type, since it claims the call at
+/// emission too; one returning unit is deferred, and rejected there.
+fn defers_variant_call(
+    ctx: &LoweringContext,
+    arg: &syn::Expr,
+    slot: &Type,
+    trace_locals: &BTreeMap<String, Type>,
+    traced: &Type,
+) -> bool {
+    *traced == Type::Unit && is_bare_variant_call(ctx, arg, slot, trace_locals)
+}
+
+/// A call to a bare name, without type arguments, that the slot's enum
+/// declares as a variant. A name bound to an fn-pointer local doesn't count:
+/// emission calls through the local.
 fn is_bare_variant_call(
     ctx: &LoweringContext,
     arg: &syn::Expr,
@@ -152,9 +168,108 @@ fn is_bare_variant_call(
     trace_locals: &BTreeMap<String, Type>,
 ) -> bool {
     let syn::Expr::Call(call) = arg else { return false };
-    let Some(name) = get_name_from_expr(&call.func) else { return false };
+    let Some(name) = bare_callee(&call.func) else { return false };
     !matches!(trace_locals.get(&name), Some(Type::Fn(..)))
         && find_unqualified_variant_enum(ctx, &name, Some(slot)).is_some()
+}
+
+/// The callee's name when it is a single identifier with no type arguments.
+fn bare_callee(func: &syn::Expr) -> Option<String> {
+    let name = get_name_from_expr(func)?;
+    let syn::Expr::Path(p) = func else { return None };
+    matches!(p.path.segments[0].arguments, syn::PathArguments::None).then_some(name)
+}
+
+/// Emits one payload argument against its slot's type. A call the payload
+/// check deferred (defers_variant_call) is built by emit_deferred_variant;
+/// any other argument emits as before.
+pub(crate) fn emit_payload_arg(
+    ctx: &mut LoweringContext,
+    out: &mut String,
+    arg: &syn::Expr,
+    slot: &Type,
+    local_vars: &mut HashMap<String, (Type, LocalKind)>,
+) -> Result<(String, Type), String> {
+    let trace_locals = trace_locals_map(local_vars);
+    let deferred = match ctx.trace_expr_type(arg, &trace_locals) {
+        Ok(traced) => defers_variant_call(ctx, arg, slot, &trace_locals, &traced),
+        Err(_) => false,
+    };
+    match arg {
+        syn::Expr::Call(call) if deferred => emit_deferred_variant(ctx, out, arg, call, slot, local_vars),
+        _ => emit_expr(ctx, out, arg, local_vars, Some(slot)),
+    }
+}
+
+/// Builds a deferred call only as the variant it names. Resolution can hand
+/// the name to something the tracer doesn't see (an intrinsic, a struct, a
+/// function in any loaded module), and storing that value would get past
+/// promote_numeric, which passes an enum with other type arguments by leaf
+/// name. So resolution must pick a variant whose MLIR type is the slot's, and
+/// the call must pass one argument per payload field.
+fn emit_deferred_variant(
+    ctx: &mut LoweringContext,
+    out: &mut String,
+    arg: &syn::Expr,
+    call: &syn::ExprCall,
+    slot: &Type,
+    local_vars: &mut HashMap<String, (Type, LocalKind)>,
+) -> Result<(String, Type), String> {
+    let res = match CallSiteResolver::new(ctx).resolve_call(call, local_vars, Some(slot))? {
+        CallKind::EnumConstructor(res) => res,
+        other => return Err(resolves_elsewhere(arg, slot, &describe_call(&other))),
+    };
+    let built = built_type(&res);
+    if built.to_mlir_type(ctx)? != slot.to_mlir_type(ctx)? {
+        let found = format!("{}::{} of type {:?}", res.enum_name, res.variant_name, built);
+        return Err(resolves_elsewhere(arg, slot, &found));
+    }
+    check_variant_arity(arg, call, &res)?;
+    let args: Vec<syn::Expr> = call.args.iter().cloned().collect();
+    emit_enum_constructor(ctx, out, res, &args, local_vars)
+}
+
+/// The type emit_enum_constructor gives the value it builds for `res`.
+fn built_type(res: &EnumVariantResolution) -> Type {
+    if res.generic_args.is_empty() {
+        return Type::Enum(res.enum_name.clone());
+    }
+    Type::Concrete(res.enum_name.clone(), res.generic_args.clone())
+}
+
+/// Emission builds one payload field per argument (a tuple payload from
+/// several), so any other count drops arguments or emits invalid MLIR. A
+/// tuple payload counts its elements.
+fn check_variant_arity(arg: &syn::Expr, call: &syn::ExprCall, res: &EnumVariantResolution) -> Result<(), String> {
+    let fields = match &res.payload_ty {
+        None => 0,
+        Some(Type::Tuple(tys)) => tys.len(),
+        Some(_) => 1,
+    };
+    if call.args.len() == fields {
+        return Ok(());
+    }
+    Err(format!(
+        "Constructor argument count mismatch: `{}` passes {} argument(s), but {}::{} takes {}",
+        quote_arg_expr(arg), call.args.len(), res.enum_name, res.variant_name, fields
+    ))
+}
+
+fn describe_call(kind: &CallKind) -> String {
+    match kind {
+        CallKind::Function(name, ret, ..) => format!("function {} returning {:?}", name, ret),
+        CallKind::Intrinsic(name, _) => format!("intrinsic {}", name),
+        CallKind::StructLiteral(name, _) => format!("struct {}", name),
+        CallKind::TransparentVecAccess { method, .. } => format!("vector access {}", method),
+        CallKind::EnumConstructor(res) => format!("{}::{}", res.enum_name, res.variant_name),
+    }
+}
+
+fn resolves_elsewhere(arg: &syn::Expr, slot: &Type, found: &str) -> String {
+    format!(
+        "Constructor argument type mismatch: `{}` in a {:?} payload slot resolves to {}, not a variant of that enum",
+        quote_arg_expr(arg), slot, found
+    )
 }
 
 /// Renders the offending argument expression back to source form for the

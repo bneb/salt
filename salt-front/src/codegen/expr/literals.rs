@@ -1205,7 +1205,7 @@ pub(crate) fn emit_enum_constructor(
                  let tuple_types: Vec<Type> = if let Type::Tuple(tys) = target_payload_ty { tys.clone() } else { vec![target_payload_ty.clone()] };
                  for (i, arg) in args.iter().enumerate() {
                      let expected = tuple_types.get(i).unwrap_or(target_payload_ty);
-                     let (v, v_ty) = emit_expr(ctx, out, arg, local_vars, Some(expected))?;
+                     let (v, v_ty) = super::enum_ctor::emit_payload_arg(ctx, out, arg, expected, local_vars)?;
                      let v = if v_ty == *expected { v } else { promote_numeric(ctx, out, &v, &v_ty, expected)? };
                      field_vals.push(v);
                  }
@@ -1220,7 +1220,7 @@ pub(crate) fn emit_enum_constructor(
                  }
                  current
              } else if let Some(arg_expr) = args.first() {
-                 let (val, val_ty) = emit_expr(ctx, out, arg_expr, local_vars, Some(target_payload_ty))?;
+                 let (val, val_ty) = super::enum_ctor::emit_payload_arg(ctx, out, arg_expr, target_payload_ty, local_vars)?;
                  // Int->int widening/narrowing and int->float (sitofp)
                  // convert here via promote_numeric; float values into
                  // integer slots never reach this point (rejected up front
