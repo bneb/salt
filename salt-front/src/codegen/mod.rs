@@ -151,6 +151,7 @@ pub fn set_proof_stats_json(on: bool) {
     #[allow(unused_mut)]
     pub fn emit_mlir(file: &mut SaltFile, release_mode: bool, _registry: Option<&Registry>, _skip_scan: bool, no_verify: bool, disable_alias_scopes: bool, lib_mode: bool, sip_mode: bool, debug_info: bool, deny_deferred: bool, source_file: &str) -> Result<String, String> {
         let (mut loader, mut loader_registry) = load_modules(file)?;
+        phases::resolution::unknown_types::check(file, loader.loaded_files.values())?;
         // Inherit trait default methods: rewrite every trait impl — in the
         // entry file, every loaded module's AST, and the registry's impl
         // snapshots — so that omitted defaults become concrete impl methods
