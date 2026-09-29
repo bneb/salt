@@ -22,6 +22,10 @@ pub mod while_stmt;
 pub(crate) use self::while_stmt::*;
 pub mod return_stmt;
 pub(crate) use self::return_stmt::*;
+pub mod divergence;
+pub(crate) use self::divergence::*;
+#[cfg(test)]
+mod tests_divergence;
 
 pub fn emit_block(ctx: &mut LoweringContext, out: &mut String, stmts: &[Stmt], local_vars: &mut HashMap<String, (Type, LocalKind)>) -> Result<bool, String> {
     // 1. Preamble Pass: Hoist all allocas to function entry
@@ -116,10 +120,7 @@ pub fn emit_stmt(ctx: &mut LoweringContext, out: &mut String, stmt: &Stmt, local
              Ok(false)
         }
         Stmt::Return(opt_expr) => emit_return_stmt(ctx, out, opt_expr, local_vars),
-        Stmt::Expr(expr, _) => {
-            let (val, _) = emit_expr(ctx, out, expr, local_vars, None)?;
-            Ok(val == "%unreachable")
-        }
+        Stmt::Expr(expr, _) => emit_expr_stmt(ctx, out, expr, local_vars),
         Stmt::Invariant(e) => {
             let (cond, _) = emit_expr(ctx, out, e, local_vars, None)?;
             let true_const = format!("%inv_true_{}", ctx.next_id());
@@ -445,9 +446,7 @@ fn emit_loop_stmt(ctx: &mut LoweringContext, out: &mut String, body: &crate::gra
             // actually targets it. An infinite `loop { }` with no break
             // produces an exit block with zero predecessors, which crashes
             // MLIR's dominance tree computation in salt-opt.
-            let break_target = format!("cf.br ^{}", label_exit);
-            let break_was_used = out.contains(&break_target);
-            if break_was_used {
+            if breaks_to(out, &label_exit) {
                 out.push_str(&format!("  ^{}:\n", label_exit));
                 Ok(false)
             } else {

@@ -27,7 +27,7 @@ fn test_two_param_struct_method_mangling_order() {
         struct Vec<T, A> { len: i64, cap: i64 }
         impl<T, A> Vec<T, A> {
             fn new(alloc: A, cap: i64) -> Vec<T, A> {
-                Vec::<T, A> { len: 0, cap: cap }
+                return Vec::<T, A> { len: 0, cap: cap };
             }
         }
         fn main() {
@@ -59,10 +59,10 @@ fn test_two_param_struct_multiple_methods_consistent() {
         struct Vec<T, A> { len: i64 }
         impl<T, A> Vec<T, A> {
             fn new(a: A) -> Vec<T, A> {
-                Vec::<T, A> { len: 0 }
+                return Vec::<T, A> { len: 0 };
             }
             fn len(self) -> i64 {
-                self.len
+                return self.len;
             }
         }
         fn main() {
@@ -107,7 +107,7 @@ fn test_three_param_struct_preserves_declaration_order() {
         struct Map<K, V, H> { size: i64 }
         impl<K, V, H> Map<K, V, H> {
             fn new(hasher: H) -> Map<K, V, H> {
-                Map::<K, V, H> { size: 0 }
+                return Map::<K, V, H> { size: 0 };
             }
         }
         fn main() {
@@ -134,10 +134,10 @@ fn test_single_param_struct_unaffected() {
         struct Box<T> { val: T }
         impl<T> Box<T> {
             fn new(v: T) -> Box<T> {
-                Box::<T> { val: v }
+                return Box::<T> { val: v };
             }
             fn get(self) -> T {
-                self.val
+                return self.val;
             }
         }
         fn main() {
@@ -171,7 +171,7 @@ fn test_deterministic_across_multiple_compilations() {
         struct Container<T, A> { count: i64 }
         impl<T, A> Container<T, A> {
             fn create(pool: A) -> Container<T, A> {
-                Container::<T, A> { count: 0 }
+                return Container::<T, A> { count: 0 };
             }
         }
         fn main() {

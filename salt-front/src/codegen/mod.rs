@@ -1752,11 +1752,12 @@ fn emit_fn_cleanup(ctx: &CodegenContext, func: &crate::grammar::SaltFn, out: &mu
         if *ret_ty == Type::Unit {
             out.push_str("    func.return\n");
         } else if func.name == "main" && *ret_ty == Type::I32 {
+            crate::codegen::stmt::check_main_final_expr(func)?;
             let c0 = format!("%c0_{}", ctx.next_id());
             out.push_str(&format!("    {} = arith.constant 0 : i32\n", c0));
             out.push_str(&format!("    func.return {} : i32\n", c0));
         } else {
-            out.push_str("    llvm.unreachable\n");
+            return Err(crate::codegen::stmt::missing_return_error(&func.name.to_string()));
         }
     } else {
         let _ = ctx.cleanup_stack_mut().pop();

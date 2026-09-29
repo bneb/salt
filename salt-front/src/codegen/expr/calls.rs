@@ -74,6 +74,7 @@ fn emit_function_call(
              )?;
 
              handle_post_call_state(ctx, &mangled_name);
+             ctx.emission.last_call_never_returns = crate::codegen::stmt::is_c_noreturn(&mangled_name, &lazy_task);
 
              // Flow callee postconditions into caller's Z3 solver
              if !ensures.is_empty() && !res_val.is_empty() {

@@ -414,6 +414,8 @@ PARAM  = PATTERN, ":", TYPE ;
 
 A function declares a named, callable computation. `pub` makes it visible outside the current module. Generic parameters enable parametric polymorphism. The return type defaults to `()` if omitted.
 
+A function whose return type is not `()` must not reach the end of its body: every path ends in `return`, in a loop with no `break` out of it (`loop`, `while true`), or in a call to `exit` or `abort`. A block's final expression is not its value, so `fn ten() -> i32 { 10 }` is a compile error; write `return 10;`. `main` returning `i32` is the exception: reaching its end returns 0, but a final expression without `;` is still an error there, since its value would be dropped.
+
 ### 5.2 Attributes
 
 Attributes are prefixed with `@` and appear before the item they modify.
