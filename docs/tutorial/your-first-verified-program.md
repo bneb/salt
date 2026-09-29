@@ -209,8 +209,8 @@ Define the predicate:
 ```salt
 fn match_result_is_valid(result: Result<i32>, key: StringView, store: &Store) -> bool {
     match result {
-        Result::Ok(val) => key_exists_in_store(key, val, store),
-        Result::Err(_) => true,  // not found is always valid
+        Result::Ok(val) => return key_exists_in_store(key, val, store),
+        Result::Err(_) => return true,  // not found is always valid
     }
 }
 

@@ -4,10 +4,10 @@ struct Point {
 }
 
 fn get_x(p: Point) -> i32 {
-    p.x
+    return p.x;
 }
 
 fn main() -> i32 {
     let p = Point { x: 10, y: 2.5 };
-    get_x(p)
+    return get_x(p);
 }
