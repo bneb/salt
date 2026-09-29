@@ -122,6 +122,7 @@ use crate::codegen::types::numeric::promote_numeric;
 use crate::common::mangling::Mangler;
 use std::collections::HashMap;
 use super::{emit_expr, infer_phantom_generics};
+use super::bare_unit_variant::resolve_bare_unit_variant;
 
 // Stub handlers for now, to be moved to separate files
 pub fn emit_lit(ctx: &mut LoweringContext, out: &mut String, lit: &syn::ExprLit, expected: Option<&Type>) -> Result<(String, Type), String> {
@@ -423,52 +424,6 @@ fn resolve_global_variable_path(
     }
 }
 
-fn resolve_enum_variant_suffix(
-    ctx: &mut LoweringContext,
-    out: &mut String,
-    name: &str,
-    mangled: &str,
-) -> Result<Option<(String, Type)>, String> {
-    if !ctx.globals().contains_key(mangled) && !ctx.evaluator.constant_table.contains_key(mangled) {
-        let mut found_variant = None;
-
-        let mut sorted_enums: Vec<_> = ctx.enum_registry().values().collect();
-        sorted_enums.sort_by_key(|e| &e.name);
-        for info in sorted_enums {
-             for (var_name, payload, disc) in &info.variants {
-                 if var_name == name {
-                     found_variant = Some((info.name.clone(), *disc, payload.is_none()));
-                     break;
-                 }
-             }
-             if found_variant.is_some() { break; }
-        }
-
-        if let Some((enum_name, disc, is_unit)) = found_variant {
-             if is_unit {
-                 let enum_ty = Type::Enum(enum_name.clone());
-                 let mlir_ty = enum_ty.to_mlir_type(ctx)?;
-                 
-                 let res = format!("%enum_val_{}", ctx.next_id());
-                 let undef = format!("{}_undef", res);
-                 
-                 out.push_str(&format!("    {} = llvm.mlir.undef : {}\n", undef, mlir_ty));
-                 
-                 let tag_val = format!("{}_tag", res);
-                 ctx.emit_const_int(out, &tag_val, disc as i64, "i32");
-                 
-                 out.push_str(&format!("    {} = llvm.insertvalue {}, {}[0] : {}\n", 
-                     res, tag_val, undef, mlir_ty));
-                 
-                 return Ok(Some((res, enum_ty)));
-             } else {
-                 return Err(format!("Cannot use tuple variant '{}' as value without arguments", name));
-             }
-        }
-    }
-    Ok(None)
-}
-
 /// Imported generic enums live in registry ModuleInfos, keyed by the
 /// UNMANGLED enum name; reconstruct the fully-mangled template name,
 /// specialize it from turbofish args or the expected type, and register it.
@@ -731,7 +686,7 @@ pub fn emit_path(ctx: &mut LoweringContext, out: &mut String, p: &syn::ExprPath,
         }
     }
 
-    if let Some(res) = resolve_enum_variant_suffix(ctx, out, &name, &mangled)? {
+    if let Some(res) = resolve_bare_unit_variant(ctx, out, &segments, &mangled, _expected)? {
         return Ok(res);
     }
 
