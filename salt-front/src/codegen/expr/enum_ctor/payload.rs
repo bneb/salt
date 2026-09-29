@@ -4,8 +4,9 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use super::{trace_locals_map, EnumVariantResolution};
+use super::{find_unqualified_variant_enum, trace_locals_map, EnumVariantResolution};
 use crate::codegen::context::{LocalKind, LoweringContext};
+use crate::codegen::expr::utils::get_name_from_expr;
 use crate::codegen::generic_resolver::generic_param_name;
 use crate::codegen::tracer::TypeTracer;
 use crate::grammar::{EnumDef, EnumVariant};
@@ -85,8 +86,9 @@ fn payload_slot_list(payload: &Type, arg_count: usize) -> Vec<Type> {
     }
 }
 
-/// One argument: trace it; untraceable args DEFER to emission diagnostics;
-/// everything else requires structural or numeric compatibility with the slot.
+/// One argument: trace it; untraceable args and bare variant calls of the
+/// slot's enum DEFER to emission (traced_or_deferred); everything else
+/// requires structural or numeric compatibility with the slot.
 /// A traced function item into a NON-fn slot is rejected here — emission
 /// would otherwise silently ptrtoint the function's entry address into the
 /// payload (e.g. `Val(answer)` filling an i64 slot with a code pointer).
@@ -101,9 +103,8 @@ fn check_single_ctor_arg(
     if matches!(slot, Type::Fn(..)) {
         return Ok(());  // fn-pointer slot: genuine fn items coerce at emission
     }
-    let traced = match ctx.trace_expr_type(arg, trace_locals) {
-        Ok(t) => t,
-        Err(_) => return Ok(()),  // untraceable: emission reports what it sees
+    let Some(traced) = traced_or_deferred(ctx, arg, &slot, trace_locals) else {
+        return Ok(());  // emission resolves the argument and reports what it sees
     };
     if matches!(traced, Type::Fn(..)) {
         return Err(format!(
@@ -120,6 +121,40 @@ fn check_single_ctor_arg(
         ));
     }
     Ok(())
+}
+
+/// The argument's traced type, or None for one left to emission: an
+/// untraceable argument, or a bare call to a variant of the slot's enum
+/// (`Some(x)` in an Option slot). The tracer types a callee it can't resolve
+/// as Unit, but emission passes the slot as the call's expected type, builds
+/// that variant, and checks its payload then. A function the tracer resolves
+/// keeps its return type, since it claims the call at emission too; only one
+/// returning unit is left to emission, which rejects that value.
+fn traced_or_deferred(
+    ctx: &LoweringContext,
+    arg: &syn::Expr,
+    slot: &Type,
+    trace_locals: &BTreeMap<String, Type>,
+) -> Option<Type> {
+    let traced = ctx.trace_expr_type(arg, trace_locals).ok()?;
+    if traced == Type::Unit && is_bare_variant_call(ctx, arg, slot, trace_locals) {
+        return None;
+    }
+    Some(traced)
+}
+
+/// A call to a bare name the slot's enum declares as a variant. A name bound
+/// to an fn-pointer local doesn't count: emission calls through the local.
+fn is_bare_variant_call(
+    ctx: &LoweringContext,
+    arg: &syn::Expr,
+    slot: &Type,
+    trace_locals: &BTreeMap<String, Type>,
+) -> bool {
+    let syn::Expr::Call(call) = arg else { return false };
+    let Some(name) = get_name_from_expr(&call.func) else { return false };
+    !matches!(trace_locals.get(&name), Some(Type::Fn(..)))
+        && find_unqualified_variant_enum(ctx, &name, Some(slot)).is_some()
 }
 
 /// Renders the offending argument expression back to source form for the
