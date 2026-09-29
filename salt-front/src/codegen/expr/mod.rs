@@ -17,6 +17,7 @@ use while_loop::emit_while;
 pub(crate) mod call_helpers;
 
 pub(crate) mod binary_ops;
+pub(crate) mod bare_unit_variant;
 pub(crate) mod literals;
 pub(crate) mod calls;
 pub(crate) mod control_flow;
