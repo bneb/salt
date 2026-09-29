@@ -465,6 +465,5 @@ pub(crate) fn emit_while_stmt(ctx: &mut LoweringContext, out: &mut String, w: &c
             if !body_diverges {
                 out.push_str(&format!("    cf.br ^{}\n", label_header));
             }
-            out.push_str(&format!("  ^{}:\n", label_exit));
-            Ok(false)
+            Ok(super::emit_while_exit(out, &w.cond, &label_exit))
         }

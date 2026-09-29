@@ -94,7 +94,7 @@ fn test_dynamic_check_tier3() {
         fn main() -> i32 {
             let p = malloc(8);
             do_something(p);
-            0
+            return 0;
         }
     "#;
     

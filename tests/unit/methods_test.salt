@@ -5,11 +5,11 @@ struct Point {
 
 impl Point {
     fn distance(self) -> i32 {
-        self.x + self.y
+        return self.x + self.y;
     }
 
     fn scale(self, factor: i32) -> i32 {
-        self.x * factor
+        return self.x * factor;
     }
 }
 

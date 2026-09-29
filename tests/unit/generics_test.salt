@@ -5,9 +5,9 @@ concept NonZero<T> {
 }
 
 fn safe_div<T: NonZero>(a: i32, b: T) -> i32 {
-    a / b
+    return a / b;
 }
 
 fn main() -> i32 {
-    safe_div(10, 0)
+    return safe_div(10, 0);
 }

@@ -31,7 +31,7 @@ pub(crate) fn block_has_control_flow(stmts: &[Stmt]) -> bool {
                 }
             }
             Stmt::Expr(e, _) => {
-                if expr_has_if(e) {
+                if expr_has_if(e) || super::calls_exit_or_abort(e) {
                     return true;
                 }
             }

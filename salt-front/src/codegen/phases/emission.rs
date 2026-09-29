@@ -78,6 +78,9 @@ pub struct EmissionState {
     pub known_string_lengths: HashMap<String, i64>,
     /// Known slice lengths for local variables (let s = Slice::new(p, 100) → s.len() = 100)
     pub known_slice_lengths: HashMap<String, i64>,
+    /// Whether the last function call emitted resolved to C's `exit` or
+    /// `abort` (set by emit_function_call, read by emit_expr_stmt)
+    pub last_call_never_returns: bool,
 
     // Performance caches
     /// Type layout cache: Type -> (size, alignment)
