@@ -393,10 +393,43 @@ pub struct StringMap {
         let new_voff = alloc_bytes(new_cap * 8) as Ptr<i64>;
         let new_vlen = alloc_bytes(new_cap * 8) as Ptr<i64>;
 
-        // New arena for defragmentation
+        // New arena for defragmentation.
+        //
+        // Size this from the bytes that will actually survive the compaction
+        // below, plus the bytes this insert is about to add — NOT from
+        // `min_arena`.
+        //
+        // `min_arena` is `(arena_used + key_len + val_len)`, and `arena_used` is
+        // a high-water mark: the overwrite path in StringMap_set appends and
+        // never reclaims, so it grows with every write regardless of how much
+        // data the map holds. Sizing from it made arena_cap ratchet upward on
+        // each growth cycle while the live set stayed constant, so overwriting
+        // one key repeatedly grew the arena without bound.
+        //
+        // `incoming` recovers the true insert size: the caller formed min_arena
+        // as (arena_used + key_len + val_len) and arena_used has not been
+        // reassigned yet, so the difference is exactly key_len + val_len. No
+        // signature change required. The clamp keeps `incoming` non-negative
+        // if a future caller passes a min_arena below the current watermark.
+        let mut incoming: i64 = min_arena - self.arena_used;
+        if incoming < 0 {
+            incoming = 0;
+        }
+        let mut live_bytes: i64 = 0;
+        if old_cap > 0 {
+            for i in 0..old_cap {
+                let ctrl_byte = self.ctrl.offset(i).read();
+                if ctrl_byte >= 0 {
+                    live_bytes = live_bytes
+                        + self.key_lens.offset(i).read()
+                        + self.val_lens.offset(i).read();
+                }
+            }
+        }
+        let needed: i64 = live_bytes + incoming;
         let mut new_arena_cap = new_cap * 64;
-        if new_arena_cap < min_arena {
-            new_arena_cap = min_arena;
+        if new_arena_cap < needed {
+            new_arena_cap = needed;
         }
         // Round up to nearest 1KB
         new_arena_cap = (new_arena_cap + 1023) & -1024;
@@ -471,6 +504,55 @@ pub struct StringMap {
     pub fn StringMap_length(smap: Ptr<StringMap>) -> i64 {
         let self = smap.read();
         return self.len;
+    }
+
+    // =================================================================
+    // Introspection
+    // =================================================================
+    // The arena is append-only between compactions: StringMap_set appends on
+    // both insert and overwrite and reclaims only inside StringMap_grow, which
+    // runs when the arena fills. Steady-state overhead is therefore roughly
+    // 2x the live byte total (the live set plus the write in flight), and
+    // arena_used falls back to the live total after each compaction.
+    //
+    // These accessors exist because that behaviour was previously invisible. A
+    // consumer had no way to tell retained bytes from high-water mark, so
+    // memory accounting had to be guessed and the resulting growth bug could
+    // be neither diagnosed nor regression-tested from Salt. They are read-only
+    // and cost one struct read.
+
+    /// Bytes of the arena currently allocated (the high-water mark).
+    /// Falls back to the live total after a compaction.
+    @inline
+    pub fn StringMap_arena_bytes(smap: Ptr<StringMap>) -> i64 {
+        let self = smap.read();
+        return self.arena_used;
+    }
+
+    /// Size of the arena allocation. Compare against StringMap_arena_bytes to
+    /// see how much slack the current allocation is carrying.
+    @inline
+    pub fn StringMap_arena_cap(smap: Ptr<StringMap>) -> i64 {
+        let self = smap.read();
+        return self.arena_cap;
+    }
+
+    /// Bytes actually held by live entries, summed from the key/value lengths.
+    /// O(cap), so this is for tests and diagnostics, not hot paths.
+    pub fn StringMap_live_bytes(smap: Ptr<StringMap>) -> i64 {
+        let self = smap.read();
+        let mut total: i64 = 0;
+        let mut i: i64 = 0;
+        while i < self.cap {
+            let ctrl_byte = self.ctrl.offset(i).read();
+            if ctrl_byte >= 0 {
+                total = total
+                    + self.key_lens.offset(i).read()
+                    + self.val_lens.offset(i).read();
+            }
+            i = i + 1;
+        }
+        return total;
     }
 
     pub fn StringMap_is_empty(smap: Ptr<StringMap>) -> bool {
